@@ -9,12 +9,17 @@
 #
 # The credentials here are well-known development placeholders. The application refuses to
 # start in production with any of them (see src/aedifex/config.py).
+#
+# Images are pinned by digest so an upstream retag cannot silently change the stack under us.
+# `minio/minio:latest` in particular was previously unpinned, which meant two developers could
+# be running different builds while both believing they ran the same one. The tag before the
+# digest is decorative: Docker resolves the digest. Dependabot raises PRs for new digests.
 
 name: aedifex
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -33,7 +38,7 @@ services:
       start_period: 10s
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -53,7 +58,7 @@ services:
   # Creates the development bucket, then exits. `docker compose up` will show this container
   # as completed, which is expected.
   minio_init:
-    image: minio/mc:latest
+    image: minio/mc:latest@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     depends_on:
       minio:
         condition: service_healthy

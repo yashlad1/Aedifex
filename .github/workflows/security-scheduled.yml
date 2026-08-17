@@ -1,0 +1,111 @@
+# Scheduled security scanning.
+#
+# PR-time CI only proves a change was safe against advisories known *that day*. Most
+# vulnerabilities in a dependency are disclosed long after the code that uses it merged, so
+# unchanged code needs re-scanning on a schedule. This workflow is what catches those.
+#
+# It is allowed to fail loudly: unlike PR CI, a failure here does not block anyone's work, so
+# there is no reason to soften it.
+
+name: Scheduled security scan
+
+on:
+  schedule:
+    # Weekly, Monday 05:00 UTC — before the Dependabot PRs land, so the two agree.
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    name: Dependency vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: false
+
+      - name: Install from lockfile
+        run: uv sync --locked --extra dev
+
+      - name: Audit dependencies
+        run: |
+          # Audit the *locked* dependency set rather than the installed environment.
+          # `pip-audit --strict` against the environment fails on our own package, which is
+          # installed editable and not on PyPI ("distribution marked as editable"), and
+          # --skip-editable does not satisfy --strict either. Exporting from uv.lock also
+          # audits exactly what is shipped, which is the more meaningful question.
+          uv export --frozen --no-emit-project --extra dev --format requirements.txt \
+            -o /tmp/locked-requirements.txt
+          uv run pip-audit --strict --disable-pip -r /tmp/locked-requirements.txt
+
+      - name: Report dependency freshness
+        # Informational: freshness is reviewed, never auto-applied (rule 32).
+        run: uv lock --upgrade --dry-run || true
+
+  filesystem:
+    name: Repository vulnerability and misconfiguration scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Scan repository
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy-fs.sarif
+          severity: MEDIUM,HIGH,CRITICAL
+
+      - name: Upload results
+        uses: github/codeql-action/upload-sarif@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-filesystem
+
+  container:
+    name: Container image vulnerabilities
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: runtime
+          push: false
+          load: true
+          tags: aedifex:scheduled-scan
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: aedifex:scheduled-scan
+          format: sarif
+          output: trivy-scheduled.sarif
+          severity: HIGH,CRITICAL
+          # Unlike PR CI, this is meant to fail: an unpatched high-severity CVE in the
+          # deployed image is exactly what this workflow exists to surface.
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Upload results
+        if: always()
+        uses: github/codeql-action/upload-sarif@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
+        with:
+          sarif_file: trivy-scheduled.sarif
+          category: trivy-scheduled

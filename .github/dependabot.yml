@@ -1,0 +1,55 @@
+# Automated dependency maintenance.
+#
+# Two goals are kept separate (rule 32): *reproducibility* comes from the committed uv.lock,
+# and *freshness* comes from these PRs. Nothing here auto-merges — every update goes through
+# the same CI gates as hand-written code, and a human reviews the release notes.
+
+version: 2
+
+updates:
+  # Python dependencies, via the committed lockfile.
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: [dependencies, python]
+    commit-message:
+      prefix: "deps"
+      include: scope
+    groups:
+      # Patch bumps are low-risk and noisy individually; batch them.
+      python-patch:
+        patterns: ["*"]
+        update-types: [patch]
+      # Dev tooling churns fast and cannot affect the runtime image.
+      dev-tooling:
+        patterns: [ruff, black, mypy, pytest*, pip-audit, types-*]
+
+  # GitHub Actions are pinned to commit SHAs for supply-chain integrity, which means they
+  # cannot drift on their own — this is what keeps them from going stale instead.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: "ci"
+
+  # Base images are pinned by digest, so this is what surfaces new digests.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: "docker"

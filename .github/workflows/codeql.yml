@@ -1,0 +1,47 @@
+# Static application security testing.
+#
+# Ruff's bandit-derived rules run on every commit and catch common patterns, but they are not a
+# SAST strategy: they do not follow data flow. CodeQL does taint tracking, which is what finds
+# an attacker-controlled value reaching a dangerous sink — the class of bug that matters most in
+# a system that deliberately ingests hostile documents.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so newly published queries run against unchanged code.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze Python
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
+        with:
+          languages: python
+          # security-and-quality is broader than the default suite and includes the taint
+          # queries worth having here.
+          queries: security-and-quality
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
+        with:
+          category: "/language:python"
