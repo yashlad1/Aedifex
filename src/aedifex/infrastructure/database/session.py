@@ -34,7 +34,20 @@ def build_engine(settings: Settings) -> Engine:
         pool_pre_ping=True,
         pool_recycle=1800,
         connect_args={
-            "options": f"-c statement_timeout={settings.database_statement_timeout_seconds * 1000}"
+            # Session-level settings, applied per connection so behaviour does not depend on
+            # how a particular server happens to be configured.
+            #
+            # timezone=UTC is not cosmetic. A Homebrew PostgreSQL inherits the host timezone
+            # (observed: America/New_York) while the postgres:17-alpine image defaults to UTC.
+            # Stored values are unaffected because every timestamp column is timestamptz and
+            # every Python datetime is timezone-aware, but anything that resolves a session
+            # timezone — a ``::date`` cast, ``date_trunc``, or comparing against a naive
+            # literal — would silently differ between a developer's machine and production.
+            # Pinning it makes the two identical.
+            "options": (
+                f"-c statement_timeout={settings.database_statement_timeout_seconds * 1000} "
+                f"-c timezone=UTC"
+            )
         },
         echo=settings.debug,
         future=True,

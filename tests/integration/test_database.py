@@ -365,12 +365,39 @@ class TestCrawlJobs:
         assert surviving.job_id is None
 
 
-class TestStatementTimeout:
+class TestSessionSettings:
     def test_a_statement_timeout_is_configured(self, engine: Engine, _schema: None) -> None:
         """An unbounded query is how a metadata store takes down the API."""
         with engine.connect() as connection:
             timeout = connection.execute(text("SHOW statement_timeout")).scalar_one()
         assert timeout not in ("0", 0)
+
+    def test_the_session_timezone_is_utc_regardless_of_server_default(
+        self, engine: Engine, _schema: None
+    ) -> None:
+        """Our connections must not inherit the server's timezone.
+
+        Regression test for a real environment difference: a Homebrew PostgreSQL inherits the
+        host timezone (observed: America/New_York) while postgres:17-alpine defaults to UTC.
+        Stored values were unaffected — every column is timestamptz and every Python datetime
+        is aware — but any session-timezone-dependent SQL would have quietly disagreed between
+        a developer's machine and production.
+        """
+        with engine.connect() as connection:
+            assert connection.execute(text("SHOW timezone")).scalar_one() == "UTC"
+
+    def test_date_truncation_is_not_host_dependent(self, engine: Engine, _schema: None) -> None:
+        """The concrete consequence: a UTC instant must not shift date under a local timezone.
+
+        2026-01-01T02:00Z is still 2026-01-01 in UTC, but 2025-12-31 in America/New_York. This
+        is the class of silent, off-by-one-day bug the pinned session timezone prevents, and it
+        would matter for any per-day collection metric.
+        """
+        with engine.connect() as connection:
+            observed = connection.execute(
+                text("SELECT (TIMESTAMPTZ '2026-01-01 02:00:00+00')::date::text")
+            ).scalar_one()
+        assert observed == "2026-01-01"
 
 
 def test_document_id_is_stable_across_processes(session: Session) -> None:
