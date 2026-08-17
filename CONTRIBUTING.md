@@ -24,6 +24,8 @@ A change is not done when it works locally. All of these must hold:
 - [ ] Documentation updated: docstrings, plus the relevant `.md` if behaviour or design changed
 - [ ] Security implications considered — for untrusted input, explicitly
 - [ ] An ADR added if an architectural decision was made
+- [ ] For a substantial architectural or algorithmic change: does it create potentially
+      valuable new technical IP? Usually no. If possibly yes, see [docs/ip/](docs/ip/)
 - [ ] Migration written and reversible if the schema changed
 
 ## Workflow

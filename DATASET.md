@@ -178,3 +178,29 @@ Each source records its licence, permitted use, access level, and whether it con
 data. That metadata travels with the corpus and is exposed via `GET /v1/sources`. Documents
 collected from a source may only be used within its recorded `allowed_use`, so any derived or
 redistributed dataset must be filtered by source accordingly.
+
+### Ownership
+
+Downloading a public document does not make it ours. The tiers keep the distinction visible:
+
+```
+raw/          third-party content, owned by whoever published it
+normalized/   ─┐
+labeled/       ├─ the value we add: selection, organisation, annotation,
+synthetic/    ─┘  relationships, labels, derived ontology, evaluation sets
+```
+
+What may be proprietary is that added value, subject to source rights and applicable law — never
+the underlying third-party material itself.
+
+**Training eligibility is a separate state from collection eligibility.** Raw collected documents
+must never automatically become training data:
+
+```
+collected → licence validation → PII screening → redaction → quality review → approved corpus
+```
+
+Never commit customer documents, vendor proprietary specifications, paid databases, or licensed
+standards without redistribution rights — not even as test fixtures. For standards such as BIS/IS
+codes, store permitted metadata and references separately from copyrighted text; being able to view
+a standard does not permit copying it into this repository or a training corpus.

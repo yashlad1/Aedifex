@@ -2315,3 +2315,163 @@ Then continue with downloader/storage.
 One more point: I agree with ClaudeCode’s recommendation to use Slice 1 next, but I would develop Slice 6 synthetic data in parallel immediately after it. The external-data path can be blocked by source terms, changing portals, anti-bot measures, and document quality. Your synthetic corpus has none of those dependencies and will eventually become the controlled benchmark against which extraction, matching, deterministic audit rules, and AI components can be regression-tested.  
 
 The most important philosophy to preserve is the one ClaudeCode already demonstrated in its Phase 0 report: “not verified” must remain different from “implemented.” That single discipline will prevent a surprising number of AI-assisted development failures.
+
+⸻
+
+Aedifex IP / Patent Readiness Requirements
+
+These requirements apply alongside the engineering constitution above. They are recordkeeping
+controls for IP readiness. They do not replace advice from a patent attorney, and nothing in this
+project constitutes a legal determination.
+
+The infrastructure lives in docs/ip/ and is PRIVATE. See docs/ip/README.md.
+
+⸻
+
+IP-1. Maintain an Invention Register
+
+docs/ip/INVENTION_REGISTER.md. Every potentially novel technical idea receives an AED-IP-NNN id.
+
+Use the words:
+
+Potential invention
+Patent review required
+
+Never write "patentable". Patentability is a legal determination that has not been made.
+
+⸻
+
+IP-2. Record Human Inventive Contributions
+
+Because Aedifex is built with AI assistance, distinguish:
+
+Human conceived the idea
+        ↓
+AI assisted the implementation
+
+from:
+
+AI suggested an approach
+        ↓
+Human selected / modified / developed it
+
+For potentially patent-relevant work record who identified the problem, who conceived the solution,
+who materially changed it, what the AI generated, and what the human specifically directed.
+
+Do not list Claude, ChatGPT, Copilot, or any other AI system as an inventor. Inventorship centres
+on the contributions of natural persons.
+
+⸻
+
+IP-3. Preserve Technical Detail
+
+A disclosure must let an engineer build the thing. Record algorithms, state transitions, data
+structures, scoring methods, relationship construction, security mechanisms, failure handling, and
+model/rule interaction. A thin description is poor preparation for any later filing.
+
+⸻
+
+IP-4. Git History Is an Engineering Record
+
+Do not squash or rewrite history containing substantive invention development for aesthetics.
+Preserve timestamp, author, technical change, tests, and ADR. Never fabricate or backdate a commit.
+
+Commit messages may reference an invention where relevant:
+
+feat(evidence): add deterministic cross-document reconciliation
+IP: AED-IP-003
+
+⸻
+
+IP-5. Separate Third-Party Data From Derived Work
+
+Downloading a public document does not make it Aedifex IP. What may be proprietary is the value
+added: selection, organisation, annotation, relationships, labels, derived ontology, quality
+controls, and evaluation sets — subject to source rights and applicable law.
+
+Storage layers keep this distinction visible: raw third-party content, then normalisation, then
+Aedifex annotations, relationships, and benchmarks.
+
+Never commit customer confidential documents, vendor proprietary specifications, paid databases, or
+licensed standards without redistribution rights — not even as test fixtures. For standards such as
+BIS/IS codes, store permitted metadata and references separately from copyrighted text, and do not
+assume that being able to view a standard permits copying it into the repository or a training
+corpus.
+
+⸻
+
+IP-6. Public Disclosure Requires Knowing What Is Being Disclosed
+
+Classify as PUBLIC, INTERNAL, CONFIDENTIAL, TRADE SECRET, or PATENT REVIEW PENDING.
+
+Claude Code must never publish material in the final two categories. "It's only GitHub" is a public
+disclosure. Record every disclosure in docs/ip/PUBLIC_DISCLOSURES.md.
+
+⸻
+
+IP-7. Trade Secrets Depend on Actually Keeping Them
+
+Protection depends partly on reasonable confidentiality measures. Therefore:
+
+* docs/ip/ stays private.
+* Do not document something as a trade secret and publish it simultaneously.
+* No proprietary datasets in public CI artifacts.
+* Least-privilege access; access removal on departure.
+
+⸻
+
+IP-8. Dataset and Model Lineage
+
+Datasets already require source, licence, collection date, terms status, redistribution and
+commercial-use rights, training-use status, modifications, and hash. For any proprietary model
+later, additionally record model version, training code commit, training dataset version,
+evaluation dataset, parameters, base model, licence, training date, and metrics.
+
+Training eligibility is a separate state from collection eligibility. Raw collected documents must
+never automatically become training data:
+
+collected → licence validation → PII screening → redaction → quality review → approved corpus
+
+⸻
+
+IP-9. Release Snapshots
+
+Every material release should retain source commit, source archive, SBOM, dependency lock,
+container digest, migration state, rules version, model version, dataset version, and date. This
+serves operational reproducibility and IP documentation equally.
+
+Maintain clean version boundaries (0.1, 0.2, 1.0) and preserve release archives so a copyright
+registration could be made cleanly if desired. Do not register automatically.
+
+⸻
+
+IP-10. Trademark Discipline
+
+Before investing in the brand: search, review relevant jurisdictions and classes, check domains,
+and document first commercial use. Do not place ® next to Aedifex unless a registration actually
+permits it.
+
+⸻
+
+IP-11. Claude Code's Boundaries
+
+Claude Code may prepare technical documentation, preserve evidence, organise prior art, and keep
+contribution history accurate.
+
+Claude Code must not declare patentability, draft legal claims, conclusively identify inventors, or
+file anything.
+
+⸻
+
+IP-12. Add IP Consideration to Definition of Done
+
+For a substantial architectural or algorithmic change, ask:
+
+Does this create potentially valuable new technical IP?
+
+No  → no IP update required. This is the common case.
+Yes → create or update a disclosure, record contributors, link commits, update diagrams, record
+      public-disclosure status.
+
+Minutes, not bureaucracy. Do not create a disclosure for an idea; create one for an implemented
+specific technical method.

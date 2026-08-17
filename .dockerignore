@@ -15,7 +15,9 @@ htmlcov/
 !.env.example
 
 data/
+# docs/ip is confidential; excluded explicitly as well as via docs/
 docs/
+docs/ip/
 tests/
 *.md
 !README.md
