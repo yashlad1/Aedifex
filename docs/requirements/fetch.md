@@ -3,22 +3,24 @@
 Derived from [the threat model](../security/threat-model-http-fetch.md). Every requirement states
 a number or a decidable condition, so "done" is testable rather than asserted.
 
-Status: **all Planned** — no fetch code exists yet. This file is written first, deliberately.
+Status: **FR-100–109 Implemented** (the SSRF guard, `src/aedifex/acquisition/fetch/`), with
+226 tests at 96% coverage of the package. Everything else remains Planned — the HTTP client
+is the next slice. This file was written before any of the code, deliberately.
 
 ## SSRF and destination validation
 
 | ID | Requirement | Status |
 | --- | --- | --- |
-| FR-100 | Validation shall proceed in this order, rejecting at the first failure: parse → scheme → embedded credentials → hostname allowlist → DNS resolution → per-address validation → connect. | Planned |
-| FR-101 | Only `http` and `https` schemes shall be accepted. All others (`file`, `ftp`, `gopher`, `data`, `blob`, scheme-relative) shall be rejected. | Planned |
-| FR-102 | A URL containing embedded credentials shall be rejected, not stripped. | Planned |
-| FR-103 | A request shall be rejected unless its hostname is permitted for the specific source, derived from that source's registry `base_url`. | Planned |
-| FR-104 | **Every** address returned by DNS resolution shall be validated, not merely the first. | Planned |
-| FR-105 | Requests shall be rejected when any resolved address is loopback, private (RFC1918), link-local (incl. `169.254.169.254`), CGNAT `100.64/10`, multicast, reserved, unspecified, IPv4-mapped IPv6, or NAT64. | Planned |
-| FR-106 | Hostnames ending in `.local`, `.internal`, or `.localdomain`, and bare single-label hostnames, shall be rejected. | Planned |
-| FR-107 | The connection shall be made to an address that was validated in this request, such that no second DNS resolution can occur between validation and connection. | Planned |
-| FR-108 | TLS certificate verification shall be performed against the original hostname and shall never be disabled or relaxed. | Planned |
-| FR-109 | A source with no resolvable, validatable address shall fail closed. | Planned |
+| FR-100 | Validation shall proceed in this order, rejecting at the first failure: parse → scheme → embedded credentials → hostname allowlist → DNS resolution → per-address validation → connect. | Implemented — `test_fetch_guard.py::TestSchemeAndCredentialOrdering` proves each step precedes DNS |
+| FR-101 | Only `http` and `https` schemes shall be accepted. All others (`file`, `ftp`, `gopher`, `data`, `blob`, scheme-relative) shall be rejected. | Implemented — `TestSchemes` — file/ftp/gopher/data/javascript/dict/ldap all rejected |
+| FR-102 | A URL containing embedded credentials shall be rejected, not stripped. | Implemented — `TestEmbeddedCredentials` — rejected, not stripped |
+| FR-103 | A request shall be rejected unless its hostname is permitted for the specific source, derived from that source's registry `base_url`. | Implemented — `test_fetch_hosts.py` — label-aware; `evilcpwd.gov.in` rejected |
+| FR-104 | **Every** address returned by DNS resolution shall be validated, not merely the first. | Implemented — `TestMixedDnsAnswers` — every address checked |
+| FR-105 | Requests shall be rejected when any resolved address is loopback, private (RFC1918), link-local (incl. `169.254.169.254`), CGNAT `100.64/10`, multicast, reserved, unspecified, IPv4-mapped IPv6, or NAT64. | Implemented — `test_fetch_addresses.py` — 62 tests, each address asserted with its reason |
+| FR-106 | Hostnames ending in `.local`, `.internal`, or `.localdomain`, and bare single-label hostnames, shall be rejected. | Implemented — `test_private_network_suffixes_rejected`, `test_single_label_hosts_rejected` |
+| FR-107 | The connection shall be made to an address that was validated in this request, such that no second DNS resolution can occur between validation and connection. | Implemented — `TestDnsRebinding` — `resolver.calls == 1`; target pins an address |
+| FR-108 | TLS certificate verification shall be performed against the original hostname and shall never be disabled or relaxed. | Implemented — Invariant documented in `guard.py`; `TestConnectionInvariant` asserts hostname and address are carried separately |
+| FR-109 | A source with no resolvable, validatable address shall fail closed. | Implemented — `TestResolutionFailure` — unresolvable and empty answers both fail closed |
 
 ## Redirects
 
@@ -87,8 +89,41 @@ Status: **all Planned** — no fetch code exists yet. This file is written first
 
 | ID | Requirement | Target | Status |
 | --- | --- | --- | --- |
-| NFR-110 | The SSRF guard shall be pure logic, testable with no network. | — | Planned |
+| NFR-110 | The SSRF guard shall be pure logic, testable with no network. | — | Implemented — no new dependency; stdlib only |
 | NFR-111 | Failure-path tests shall cover every case listed in the threat model's verification obligations. | 30+ cases | Planned |
 | NFR-112 | Transport behaviour shall be tested against a controlled local HTTP server, not mocks. | — | Planned |
-| NFR-113 | DNS rebinding shall be tested with a resolver returning a public address then a private one. | — | Planned |
-| NFR-114 | Fetch failures shall never lose the reason: every rejection carries a typed error. | — | Planned |
+| NFR-113 | DNS rebinding shall be tested with a resolver returning a public address then a private one. | — | Implemented — `RecordingResolver` scripts successive answers; the second is never consulted |
+| NFR-114 | Fetch failures shall never lose the reason: every rejection carries a typed error. | — | Implemented — `SsrfRejectionError` carries a `RejectionReason` |
+
+
+## Implementation notes for FR-100–109
+
+Decisions taken during implementation that the requirements did not pin down, recorded here so
+they are reviewable:
+
+**IP-literal URLs are rejected outright**, including public ones. An address cannot satisfy a
+hostname allowlist, and permitting it would abandon the per-source host constraint entirely.
+
+**Only ports 80 and 443 are accepted.** An arbitrary port on an allowlisted host is still a
+service we never intended to speak to. A source needing another port is a registry change.
+
+**IPv4-mapped IPv6 is rejected even when the embedded address is public.** The form is a
+canonicalisation hazard (`::ffff:127.0.0.1` defeats any IPv4-only check) and no legitimate portal
+is reachable only that way. 6to4, Teredo, and NAT64 are refused for the same reason.
+
+**`is_global` alone is not a sufficient check**, which is why the policy applies every test
+rather than one. Measured: `is_global` is `True` for multicast, for NAT64, and for IPv4-mapped
+public addresses; `is_private` is `False` for CGNAT.
+
+**Documentation ranges are rejected and reported distinctly.** `203.0.113.0/24` and friends are
+what a developer actually hits by pasting an example URL, so the reason names that rather than
+reporting a generic private-address failure. Consequence worth knowing: `203.0.113.x` cannot be
+used as a "public" address in a test.
+
+**Address selection is the first validated address, deterministically.** Because a mixed answer
+is rejected wholesale, every returned address is acceptable, so there is nothing for an attacker
+to influence and no reason to randomise.
+
+**`additional_hosts` (new registry field) are exact-match only**, while the source's own
+`base_url` host permits subdomains. Authorising a shared CDN or object-storage domain by suffix
+would authorise every other tenant on it.

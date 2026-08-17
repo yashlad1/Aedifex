@@ -94,7 +94,9 @@ Consequences accepted deliberately:
 - TLS must still verify against the *hostname*, not the IP. Certificate validation is never
   relaxed; connecting by IP while asserting the hostname is the whole point.
 - A server relying on DNS round-robin for load balancing sees us pinned to one address per
-  request. Acceptable, and we pick among validated addresses rather than always the first.
+  request. Acceptable. We connect to the *first* validated address, deterministically: because a
+  mixed answer is rejected wholesale, every returned address is already acceptable, so there is
+  nothing for an attacker to influence and randomising would buy no security.
 - If a redirect changes host, the new host is resolved and validated independently.
 
 Residual risk: a TOCTOU window remains between validation and `connect()` at the OS level, but it
