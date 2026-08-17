@@ -83,7 +83,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Tests legitimately use asserts, hardcoded values, and long fixture literals.
-"tests/**" = ["S101", "S105", "S106", "ARG001", "ARG002"]
+# S104 fires on the string "0.0.0.0", which SSRF tests legitimately use as an address
+# under test rather than as a bind address.
+"tests/**" = ["S101", "S105", "S106", "S104", "ARG001", "ARG002"]
 "scripts/**" = ["T20"]
 "migrations/**" = ["ARG001"]
 

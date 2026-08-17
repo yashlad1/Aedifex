@@ -21,6 +21,8 @@ Rate limits are bounded on both sides: the ceiling protects the remote site, and
 
 from __future__ import annotations
 
+import ipaddress
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Self
@@ -48,6 +50,10 @@ __all__ = [
     "SourceFile",
     "VerificationStatus",
 ]
+
+_HOSTNAME_PATTERN = re.compile(
+    r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+\.?$"
+)
 
 SourceId = Annotated[
     str,
@@ -214,14 +220,51 @@ class SourceDefinition(BaseModel):
     file_formats: tuple[FileFormat, ...] = Field(
         min_length=1, description="Formats accepted from this source; others are rejected."
     )
+    additional_hosts: tuple[str, ...] = Field(
+        default=(),
+        description="Extra hostnames this source legitimately serves documents from, e.g. a "
+        "CDN. Matched exactly, never by subdomain: authorising a shared object-storage domain "
+        "by suffix would authorise every other tenant of it. Adding one is a configuration "
+        "change and never a relaxation of global network safety.",
+    )
     notes: str | None = Field(default=None, max_length=4000)
     last_successful_run: datetime | None = None
 
-    @field_validator("document_types", "file_formats")
+    @field_validator("document_types", "file_formats", "additional_hosts")
     @classmethod
     def _reject_duplicates(cls, value: tuple[object, ...]) -> tuple[object, ...]:
         if len(set(value)) != len(value):
             raise ValueError("entries must be unique")
+        return value
+
+    @field_validator("additional_hosts")
+    @classmethod
+    def _validate_additional_hosts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Require plain, fully-qualified, lowercase hostnames.
+
+        Wildcards and IP literals are rejected deliberately: a wildcard would reintroduce the
+        suffix matching this field exists to avoid, and an IP literal would bypass the hostname
+        allowlist that constrains where a source may be fetched from.
+        """
+        for host in value:
+            if host != host.strip().lower():
+                raise ValueError(f"host {host!r} must be lowercase and unpadded")
+            if "*" in host or "/" in host or ":" in host:
+                raise ValueError(f"host {host!r} must be a plain hostname, not a pattern or URL")
+            if "." not in host.rstrip("."):
+                raise ValueError(f"host {host!r} must be fully qualified")
+            if not _HOSTNAME_PATTERN.match(host):
+                raise ValueError(f"host {host!r} is not a valid hostname")
+            try:
+                ipaddress.ip_address(host.rstrip("."))
+            except ValueError:
+                pass  # Not an address, which is what we require.
+            else:
+                raise ValueError(
+                    f"host {host!r} is an IP address; this field takes hostnames, and an "
+                    f"address here would be unreachable anyway because IP-literal URLs are "
+                    f"refused by the fetch guard"
+                )
         return value
 
     @field_validator("last_successful_run")
