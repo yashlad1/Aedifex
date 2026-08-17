@@ -94,16 +94,40 @@ class TestProtocolConformance:
 
 
 class TestScopedIpv6:
-    """A link-local answer arrives as "fe80::1%en0"; the scope is not part of the address.
+    """A link-local answer arrives as ``fe80::1%en0``; the scope is not part of the address.
 
-    Without stripping it, parsing fails and the address is silently dropped — which would mean a
-    link-local answer never reaches the address policy that is supposed to reject it.
+    Without stripping it, ``ip_address`` raises, the answer is silently skipped, and a link-local
+    address never reaches the policy that exists to reject it — a fail-*open* outcome hidden
+    inside a fail-closed-looking function.
+
+    ``getaddrinfo`` is stubbed here rather than mocked for convenience: the OS will not return a
+    scoped link-local answer for a hostname under our control, so supplying the syscall's output
+    directly is the only way to exercise this parsing path at all.
     """
 
-    def test_a_scoped_address_is_parsed_rather_than_dropped(self) -> None:
-        resolver = SystemResolver()
-        # Verify the stripping logic directly against the form getaddrinfo produces.
-        literal = "fe80::1%en0".split("%", 1)[0]
-        assert ipaddress.ip_address(literal) == ipaddress.ip_address("fe80::1")
-        # And that the resolver itself still works on a name with real answers.
-        assert resolver.resolve("localhost", 443)
+    def test_a_scoped_address_is_parsed_rather_than_dropped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fake_getaddrinfo(*_args: object, **_kwargs: object) -> list[object]:
+            return [
+                (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("fe80::1%en0", 443, 0, 4)),
+            ]
+
+        monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+        answers = SystemResolver().resolve("scoped.example", 443)
+        assert [answer.ip for answer in answers] == [ipaddress.ip_address("fe80::1")]
+
+    def test_an_unparseable_answer_is_skipped_rather_than_passed_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An address the OS produced but Python cannot parse must not reach the policy."""
+
+        def fake_getaddrinfo(*_args: object, **_kwargs: object) -> list[object]:
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("not-an-address", 443)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+            ]
+
+        monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+        answers = SystemResolver().resolve("mixed.example", 443)
+        assert [answer.ip for answer in answers] == [ipaddress.ip_address("93.184.216.34")]
