@@ -1,0 +1,93 @@
+# Local development stack.
+#
+# NOTE: this stack has not been executed — Docker was unavailable on the authoring machine.
+# Treat the first `docker compose up` as unverified.
+#
+# Redis and a Celery worker are deliberately absent. There are no asynchronous tasks yet, and
+# a queue with nothing on it is infrastructure to maintain for no benefit. They arrive in
+# Phase 1 alongside the download queue that needs them.
+#
+# The credentials here are well-known development placeholders. The application refuses to
+# start in production with any of them (see src/aedifex/config.py).
+
+name: aedifex
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: aedifex
+      # Speeds up the initial cluster creation; safe for a disposable dev database.
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aedifex"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Creates the development bucket, then exits. `docker compose up` will show this container
+  # as completed, which is expected.
+  minio_init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/aedifex-dev &&
+      mc version enable local/aedifex-dev &&
+      echo 'bucket ready'
+      "
+
+  api:
+    build:
+      context: .
+      target: runtime
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      AEDIFEX_ENVIRONMENT: development
+      AEDIFEX_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/aedifex
+      AEDIFEX_STORAGE_ENDPOINT_URL: http://minio:9000
+      AEDIFEX_STORAGE_BUCKET: aedifex-dev
+      AEDIFEX_STORAGE_ACCESS_KEY_ID: minioadmin
+      AEDIFEX_STORAGE_SECRET_ACCESS_KEY: minioadmin
+      AEDIFEX_LOG_FORMAT: console
+      AEDIFEX_LOG_LEVEL: DEBUG
+    ports:
+      - "8000:8000"
+    # Migrations are run explicitly (`make migrate`) rather than on container start. An
+    # automatic migration on boot means N replicas racing to alter the schema.
+
+volumes:
+  postgres_data:
+  minio_data:
