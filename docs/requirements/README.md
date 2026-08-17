@@ -4,6 +4,7 @@
 | --- | --- |
 | [functional.md](functional.md) | FR-xxx: what the system does |
 | [non-functional.md](non-functional.md) | NFR-xxx: how well it must do it |
+| [fetch.md](fetch.md) | FR-1xx: HTTP fetch layer (Slice 3), derived from its threat model |
 
 Every requirement carries a status — **Implemented**, **Partial**, or **Planned** — and every
 implemented one names the test that demonstrates it. "Implemented" without evidence is a claim,

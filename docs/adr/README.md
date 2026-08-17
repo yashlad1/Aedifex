@@ -14,6 +14,7 @@ supersedes the old one, so the reasoning history survives.
 | [0007](0007-defer-queue-infrastructure.md) | Defer queue infrastructure until there are tasks | Accepted |
 | [0008](0008-python-version-policy.md) | Python version policy: support 3.12 and 3.13 | Accepted |
 | [0009](0009-supply-chain-integrity.md) | Supply-chain integrity: lockfile, digest pins, layered scanning | Accepted |
+| [0010](0010-fetch-retry-ssrf-policy.md) | HTTP fetch policy: SSRF validation, retries, rate limiting | Accepted (pre-implementation) |
 
 Write one when a change constrains future work, chooses between viable technologies,
 introduces or removes a boundary, or encodes a policy in code. See
