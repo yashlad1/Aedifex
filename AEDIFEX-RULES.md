@@ -547,6 +547,51 @@ The Phase 0 placeholder-DSN, structlog and dependency-injection bugs should esta
 
 ⸻
 
+21a. Tests Must Verify Externally Meaningful Behavior
+
+A test must assert the behavior the system promises to the outside world, not an internal
+implementation event that happens to correlate with it.
+
+A passing test whose premise depends on an accidental environment condition is a defective
+test, even while green.
+
+Three Phase-1 discoveries established this rule:
+
+Test says FK restriction works
+        ↓
+but watches commit()
+        ↓
+database actually fails at execute()
+
+Readiness test expects DB unavailable
+        ↓
+works accidentally because DB isn't installed
+        ↓
+real DB installation flips the semantics
+
+test teardown
+        ↓
+downgrade base
+        ↓
+shared developer database silently loses schema
+
+Therefore, in review, ask:
+
+* What externally observable promise does this assert?
+* Would it still pass for the right reason on a different machine?
+* Would it still pass for the right reason with infrastructure present?
+* Would it still pass for the right reason with infrastructure absent?
+* Does it depend on something merely absent rather than something asserted?
+* Does it assert where the system actually enforces the rule?
+
+A test that cannot answer these is not evidence.
+
+Corollary: a test must never depend on the absence of infrastructure. If a behavior needs a
+dependency to be missing, inject that condition explicitly rather than inheriting it from the
+environment.
+
+⸻
+
 22. Do Not Over-Mock
 
 Unit tests should isolate logic.
@@ -739,6 +784,52 @@ Do not depend solely on broad ranges such as:
 fastapi>=0.115,<1
 
 for reproducible builds.
+
+⸻
+
+31a. A Declared Range That Blocks a Security Fix Is Itself the Defect
+
+The Phase-1 lock exercise found three advisories, but the important finding was not their
+existence. It was that the declared constraints prevented the patched releases from resolving
+at all:
+
+black>=25.1,<26   blocked the fix in 26.5.1
+pytest>=8.3,<9    blocked the fix in 9.1.1
+
+Required response sequence:
+
+Declared range
+      ↓
+Lock resolution
+      ↓
+Security audit
+      ↓
+If patched release cannot resolve
+      ↓
+Review declared constraint
+      ↓
+Update intentionally
+      ↓
+Full regression suite
+
+Never respond to an advisory by suppressing it. Specifically forbidden:
+
+* adding an ignore/exclusion to silence the audit
+* pinning below the patched version
+* dropping --strict
+* removing the package from the audited set
+* narrowing the audited scope to hide the finding
+
+The healthy result is exactly:
+
+$ make audit
+No known vulnerabilities found
+exit code: 0
+
+Any known vulnerability must make the security gate non-zero. The only permitted deviation is
+a formally documented, time-bounded exception recording the advisory ID, why it does not apply
+or cannot yet be fixed, the compensating control, an expiry date, and an owner. An exception
+without an expiry date is a suppression.
 
 ⸻
 
