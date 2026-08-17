@@ -6,8 +6,8 @@ PYTHON := .venv/bin/python
 VENV := .venv
 
 .DEFAULT_GOAL := help
-.PHONY: help install check lint format typecheck test test-integration test-all \
-        validate-registry migrate migration downgrade up down logs run-api clean
+.PHONY: help install lock check lint format typecheck test test-integration test-all \
+        validate-registry audit migrate migration downgrade up down logs run-api clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -17,8 +17,13 @@ $(VENV):
 	python3 -m venv $(VENV)
 	$(VENV)/bin/pip install --quiet --upgrade pip uv
 
-install: $(VENV) ## Create the virtualenv and install all dependencies
-	$(VENV)/bin/uv pip install -e ".[dev]"
+install: $(VENV) ## Install exactly the locked dependency set
+	# --locked fails if uv.lock has drifted from pyproject.toml, so a developer cannot end up
+	# with a dependency graph that CI will not reproduce.
+	UV_PROJECT_ENVIRONMENT=$(VENV) $(VENV)/bin/uv sync --locked --extra dev
+
+lock: $(VENV) ## Re-resolve uv.lock after changing dependencies in pyproject.toml
+	$(VENV)/bin/uv lock
 
 # --- No infrastructure required ---------------------------------------------
 
@@ -39,13 +44,23 @@ test: ## Run unit tests (no database needed)
 	$(PYTHON) -m pytest tests/unit -q
 
 test-integration: ## Run integration tests (requires PostgreSQL)
-	$(PYTHON) -m pytest tests/integration -q -m integration
+	# REQUIRE_INTEGRATION_TESTS turns an unexpected skip into a failure, so "it passed" cannot
+	# mean "it never ran". Drop the variable to allow skipping when no database is available.
+	REQUIRE_INTEGRATION_TESTS=1 $(PYTHON) -m pytest tests/integration -q -m integration
 
 test-all: ## Run the whole suite
 	$(PYTHON) -m pytest -q
 
 validate-registry: ## Validate the source registry and show review status
 	$(PYTHON) -m scripts.validate_registry
+
+audit: ## Audit the locked dependency set for known vulnerabilities
+	# Audits uv.lock rather than the installed environment: --strict otherwise fails on our
+	# own editable, non-PyPI package, and the lock is what actually ships.
+	$(VENV)/bin/uv export --frozen --no-emit-project --extra dev \
+		--format requirements.txt -o .audit-requirements.txt
+	$(VENV)/bin/pip-audit --strict --disable-pip -r .audit-requirements.txt
+	@rm -f .audit-requirements.txt
 
 # --- Requires docker compose -------------------------------------------------
 

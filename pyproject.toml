@@ -3,8 +3,15 @@ name = "aedifex"
 version = "0.1.0"
 description = "Evidence-grounded auditing platform for construction and infrastructure projects"
 readme = "README.md"
-requires-python = ">=3.12"
+# Supported: 3.12 (floor, tested in CI) and 3.13 (what the container runs).
+# See docs/adr/0008-python-version-policy.md. Tooling below targets the floor.
+requires-python = ">=3.12,<3.14"
 license = { text = "Proprietary" }
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Private :: Do Not Upload",
+]
 
 dependencies = [
     "pydantic>=2.11,<3",
@@ -20,11 +27,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.3,<9",
+    "pytest>=9.0.3,<10",
     "pytest-cov>=6.0,<7",
     "mypy>=1.15,<2",
     "ruff>=0.9,<1",
-    "black>=25.1,<26",
+    "black>=26.3.1,<27",
     "types-pyyaml>=6.0.12,<7",
     "httpx>=0.28,<1",
     "pip-audit>=2.9,<3",

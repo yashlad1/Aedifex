@@ -13,6 +13,7 @@ venv/
 .ruff_cache/
 .coverage
 coverage.xml
+.audit-requirements.txt
 htmlcov/
 
 # Environment: never commit real credentials
