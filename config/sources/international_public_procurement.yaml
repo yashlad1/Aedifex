@@ -1,0 +1,117 @@
+# International and multilateral procurement sources.
+#
+# EVERY SOURCE HERE IS DISABLED AND UNVERIFIED. See the header of
+# india_public_procurement.yaml and DATA_SOURCES.md for the review process.
+#
+# These sources are valuable for a different reason than the Indian portals. Open
+# Contracting publishers emit *structured* records that already relate buyer, tender,
+# supplier, award, contract, value, and documents. That structure is ground truth for the
+# relationship-extraction problem: it lets entity matching be evaluated against real data
+# rather than only against synthetic projects we generated ourselves.
+
+sources:
+  - id: open_contracting_registry
+    name: Open Contracting Data Standard publisher registry
+    description: >
+      Registry of publishers emitting procurement data in the Open Contracting Data
+      Standard, with structured releases linking tenders, awards, contracts, and their
+      supporting documents.
+    country: XX
+    category: open_data_standard
+    retrieval: http_api
+    base_url: https://data.open-contracting.org/
+    robots_policy: not_applicable
+    enabled: false
+    verification_status: unverified
+    crawler: null
+    rate_limit:
+      requests_per_minute: 30
+      max_concurrency: 2
+      min_delay_seconds: 1.0
+    data_use:
+      license: unknown (pending review — varies per publisher)
+      access: public
+      allowed_use: >
+        Pending review. Licence terms differ per publishing authority, so review must
+        record terms per publisher rather than once for the registry as a whole.
+      attribution_required: true
+    document_types:
+      - tender_notice
+      - award_notice
+      - contract
+      - bill_of_quantities
+    file_formats: [json, csv, pdf]
+    notes: >
+      Licence review cannot be done once for this source: each publisher sets its own
+      terms. Enabling it will likely require splitting it into one registry entry per
+      publisher, which the schema supports.
+
+  - id: world_bank_projects
+    name: World Bank projects and procurement notices
+    description: >
+      Development-bank project records and procurement notices for infrastructure works
+      financed by the World Bank, including bidding documents and contract awards.
+    country: XX
+    category: multilateral_procurement
+    retrieval: http_api
+    base_url: https://projects.worldbank.org/
+    robots_policy: not_applicable
+    enabled: false
+    verification_status: unverified
+    crawler: null
+    rate_limit:
+      requests_per_minute: 20
+      max_concurrency: 2
+      min_delay_seconds: 2.0
+      max_documents_per_run: 500
+    data_use:
+      license: unknown (pending review)
+      access: public
+      allowed_use: >
+        Pending review. No collection is permitted until the terms of use and the
+        applicable open-data licence have been assessed and recorded here.
+      attribution_required: true
+    document_types:
+      - tender_notice
+      - contract
+      - award_notice
+      - technical_specification
+    file_formats: [pdf, json, csv, xlsx]
+    notes: >
+      Documents span many countries and languages, which makes this a useful stress test
+      for terminology mapping but a poor first crawler target.
+
+  - id: ted_europa
+    name: Tenders Electronic Daily (EU)
+    description: >
+      European Union public procurement journal publishing contract notices and award
+      notices for works, supplies, and services above EU thresholds.
+    country: XX
+    category: government_procurement
+    retrieval: http_api
+    base_url: https://ted.europa.eu/
+    robots_policy: not_applicable
+    enabled: false
+    verification_status: unverified
+    crawler: null
+    rate_limit:
+      requests_per_minute: 20
+      max_concurrency: 2
+      min_delay_seconds: 2.0
+    data_use:
+      license: unknown (pending review)
+      access: public
+      allowed_use: >
+        Pending review. No collection is permitted until the terms of use and reuse
+        conditions have been assessed and recorded here.
+      attribution_required: true
+      contains_personal_data: true
+    document_types:
+      - tender_notice
+      - award_notice
+      - contract
+    file_formats: [xml, pdf, csv]
+    notes: >
+      Notices are highly structured and consistently schema'd, which makes this the
+      easiest source to parse but the least representative of the messy scanned evidence
+      the audit engine ultimately has to handle.

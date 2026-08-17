@@ -1,0 +1,165 @@
+# Indian public procurement sources.
+#
+# EVERY SOURCE HERE IS DISABLED AND UNVERIFIED.
+#
+# These are candidates identified from the project brief, recorded so that review work is
+# tracked in version control. Nobody has yet read these portals' terms of use, so no
+# collection may occur: the registry schema refuses to enable a source whose
+# verification_status is not `approved`.
+#
+# To enable one, a human must:
+#   1. Read the portal's terms of use and robots.txt.
+#   2. Record the licence, permitted use, reviewer, and review date below.
+#   3. Set verification_status: approved (or blocked, with the reason in `notes`).
+#   4. Implement and register a crawler, then set enabled: true.
+#
+# See DATA_SOURCES.md for the review checklist.
+
+sources:
+  - id: cppp_eprocure
+    name: Central Public Procurement Portal (CPPP)
+    description: >
+      Government of India central portal aggregating tender notices, bid documents, and
+      award information published by central ministries and public-sector undertakings.
+    country: IN
+    category: government_procurement
+    retrieval: http_crawl
+    base_url: https://eprocure.gov.in/
+    robots_policy: respect
+    enabled: false
+    verification_status: unverified
+    crawler: null
+    rate_limit:
+      requests_per_minute: 10
+      max_concurrency: 1
+      min_delay_seconds: 3.0
+      max_documents_per_run: 500
+    data_use:
+      license: unknown (pending review)
+      access: public
+      allowed_use: >
+        Pending review. No collection is permitted until the portal's terms of use have
+        been assessed and recorded here.
+      attribution_required: true
+      contains_personal_data: true
+    document_types:
+      - tender_notice
+      - bill_of_quantities
+      - technical_specification
+      - award_notice
+      - corrigendum
+      - contract
+    file_formats: [pdf, xlsx, xls, zip, html]
+    notes: >
+      Tender attachments are frequently distributed as ZIP archives containing mixed
+      formats, so archive expansion must be bounded against decompression bombs before
+      this source is enabled. Bidder documents may contain personal data (names, PAN,
+      contact details) and require PII screening.
+
+  - id: gem_marketplace
+    name: Government e-Marketplace (GeM)
+    description: >
+      Government of India procurement marketplace. Contract and bid information is
+      published, but most functionality sits behind registration.
+    country: IN
+    category: government_procurement
+    retrieval: http_crawl
+    base_url: https://gem.gov.in/
+    robots_policy: respect
+    enabled: false
+    verification_status: unverified
+    crawler: null
+    rate_limit:
+      requests_per_minute: 6
+      max_concurrency: 1
+      min_delay_seconds: 5.0
+      max_documents_per_run: 200
+    data_use:
+      license: unknown (pending review)
+      access: registration_required
+      allowed_use: >
+        Pending review. Only content reachable without authentication may ever be
+        considered, and authentication boundaries must not be crossed.
+      attribution_required: true
+      contains_personal_data: true
+    document_types:
+      - tender_notice
+      - purchase_order
+      - contract
+      - award_notice
+    file_formats: [pdf, html]
+    notes: >
+      Marked registration_required. Review must establish precisely which pages are
+      publicly reachable; anything behind a login is out of scope permanently, not
+      pending.
+
+  - id: cpwd
+    name: Central Public Works Department (CPWD)
+    description: >
+      Central government construction agency publishing tenders, schedules of rates, and
+      technical specifications for building and infrastructure works.
+    country: IN
+    category: government_procurement
+    retrieval: http_crawl
+    base_url: https://cpwd.gov.in/
+    robots_policy: respect
+    enabled: false
+    verification_status: unverified
+    crawler: null
+    rate_limit:
+      requests_per_minute: 10
+      max_concurrency: 1
+      min_delay_seconds: 3.0
+      max_documents_per_run: 300
+    data_use:
+      license: unknown (pending review)
+      access: public
+      allowed_use: >
+        Pending review. No collection is permitted until the terms of use have been
+        assessed and recorded here.
+      attribution_required: true
+    document_types:
+      - tender_notice
+      - bill_of_quantities
+      - technical_specification
+    file_formats: [pdf, xlsx, xls, zip]
+    notes: >
+      The CPWD schedule of rates and specification documents are the highest-value
+      material here: they are the reference data against which BOQ line items and material
+      grades can be checked.
+
+  - id: nhai
+    name: National Highways Authority of India (NHAI)
+    description: >
+      National highway development authority publishing tender notices, contract
+      documents, and technical specifications for road and bridge projects.
+    country: IN
+    category: government_procurement
+    retrieval: http_crawl
+    base_url: https://nhai.gov.in/
+    robots_policy: respect
+    enabled: false
+    verification_status: unverified
+    crawler: null
+    rate_limit:
+      requests_per_minute: 10
+      max_concurrency: 1
+      min_delay_seconds: 3.0
+      max_documents_per_run: 300
+    data_use:
+      license: unknown (pending review)
+      access: public
+      allowed_use: >
+        Pending review. No collection is permitted until the terms of use have been
+        assessed and recorded here.
+      attribution_required: true
+    document_types:
+      - tender_notice
+      - contract
+      - technical_specification
+      - bill_of_quantities
+      - inspection_report
+    file_formats: [pdf, xlsx, zip]
+    notes: >
+      Highway projects are a good fit for the material-certificate and inspection-record
+      rules, since bitumen, aggregate, and steel grades are specified explicitly.
