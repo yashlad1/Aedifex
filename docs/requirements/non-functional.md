@@ -35,7 +35,7 @@ The system audits others, so it must itself be auditable.
 | NFR-021 | No credential may be hardcoded or committed. | Implemented — `SecretStr`, gitignored `.env`, gitleaks in CI |
 | NFR-022 | Production must fail to start with development credentials. | Implemented |
 | NFR-023 | Containers run as a non-root user. | Implemented — asserted in CI |
-| NFR-024 | Dependencies are scanned for known vulnerabilities on every change. | Implemented — `pip-audit` in CI |
+| NFR-024 | Dependencies are scanned for known vulnerabilities on every change. | Implemented — `pip-audit --strict` in CI |
 | NFR-025 | Untrusted filenames must never influence filesystem or object paths. | Implemented |
 | NFR-026 | Authentication, authorisation, and RBAC required before any non-private deployment. | Planned |
 | NFR-027 | Outbound requests must be restricted to a per-source allowlist, with redirects re-validated. | Planned |
@@ -99,9 +99,28 @@ useless for many workflows regardless of its accuracy.
 | NFR-081 | All code passes lint and format checks. | Implemented — ruff, black |
 | NFR-082 | Module boundaries are explicit and one-directional. | Implemented — documented in ARCHITECTURE.md |
 | NFR-083 | Architectural decisions are recorded as ADRs. | Implemented — `docs/adr/` |
-| NFR-084 | Schema changes require a reviewed, reversible migration. | Implemented — enforced by test and CI |
+| NFR-084 | Schema changes require a reviewed, reversible migration. | Implemented — verified against real PostgreSQL 17.11: `alembic check` clean, downgrade/upgrade round-trip |
 | NFR-085 | A developer can run all infrastructure-free checks from a clean checkout with two commands. | Implemented — `make install && make check` |
-| NFR-086 | Local infrastructure is reproducible. | Partial — compose authored, not yet executed |
+| NFR-086 | Local infrastructure is reproducible. | Partial — PostgreSQL verified natively; Compose still not executed |
+| NFR-087 | A commit resolves to exactly one dependency graph. | Implemented — committed `uv.lock`; all installs use `uv sync --locked`, which fails on drift |
+| NFR-088 | Supported Python versions are explicit and tested. | Implemented — 3.12 and 3.13, both verified locally; CI matrix ([ADR 0008](../adr/0008-python-version-policy.md)) |
+| NFR-089 | An unexpectedly skipped integration test must fail rather than report green. | Implemented — `REQUIRE_INTEGRATION_TESTS=1` in CI and `make test-integration` |
+
+## Supply chain
+
+Reproducibility is a precondition for the product's central promise: a finding that cannot be
+reproduced cannot be defended. See [ADR 0009](../adr/0009-supply-chain-integrity.md).
+
+| ID | Requirement | Status |
+| --- | --- | --- |
+| NFR-100 | Vulnerable or badly licensed dependencies are blocked at introduction, before merge. | Implemented — `dependency-review-action`, fails on high severity and on copyleft licences |
+| NFR-101 | Our own code is scanned by a data-flow-aware SAST tool, not only pattern rules. | Implemented — CodeQL `security-and-quality` on PRs, main, and weekly |
+| NFR-102 | Container images are scanned for OS and library vulnerabilities. | Implemented — Trivy: reporting on PRs, blocking on the weekly run |
+| NFR-103 | Third-party build inputs are immutable. | Implemented — base images pinned by digest; GitHub Actions pinned to commit SHAs |
+| NFR-104 | Vulnerabilities disclosed *after* code merged are detected. | Implemented — scheduled weekly security workflow |
+| NFR-105 | An SBOM is produced for every built image. | Implemented — SPDX via `anchore/sbom-action` |
+| NFR-106 | Dependency updates are proposed automatically but never applied silently. | Implemented — Dependabot weekly PRs; no auto-merge |
+| NFR-107 | Build provenance attests what produced a release artifact. | Planned — SLSA provenance |
 
 ## Availability
 

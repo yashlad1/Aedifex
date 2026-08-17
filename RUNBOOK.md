@@ -6,6 +6,27 @@ Operational procedures for the acquisition pipeline.
 > and worker procedures are marked *(Phase 1)* and are written as the intended design, not as
 > tested procedure.
 
+## Running PostgreSQL without Docker
+
+Docker is not required for the database. This is the path used to verify migrations and the
+integration suite:
+
+```bash
+brew install postgresql@17
+brew services start postgresql@17
+export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"
+createdb aedifex
+
+export AEDIFEX_ENVIRONMENT=test
+export AEDIFEX_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/aedifex
+make migrate
+make test-integration
+```
+
+`brew services stop postgresql@17` to stop it. Note the Homebrew default superuser is your OS
+username; the commands above assume a `postgres` role exists — create it with
+`createuser -s postgres` if `psql` reports it missing.
+
 ## Health checks
 
 | Endpoint | Meaning | On failure |

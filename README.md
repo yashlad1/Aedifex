@@ -22,11 +22,11 @@ mapping, obligation extraction, and explanation. A finding is never the unverifi
 a model, and every finding points back to an exact page and bounding box in a source
 document.
 
-## Current status: Phase 0 complete
+## Current status: Phase 0 complete, Phase 1 starting
 
-This repository is at **Phase 0 of 10** — the engineering foundation and the source
-registry. The audit engine described above does not exist yet, and nothing here fabricates
-it.
+The engineering foundation, the source registry, and reproducibility/supply-chain controls are
+done. The **current product is the data acquisition platform** — not the auditor. The audit
+engine described above does not exist yet, and nothing here fabricates it.
 
 | Area | State |
 | --- | --- |
@@ -36,9 +36,12 @@ it.
 | Immutable content-addressed storage layout | ✅ Implemented, tested |
 | Source registry (schema, loader, safety invariants) | ✅ Implemented, tested |
 | Structured logging | ✅ Implemented, tested |
-| Database models + initial migration | ⚠️ Authored; verified in CI against real PostgreSQL |
+| Database models + initial migration | ✅ Verified against real PostgreSQL 17.11 (`alembic check` clean, downgrade/upgrade round-trip) |
 | Read-only API (`/health`, `/sources`) | ✅ Implemented, tested |
-| Docker Compose stack | ⚠️ Authored; **never executed** (no Docker on the authoring machine) |
+| Integration tests (22) | ✅ Executed and passing against real PostgreSQL |
+| Reproducible dependency lock (`uv.lock`) | ✅ 73 packages; `--locked` installs everywhere |
+| Supply-chain scanning (CodeQL, Trivy, dependency review, SBOM) | ⚠️ Workflows authored; **never executed** (no CI run yet) |
+| Docker Compose stack / image build | ⚠️ Authored; **never executed** (no Docker on the authoring machine) |
 | Crawlers, downloaders | ❌ Phase 1 |
 | OCR, parsing, classification | ❌ Phase 4 |
 | Synthetic generator, anomaly injection | ❌ Phase 2 |
@@ -51,13 +54,13 @@ somebody does. See [DATA_SOURCES.md](DATA_SOURCES.md).
 
 ## Quick start
 
-Requires Python 3.12+. [uv](https://docs.astral.sh/uv/) is the supported package manager.
+Requires Python **3.12 or 3.13** (see [ADR 0008](docs/adr/0008-python-version-policy.md)).
+[uv](https://docs.astral.sh/uv/) is the supported package manager.
 
 ```bash
 git clone <repo> && cd Aedifex
 
-python3 -m venv .venv && .venv/bin/pip install uv
-.venv/bin/uv pip install -e ".[dev]"
+make install     # creates .venv and installs the exact locked dependency set
 
 # Everything below runs with no database, no network, and no Docker.
 make test        # unit tests
@@ -82,11 +85,20 @@ make run-api                           # http://localhost:8000/docs
 make test-integration
 ```
 
-> **Caveat:** the Compose stack and the Alembic migration have not been executed on the
-> authoring machine — Docker and PostgreSQL were unavailable. They are exercised by CI
-> (`.github/workflows/ci.yml`) against real PostgreSQL, including `alembic check` to prove
-> the migration matches the ORM models. Treat the first local `docker compose up` as
-> unverified and report anything that breaks.
+> **Caveat:** the Compose stack and the container image have still never been executed —
+> Docker is unavailable on the authoring machine. CI builds and smoke-tests the image.
+>
+> The database layer, however, *is* verified: migrations, `alembic check`, a full
+> downgrade/upgrade round-trip, and all 22 integration tests were run against real
+> PostgreSQL 17.11. If you also lack Docker, you can reproduce that without it:
+
+```bash
+brew install postgresql@17 && brew services start postgresql@17
+createdb aedifex
+export AEDIFEX_ENVIRONMENT=test
+export AEDIFEX_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/aedifex
+make migrate && make test-integration
+```
 
 ## Repository layout
 
@@ -104,11 +116,12 @@ src/aedifex/
     observability/          structured logging
 apps/api/                   FastAPI read-only metadata API
 config/sources/             the source registry (data, not code)
+uv.lock                     pinned dependency graph; installs use --locked
 data/                       raw / processed / normalized / synthetic / labels
 docs/requirements/          numbered functional + non-functional requirements
 docs/adr/                   architecture decision records
 migrations/                 Alembic
-tests/{unit,integration,e2e}
+tests/{unit,integration}
 ```
 
 ## Documentation

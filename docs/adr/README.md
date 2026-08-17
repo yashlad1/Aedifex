@@ -12,6 +12,8 @@ supersedes the old one, so the reasoning history survives.
 | [0005](0005-synchronous-sqlalchemy.md) | Synchronous SQLAlchemy | Accepted |
 | [0006](0006-source-registry-as-data.md) | Source registry as data, with a mandatory review gate | Accepted |
 | [0007](0007-defer-queue-infrastructure.md) | Defer queue infrastructure until there are tasks | Accepted |
+| [0008](0008-python-version-policy.md) | Python version policy: support 3.12 and 3.13 | Accepted |
+| [0009](0009-supply-chain-integrity.md) | Supply-chain integrity: lockfile, digest pins, layered scanning | Accepted |
 
 Write one when a change constrains future work, chooses between viable technologies,
 introduces or removes a boundary, or encodes a policy in code. See

@@ -45,9 +45,15 @@ wrong, change the rule deliberately in its own commit.
 ## Testing
 
 ```
-tests/unit/          No database, no network. Must stay fast (currently <1s).
+tests/unit/          No database, no network. Must stay fast (currently ~0.5s).
 tests/integration/   Real PostgreSQL. Marked, and skipped when unavailable.
 ```
+
+**A skipped test must never look like a verified one.** Set
+`REQUIRE_INTEGRATION_TESTS=1` (as `make test-integration` and CI do) to turn an unexpected skip
+into a failure. Unit tests must never depend on whether infrastructure happens to be running
+locally — an early readiness test did, and it silently inverted meaning the day a database was
+installed.
 
 Principles:
 
@@ -99,6 +105,20 @@ operations in it.
 
 ## Dependencies
 
-Adding one requires a reason. Prefer the standard library. Pin with a compatible-release range
-in `pyproject.toml`, and remove anything that stops being used — `pip-audit` runs in CI and
-every dependency is future attack surface.
+Adding one requires a reason. Prefer the standard library. Remove anything that stops being
+used — every dependency is future attack surface.
+
+Two steps, always:
+
+```bash
+# 1. Declare intent: add the range to pyproject.toml
+# 2. Re-resolve the lock
+make lock
+```
+
+`make install` and CI both use `uv sync --locked`, which **fails** if the lock has drifted from
+`pyproject.toml`. So forgetting step 2 is caught locally, not in review.
+
+Read `pyproject.toml` for intent; treat `uv.lock` as generated output. A dependency change is
+also reviewed by `dependency-review-action` on the PR, which blocks high-severity CVEs and
+copyleft licences before merge — see [ADR 0009](docs/adr/0009-supply-chain-integrity.md).
