@@ -31,13 +31,18 @@ WORKDIR /build
 # not invalidate the dependency layer. --no-install-project defers the project itself.
 COPY pyproject.toml uv.lock README.md ./
 COPY src/aedifex/__init__.py src/aedifex/__init__.py
-RUN uv sync --locked --no-dev --no-install-project
+RUN uv sync --locked --no-dev --no-install-project --no-editable
 
 COPY src/ src/
 COPY apps/ apps/
 COPY migrations/ migrations/
 COPY alembic.ini ./
-RUN uv sync --locked --no-dev
+# --no-editable is required, not cosmetic. `uv sync` installs the project in editable mode by
+# default, which writes an _editable_impl_aedifex.pth pointing at /build/src. That path does
+# not exist in the runtime stage, so the copied venv could not import `aedifex` at all and the
+# image failed at startup with ModuleNotFoundError. Installing non-editable puts the package
+# into site-packages, which is what makes the venv self-contained enough to copy.
+RUN uv sync --locked --no-dev --no-editable
 
 
 FROM python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a AS runtime
@@ -54,7 +59,10 @@ RUN groupadd --system --gid 1001 aedifex \
 COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app
-COPY --chown=aedifex:aedifex src/ src/
+# `src/` is deliberately absent: the aedifex package is installed into the venv's
+# site-packages (non-editable), so copying the sources again would ship two copies of the same
+# code that could diverge. `apps/` is not part of the installed package and is imported from
+# the working directory, so it must be here.
 COPY --chown=aedifex:aedifex apps/ apps/
 COPY --chown=aedifex:aedifex migrations/ migrations/
 COPY --chown=aedifex:aedifex config/ config/

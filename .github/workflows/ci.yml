@@ -207,6 +207,27 @@ jobs:
           format: spdx-json
           artifact-name: aedifex-sbom.spdx.json
 
+      - name: Assert the application package is importable in the image
+        # Regression guard. `uv sync` installs the project editable by default, which writes a
+        # .pth pointing at the builder stage's /build/src — a path absent from the runtime
+        # stage. The image built and passed every local test while being unable to import
+        # `aedifex` at all. Checked before the server starts so the failure names the cause
+        # instead of appearing as an unexplained startup timeout.
+        run: |
+          docker run --rm --entrypoint python aedifex:ci \
+            -c "import aedifex, apps.api.main; print('importable:', aedifex.__version__)"
+
+      - name: Assert production hardening survives into the image
+        # A container that would boot in production with placeholder credentials is a
+        # packaging defect, not just a configuration one.
+        run: |
+          if docker run --rm -e AEDIFEX_ENVIRONMENT=production aedifex:ci 2>&1 \
+               | grep -q "invalid production configuration"; then
+            echo "production configuration correctly rejected"
+          else
+            echo "image did NOT reject placeholder production credentials"; exit 1
+          fi
+
       - name: Smoke test the image
         # Proves the image starts, serves /health, and does not run as root.
         run: |
