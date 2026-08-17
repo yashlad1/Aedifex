@@ -1,0 +1,40 @@
+# Fast, local checks only. Anything slow (mypy over the whole tree, integration tests) runs
+# in CI rather than on every commit.
+#
+# Install once:  .venv/bin/pre-commit install
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: detect-private-key
+      - id: check-case-conflict
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+        # Formatting is owned by black; ruff-format would fight it.
+        stages: [manual]
+
+  - repo: https://github.com/psf/black
+    rev: 25.1.0
+    hooks:
+      - id: black
+
+  - repo: local
+    hooks:
+      - id: validate-registry
+        name: validate source registry
+        entry: .venv/bin/python -m scripts.validate_registry
+        language: system
+        files: ^config/sources/.*\.ya?ml$
+        pass_filenames: false

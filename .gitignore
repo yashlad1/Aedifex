@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Environment: never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Collected data. The corpus lives in object storage, not in git; the directory structure is
+# kept via .gitkeep files so a clean checkout has somewhere to write.
+data/raw/*
+data/processed/*
+data/normalized/*
+data/synthetic/*
+data/labels/*
+!data/**/.gitkeep
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
