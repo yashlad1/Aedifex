@@ -1,9 +1,11 @@
 # Continuous integration.
 #
-# Split into jobs that need no infrastructure (fast, run first) and jobs that need real
-# PostgreSQL. The `database` job is the authoritative check that migrations match the ORM
-# models: `alembic check` fails if they have drifted, which is the one thing the offline unit
-# test in tests/unit/test_migration_matches_models.py can only approximate.
+# Third-party actions are pinned to commit SHAs, not mutable tags, so a compromised or retagged
+# action cannot silently enter the build. The comment after each pin records the human-readable
+# version; Dependabot updates both together.
+#
+# Every install uses `uv sync --locked`, which fails if uv.lock has drifted from pyproject.toml.
+# A commit therefore resolves to exactly one dependency graph.
 
 name: CI
 
@@ -18,30 +20,33 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: "3.13"
   FORCE_COLOR: "1"
+  # Turn an unexpectedly skipped integration test into a failure. A skipped test must never
+  # be mistaken for a verified one.
+  REQUIRE_INTEGRATION_TESTS: "1"
 
 permissions:
   contents: read
 
 jobs:
   quality:
-    name: Lint, types, unit tests
+    name: Lint, types, unit tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both supported versions are tested. 3.12 is the declared floor; 3.13 is what the
+        # container runs. See docs/adr/0008-python-version-policy.md.
+        python-version: ["3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
 
-      - name: Set up Python
-        run: uv python install ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: |
-          uv venv --python ${{ env.PYTHON_VERSION }}
-          uv pip install -e ".[dev]"
+      - name: Install from lockfile
+        run: uv sync --locked --extra dev --python ${{ matrix.python-version }}
 
       - name: Lint
         run: |
@@ -62,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -78,26 +83,21 @@ jobs:
       AEDIFEX_ENVIRONMENT: test
       AEDIFEX_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/aedifex
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
 
-      - name: Set up Python
-        run: uv python install ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: |
-          uv venv --python ${{ env.PYTHON_VERSION }}
-          uv pip install -e ".[dev]"
+      - name: Install from lockfile
+        run: uv sync --locked --extra dev
 
       - name: Apply migrations
         run: uv run alembic upgrade head
 
       - name: Assert migrations match the ORM models
-        # Fails if the models and migrations have drifted, which would mean a developer
-        # changed a model without generating a migration.
+        # Fails if models and migrations have drifted, which would mean someone changed a
+        # model without generating a migration.
         run: uv run alembic check
 
       - name: Assert migrations are reversible
@@ -108,45 +108,71 @@ jobs:
       - name: Integration tests
         run: uv run pytest tests/integration -q -m integration
 
+  dependency-review:
+    name: Dependency review
+    # Catches a newly introduced vulnerable or badly licensed dependency during review,
+    # rather than after merge. Pull requests only, since it diffs against the base ref.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+          # Copyleft licences are incompatible with how this corpus will be redistributed.
+          deny-licenses: GPL-3.0, AGPL-3.0, LGPL-3.0
+
   security:
-    name: Dependency and secret scanning
+    name: Secret and vulnerability scanning
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # gitleaks needs history to scan commits, not just the working tree.
+          # gitleaks scans commit history, not just the working tree. A secret removed from
+          # HEAD but present in history is still leaked.
           fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
 
-      - name: Set up Python
-        run: uv python install ${{ env.PYTHON_VERSION }}
+      - name: Install from lockfile
+        run: uv sync --locked --extra dev
 
-      - name: Install dependencies
+      - name: Audit locked dependencies for known vulnerabilities
         run: |
-          uv venv --python ${{ env.PYTHON_VERSION }}
-          uv pip install -e ".[dev]"
+          # Audit the *locked* dependency set rather than the installed environment.
+          # `pip-audit --strict` against the environment fails on our own package, which is
+          # installed editable and not on PyPI ("distribution marked as editable"), and
+          # --skip-editable does not satisfy --strict either. Exporting from uv.lock also
+          # audits exactly what is shipped, which is the more meaningful question.
+          uv export --frozen --no-emit-project --extra dev --format requirements.txt \
+            -o /tmp/locked-requirements.txt
+          uv run pip-audit --strict --disable-pip -r /tmp/locked-requirements.txt
 
-      - name: Audit dependencies for known vulnerabilities
-        run: uv run pip-audit --strict
-
-      - name: Scan for committed secrets
-        uses: gitleaks/gitleaks-action@v2
+      - name: Scan git history for secrets
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   container:
-    name: Container build
+    name: Container build, scan, and smoke test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           target: runtime
@@ -156,8 +182,33 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Scan image for OS and library vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: aedifex:ci
+          format: sarif
+          output: trivy-image.sarif
+          severity: HIGH,CRITICAL
+          # Report rather than block: a base-image CVE with no available fix must not stop
+          # unrelated work. The scheduled scan and Dependabot drive remediation.
+          exit-code: "0"
+          ignore-unfixed: true
+
+      - name: Upload image scan results
+        uses: github/codeql-action/upload-sarif@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: aedifex:ci
+          format: spdx-json
+          artifact-name: aedifex-sbom.spdx.json
+
       - name: Smoke test the image
-        # Proves the image starts, serves /health, and runs as a non-root user.
+        # Proves the image starts, serves /health, and does not run as root.
         run: |
           docker run -d --name aedifex_ci -p 8000:8000 \
             -e AEDIFEX_ENVIRONMENT=development \

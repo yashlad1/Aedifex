@@ -1,17 +1,29 @@
 """Tests for the read-only acquisition API.
 
-No database is required: the readiness endpoint is expected to report the database as
-unavailable, which is itself one of the behaviours worth testing.
+No database is required, and none is used even if one is running: the database probe is
+always overridden so both readiness outcomes are covered deterministically.
+
+This file previously asserted that readiness reports the database as *unavailable*, which
+passed only because no PostgreSQL was installed on the machine. The moment one was, the test
+inverted meaning and failed. A unit test must not depend on ambient infrastructure — the real
+probe is exercised in ``tests/integration/test_database.py`` instead.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
-from apps.api.main import REQUEST_ID_HEADER, create_app, registry_dependency, settings_dependency
+from apps.api.main import (
+    REQUEST_ID_HEADER,
+    create_app,
+    database_probe_dependency,
+    registry_dependency,
+    settings_dependency,
+)
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
 from aedifex.acquisition.registry import load_registry
 from aedifex.config import Environment, Settings
@@ -19,14 +31,52 @@ from aedifex.config import Environment, Settings
 REGISTRY_DIR = Path(__file__).resolve().parents[2] / "config" / "sources"
 
 
+def _unavailable_probe() -> Callable[[], None]:
+    """A database probe that always fails, for deterministic readiness tests."""
+
+    def probe() -> None:
+        raise OperationalError("SELECT 1", {}, Exception("connection refused"))
+
+    return probe
+
+
+def _healthy_probe() -> Callable[[], None]:
+    """A database probe that always succeeds."""
+
+    def probe() -> None:
+        return None
+
+    return probe
+
+
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    """A client wired to the repository's real registry, with no ambient configuration."""
+    """A client wired to the repository's real registry, with no ambient configuration.
+
+    The database probe is overridden, so these tests behave identically whether or not a
+    PostgreSQL instance happens to be running on the developer's machine. An earlier version
+    depended on that ambient state and silently inverted meaning once a database existed.
+    """
     app = create_app()
     settings = Settings(environment=Environment.TEST, source_registry_dir=str(REGISTRY_DIR))
     registry = load_registry(REGISTRY_DIR)
     app.dependency_overrides[settings_dependency] = lambda: settings
     app.dependency_overrides[registry_dependency] = lambda: registry
+    app.dependency_overrides[database_probe_dependency] = _unavailable_probe
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def ready_client() -> Iterator[TestClient]:
+    """A client whose dependencies all report healthy."""
+    app = create_app()
+    settings = Settings(environment=Environment.TEST, source_registry_dir=str(REGISTRY_DIR))
+    registry = load_registry(REGISTRY_DIR)
+    app.dependency_overrides[settings_dependency] = lambda: settings
+    app.dependency_overrides[registry_dependency] = lambda: registry
+    app.dependency_overrides[database_probe_dependency] = _healthy_probe
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -41,14 +91,25 @@ class TestHealth:
         assert body["environment"] == "test"
         assert body["version"]
 
-    def test_readiness_reports_each_dependency(self, client: TestClient) -> None:
-        """With no database running, readiness must fail loudly and say which check failed."""
+    def test_readiness_fails_when_the_database_is_unreachable(self, client: TestClient) -> None:
+        """Readiness must fail loudly and name the check that failed."""
         response = client.get("/health/ready")
         assert response.status_code == 503
         body = response.json()
         assert body["status"] == "not_ready"
         assert body["checks"]["registry"].startswith("ok")
         assert body["checks"]["database"].startswith("unavailable")
+
+    def test_readiness_succeeds_when_every_dependency_is_healthy(
+        self, ready_client: TestClient
+    ) -> None:
+        """The positive path needs its own deterministic coverage, not ambient infrastructure."""
+        response = ready_client.get("/health/ready")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "ready"
+        assert body["checks"]["database"] == "ok"
+        assert body["checks"]["registry"].startswith("ok")
 
     def test_readiness_does_not_leak_connection_details(self, client: TestClient) -> None:
         """An unauthenticated caller must not learn internal hostnames or credentials."""
@@ -161,6 +222,7 @@ class TestRegistryFailure:
             source_registry_dir=str(tmp_path / "does_not_exist"),
         )
         app.dependency_overrides[settings_dependency] = lambda: settings
+        app.dependency_overrides[database_probe_dependency] = _healthy_probe
         with TestClient(app, raise_server_exceptions=False) as client:
             yield client
         app.dependency_overrides.clear()

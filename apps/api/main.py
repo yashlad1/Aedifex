@@ -24,6 +24,7 @@ from aedifex import __version__
 from aedifex.acquisition.registry import SourceDefinition, SourceRegistry, get_registry
 from aedifex.config import Settings, get_settings
 from aedifex.errors import SourceRegistryError
+from aedifex.infrastructure.database.session import session_scope
 from aedifex.infrastructure.observability.logging import (
     bind_job_context,
     configure_logging,
@@ -166,6 +167,29 @@ def registry_dependency(settings: SettingsDep) -> SourceRegistry:
 RegistryDep = Annotated[SourceRegistry, Depends(registry_dependency)]
 
 
+def probe_database() -> None:
+    """Execute a trivial query to prove the database is reachable.
+
+    Raises whatever the driver raises; the caller decides how to report it.
+    """
+    with session_scope() as session:
+        session.execute(text("SELECT 1"))
+
+
+def database_probe_dependency() -> Callable[[], None]:
+    """Provide the database liveness probe.
+
+    Injected rather than called directly so readiness can be tested deterministically. The
+    first version of this endpoint reached for the process-wide session, which made its
+    unit test depend on whether a database happened to be running locally — it passed only
+    because no database was installed, and started failing the moment one was.
+    """
+    return probe_database
+
+
+DatabaseProbeDep = Annotated[Callable[[], None], Depends(database_probe_dependency)]
+
+
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
@@ -217,7 +241,9 @@ def create_app() -> FastAPI:
         return HealthResponse(version=__version__, environment=settings.environment.value)
 
     @app.get("/health/ready", response_model=ReadinessResponse, tags=["operations"])
-    def readiness(response: Response, registry: RegistryDep) -> ReadinessResponse:
+    def readiness(
+        response: Response, registry: RegistryDep, probe_database: DatabaseProbeDep
+    ) -> ReadinessResponse:
         """Readiness: dependencies are reachable, so traffic may be routed here.
 
         Returns 503 with per-check detail when a dependency is down, rather than raising,
@@ -226,10 +252,7 @@ def create_app() -> FastAPI:
         checks: dict[str, str] = {"registry": f"ok ({len(registry)} sources)"}
 
         try:
-            from aedifex.infrastructure.database.session import session_scope
-
-            with session_scope() as session:
-                session.execute(text("SELECT 1"))
+            probe_database()
             checks["database"] = "ok"
         except Exception as error:
             # Only the exception type is exposed: a DSN or driver message could disclose

@@ -11,6 +11,7 @@ and the deduplication design behaves as intended when two URLs resolve to one do
 from __future__ import annotations
 
 import hashlib
+import os
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -48,21 +49,42 @@ def settings() -> Settings:
 
 @pytest.fixture(scope="module")
 def engine(settings: Settings) -> Iterator[Engine]:
-    """Provide an engine, skipping the module if no database is reachable."""
+    """Provide an engine, skipping the module if no database is reachable.
+
+    When ``REQUIRE_INTEGRATION_TESTS=1`` the module fails instead of skipping. CI sets it, so
+    a misconfigured service container can never quietly turn the integration suite into a
+    no-op that still reports green — a skipped test must never look like a verified one.
+
+    The variable is deliberately not prefixed ``AEDIFEX_``: unrecognised variables with that
+    prefix are rejected by :class:`~aedifex.config.Settings` as configuration typos.
+    """
     candidate = build_engine(settings)
     try:
         with candidate.connect() as connection:
             connection.execute(text("SELECT 1"))
     except (OperationalError, DBAPIError) as error:
         candidate.dispose()
-        pytest.skip(f"PostgreSQL is not reachable: {type(error).__name__}")
+        message = f"PostgreSQL is not reachable: {type(error).__name__}"
+        if os.environ.get("REQUIRE_INTEGRATION_TESTS") == "1":
+            pytest.fail(
+                f"{message}. REQUIRE_INTEGRATION_TESTS=1 forbids skipping; "
+                f"check that the database service is running and AEDIFEX_DATABASE_URL is correct."
+            )
+        pytest.skip(message)
     yield candidate
     candidate.dispose()
 
 
 @pytest.fixture(scope="module")
 def _schema(engine: Engine, settings: Settings) -> Iterator[None]:
-    """Apply migrations, then reverse them, proving both directions work."""
+    """Exercise a full downgrade/upgrade cycle, then leave the database at ``head``.
+
+    A migration that cannot be reversed cannot be safely deployed, so the reversal is
+    tested here rather than assumed. The final ``upgrade`` matters: an earlier version left
+    the database at ``base`` on teardown, which made a subsequent ``alembic check`` report a
+    false drift and silently emptied the schema of anyone using one local database for both
+    development and tests.
+    """
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(PROJECT_ROOT / "migrations"))
     config.set_main_option("sqlalchemy.url", str(settings.database_url))
@@ -70,8 +92,8 @@ def _schema(engine: Engine, settings: Settings) -> Iterator[None]:
     command.downgrade(config, "base")
     command.upgrade(config, "head")
     yield
-    # A migration that cannot be reversed cannot be safely deployed.
     command.downgrade(config, "base")
+    command.upgrade(config, "head")
 
 
 @pytest.fixture
@@ -257,9 +279,17 @@ class TestDeduplicationWithProvenance:
         )
         session.commit()
 
-        session.execute(text("DELETE FROM documents WHERE id = :id"), {"id": str(document.id)})
-        with pytest.raises(IntegrityError):
-            session.commit()
+        # ON DELETE RESTRICT is enforced immediately at statement execution, not deferred
+        # to COMMIT (which is what DEFERRABLE INITIALLY DEFERRED would do). Asserting on
+        # the execute is therefore the stricter check: the database refuses the delete
+        # outright rather than accepting it provisionally.
+        with pytest.raises(IntegrityError, match="fk_discovered_urls_document_id_documents"):
+            session.execute(text("DELETE FROM documents WHERE id = :id"), {"id": str(document.id)})
+        session.rollback()
+
+        # The document and its provenance both survive the attempt.
+        assert session.get(Document, document.id) is not None
+        assert session.query(DiscoveredUrl).count() == 1
 
 
 class TestCrawlJobs:
