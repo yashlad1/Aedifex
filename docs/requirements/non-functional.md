@@ -101,7 +101,8 @@ useless for many workflows regardless of its accuracy.
 | NFR-083 | Architectural decisions are recorded as ADRs. | Implemented — `docs/adr/` |
 | NFR-084 | Schema changes require a reviewed, reversible migration. | Implemented — verified against real PostgreSQL 17.11: `alembic check` clean, downgrade/upgrade round-trip |
 | NFR-085 | A developer can run all infrastructure-free checks from a clean checkout with two commands. | Implemented — `make install && make check` |
-| NFR-086 | Local infrastructure is reproducible. | Partial — PostgreSQL verified natively; Compose still not executed |
+| NFR-086 | Local infrastructure is reproducible. | Implemented — Compose stack and image built and executed via Colima; suite passes identically on native and containerized PostgreSQL |
+| NFR-090a | Application behaviour must not depend on host-specific database configuration. | Implemented — session `timezone=UTC` and statement timeout pinned per connection; regression-tested against a non-UTC server |
 | NFR-087 | A commit resolves to exactly one dependency graph. | Implemented — committed `uv.lock`; all installs use `uv sync --locked`, which fails on drift |
 | NFR-088 | Supported Python versions are explicit and tested. | Implemented — 3.12 and 3.13, both verified locally; CI matrix ([ADR 0008](../adr/0008-python-version-policy.md)) |
 | NFR-089 | An unexpectedly skipped integration test must fail rather than report green. | Implemented — `REQUIRE_INTEGRATION_TESTS=1` in CI and `make test-integration` |

@@ -6,6 +6,47 @@ Operational procedures for the acquisition pipeline.
 > and worker procedures are marked *(Phase 1)* and are written as the intended design, not as
 > tested procedure.
 
+## Container runtime (Colima, no Docker Desktop)
+
+```bash
+brew install colima docker docker-compose docker-buildx
+colima start --cpu 2 --memory 4 --disk 20 --vm-type=vz   # verified sufficient for the stack
+docker compose up -d postgres minio minio_init
+```
+
+`colima stop` / `colima start` to cycle it; `colima delete` removes the VM entirely.
+
+**`~/.docker/config.json` must point at Homebrew's plugin directory**, or `docker compose` and
+`docker buildx` will not be found:
+
+```json
+{ "cliPluginsExtraDirs": ["/opt/homebrew/lib/docker/cli-plugins"] }
+```
+
+If Docker Desktop was previously installed and removed, two settings are left behind that break
+Colima and must be deleted: `"credsStore": "desktop"` (the credential helper is gone, so image
+pulls fail) and `"currentContext": "desktop-linux"` (the context no longer exists). Dangling
+symlinks in `~/.docker/cli-plugins/` pointing into `/Applications/Docker.app` also shadow the
+Homebrew plugins and should be removed.
+
+### Native vs containerized PostgreSQL
+
+Both are 17.11. Every compared setting is identical except two, and only one matters:
+
+| Setting | Native (Homebrew) | Container (`postgres:17-alpine`) |
+| --- | --- | --- |
+| `TimeZone` | `America/New_York` (inherits host) | `UTC` |
+| `server_version` | `17.11 (Homebrew)` | `17.11` |
+| encoding, collation, `max_connections`, `shared_buffers`, isolation, `password_encryption` | identical | identical |
+
+The timezone difference is neutralised in application code: every connection sets
+`timezone=UTC` (and a statement timeout) via `connect_args`, so behaviour does not depend on
+which PostgreSQL you are pointed at. Two integration tests assert this, including that a UTC
+instant does not shift date under a local timezone.
+
+Do not run native PostgreSQL and the Compose stack simultaneously — both bind port 5432.
+`brew services stop postgresql@17` before `docker compose up`.
+
 ## Running PostgreSQL without Docker
 
 Docker is not required for the database. This is the path used to verify migrations and the

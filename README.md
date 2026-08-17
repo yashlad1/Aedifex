@@ -40,8 +40,9 @@ engine described above does not exist yet, and nothing here fabricates it.
 | Read-only API (`/health`, `/sources`) | ✅ Implemented, tested |
 | Integration tests (22) | ✅ Executed and passing against real PostgreSQL |
 | Reproducible dependency lock (`uv.lock`) | ✅ 73 packages; `--locked` installs everywhere |
+| Docker Compose stack (PostgreSQL + MinIO) | ✅ Executed via Colima; both healthy, bucket created with versioning |
+| Container image | ✅ Built and smoke-tested; serves `/health`, reaches Compose PostgreSQL, runs as uid 1001 |
 | Supply-chain scanning (CodeQL, Trivy, dependency review, SBOM) | ⚠️ Workflows authored; **never executed** (no CI run yet) |
-| Docker Compose stack / image build | ⚠️ Authored; **never executed** (no Docker on the authoring machine) |
 | Crawlers, downloaders | ❌ Phase 1 |
 | OCR, parsing, classification | ❌ Phase 4 |
 | Synthetic generator, anomaly injection | ❌ Phase 2 |
@@ -85,12 +86,11 @@ make run-api                           # http://localhost:8000/docs
 make test-integration
 ```
 
-> **Caveat:** the Compose stack and the container image have still never been executed —
-> Docker is unavailable on the authoring machine. CI builds and smoke-tests the image.
->
-> The database layer, however, *is* verified: migrations, `alembic check`, a full
-> downgrade/upgrade round-trip, and all 22 integration tests were run against real
-> PostgreSQL 17.11. If you also lack Docker, you can reproduce that without it:
+The full suite passes identically against native PostgreSQL and against the Compose stack
+(**365 tests, 0 skipped, on both**). The container image was built, started, and verified to
+reach Compose PostgreSQL via `/health/ready`.
+
+If you have no container runtime, PostgreSQL alone is enough for everything except the image:
 
 ```bash
 brew install postgresql@17 && brew services start postgresql@17
@@ -99,6 +99,15 @@ export AEDIFEX_ENVIRONMENT=test
 export AEDIFEX_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/aedifex
 make migrate && make test-integration
 ```
+
+On macOS without Docker Desktop, Colima provides the runtime:
+
+```bash
+brew install colima docker docker-compose docker-buildx
+colima start --cpu 2 --memory 4 --disk 20 --vm-type=vz
+```
+
+See [RUNBOOK.md](RUNBOOK.md) for the `~/.docker/config.json` requirement.
 
 ## Repository layout
 
