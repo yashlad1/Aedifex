@@ -2494,6 +2494,52 @@ understood as new coverage rather than treated as flakiness to be suppressed.
 
 ⸻
 
+81f. Coverage of the Analyser Is Part of Security Coverage
+
+81e is about one scanner. This is the general rule: for every verification tool, execution coverage
+and finding coverage are separate claims, and only the second one is ever reported.
+
+Record both, explicitly:
+
+TOOL
+  executed?                  yes / no
+  covered the intended files? yes / no — with the count
+  produced an expected match? yes / no — the positive control
+  findings?                   the number
+
+"Exit 0" answers only the last line. A tool that ran over an empty directory, over a file it could
+not parse, or with a ruleset that failed to download answers it identically.
+
+Every failure of the first three lines is silent by construction, so each needs its own assertion:
+
+a floor on files or tests actually processed
+a positive control that must trigger
+the tool's own error channel checked, not only its verdict
+the exclusion list stated where the claim of coverage is made
+
+This applies to every tool that reports absence, not only to SAST:
+
+Trivy                exclusions and ignore files silently shrink what is scanned
+test discovery       a renamed file or a collection error removes tests while the suite stays green
+migration checks     a fixture that leaves the schema at the wrong revision makes drift undetectable
+type checking        an unfollowed import or an excluded module reports success over nothing
+OCR benchmarks       a page that failed to render scores as a page with no text to find
+dataset validation   a filter that matches nothing validates nothing and passes
+
+The naming of results follows from this. A gate reports "clean over N files, positive control
+matched" — never just "passed". A report that cannot distinguish "nothing wrong" from "nothing
+examined" is not a report.
+
+Mutation is the honest way to establish that a test suite has teeth: break the invariant, confirm a
+specific test fails, restore. Two disciplines are required, both learned the hard way. A control
+mutation that changes nothing meaningful must be confirmed *not* to fail anything, because a harness
+that reports everything as caught is as uninformative as one that catches nothing. And the harness's
+own verdict must come from the exit code of the tool being measured, not from a pipeline whose last
+command is a formatter — the first version of this project's mutation harness read `tail`'s exit code
+and pronounced fourteen genuinely-caught mutations uncaught (rule 81a, in its own tooling).
+
+⸻
+
 Aedifex IP / Patent Readiness Requirements
 
 These requirements apply alongside the engineering constitution above. They are recordkeeping
