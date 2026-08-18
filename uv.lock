@@ -52,7 +52,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=25.1,<26" },
     { name = "trustme", marker = "extra == 'dev'", specifier = ">=1.2,<2" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12,<7" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.34,<1" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.3,<1" },
 ]
 provides-extras = ["dev"]
 
