@@ -26,6 +26,11 @@ Implemented in [`acquisition/content.py`](src/aedifex/acquisition/content.py) an
 | Windows reserved device names | Defused (`con.pdf` → `con_file.pdf`) | `safe_filename` |
 | Arbitrary object construction from config | `yaml.safe_load` only | `registry/loader.py` |
 | Tampering in transit | Plain HTTP requires explicit per-source acknowledgement | `registry/models.py` |
+| SSRF to internal services, IMDS, loopback | Ordered validation; every resolved address checked; mixed answers rejected entirely | `fetch/guard.py`, `fetch/addresses.py` |
+| DNS rebinding / TOCTOU | Resolved once, then the validated address is pinned to the connection; no second lookup exists | `fetch/guard.py` |
+| Redirect used to escape validation | Every hop re-validated from the start; loops and hop overruns rejected | `fetch/redirects.py` |
+| Transport downgrade via redirect (`https` → `http`) | Refused unless the source explicitly accepted an insecure channel | `fetch/redirects.py` |
+| Hostile `Retry-After` parking a worker | Server-requested delays above 300s abandon rather than sleep | `fetch/retry.py` |
 
 Content that trips a limit moves to `QUARANTINED`, which is a terminal state. Release requires
 an explicit human decision, so a bad payload cannot loop back into the pipeline automatically.
@@ -39,9 +44,14 @@ Honest about what is not yet built, because these matter before any crawler is e
   downloader in Phase 1.
 - **Malicious PDFs.** No PDF sanitisation yet. Parsers must run without network access and
   with resource limits; embedded JavaScript and external references must be ignored.
-- **SSRF.** No crawler exists yet. When one does, URLs must be validated against an allowlist
-  derived from the source's `base_url`, with redirects re-validated at every hop and requests
-  to private address ranges refused.
+- **SSRF.** ~~Not built.~~ **Implemented** in
+  [`acquisition/fetch/`](src/aedifex/acquisition/fetch/): a type-level gate where the transport
+  accepts only a `ValidatedTarget`, host allowlisting per source, every resolved address
+  validated, mixed answers rejected wholesale, and the validated address pinned to the
+  connection so no second DNS lookup can occur. See
+  [the threat model](docs/security/threat-model-http-fetch.md) and
+  [ADR 0010](docs/adr/0010-fetch-retry-ssrf-policy.md). The transport that consumes it is not
+  built yet, so nothing makes outbound requests today.
 - **PII detection and redaction.** Sources that publish personal data are flagged
   (`contains_personal_data`), but no screening is implemented. This must exist before the
   corpus is used for training.
