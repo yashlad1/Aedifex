@@ -88,6 +88,8 @@ class AttemptOutcome(StrEnum):
     TLS_ERROR = "tls_error"
     DNS_ERROR = "dns_error"
     BUDGET_EXHAUSTED = "budget_exhausted"
+    PROTOCOL_ERROR = "protocol_error"
+    RESPONSE_STREAM_ERROR = "response_stream_error"
 
     # Decisions, never transient failures.
     SSRF_REJECTED = "ssrf_rejected"
@@ -95,6 +97,7 @@ class AttemptOutcome(StrEnum):
     OVERSIZED_RESPONSE = "oversized_response"
     INVALID_REDIRECT = "invalid_redirect"
     CANCELLED = "cancelled"
+    TRANSPORT_UNCLASSIFIED = "transport_unclassified"
 
 
 # Outcomes that must never be retried, whatever the status code or headers say.
@@ -113,6 +116,11 @@ _NEVER_RETRY: Final[frozenset[AttemptOutcome]] = frozenset(
         # DNS is resolved once by the guard, before any attempt. A DNS error here therefore means
         # the guard rejected the target, which is a decision.
         AttemptOutcome.DNS_ERROR,
+        # A transport failure the error mapping did not recognise. Being unable to classify a
+        # failure is not evidence that it was transient, and inside this boundary "cannot decide"
+        # resolves to refusal rather than to omission (rule 81b). Reaching this outcome is a defect
+        # in the mapping; the fix is to classify the exception, never to make this retryable.
+        AttemptOutcome.TRANSPORT_UNCLASSIFIED,
     }
 )
 
@@ -121,6 +129,10 @@ _TRANSPORT_RETRYABLE: Final[frozenset[AttemptOutcome]] = frozenset(
         AttemptOutcome.CONNECT_TIMEOUT,
         AttemptOutcome.READ_TIMEOUT,
         AttemptOutcome.CONNECTION_ERROR,
+        # Both mean a well-formed exchange broke down part-way. A second attempt may well get a
+        # clean response, and neither is a security decision.
+        AttemptOutcome.PROTOCOL_ERROR,
+        AttemptOutcome.RESPONSE_STREAM_ERROR,
     }
 )
 

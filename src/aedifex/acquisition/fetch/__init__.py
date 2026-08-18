@@ -20,6 +20,12 @@ Layered so the security boundary is unambiguous:
 ``redirects``
     Redirect decisions, including the transport-downgrade rule. Returns a URL that the caller
     must re-validate; it never confers permission.
+``transport``
+    The boundary that opens sockets, and the error taxonomy every failure is converted into. It
+    accepts only a ``ValidatedTarget`` and owns no retry, redirect, or rate-limit policy.
+``httpx_transport``
+    The one implementation. Isolated so the library it uses is replaceable and so the boundary
+    above stays free of any HTTP client's types.
 
 See ``docs/security/threat-model-http-fetch.md`` and
 ``docs/adr/0010-fetch-retry-ssrf-policy.md``.
@@ -34,6 +40,7 @@ from aedifex.acquisition.fetch.addresses import (
 )
 from aedifex.acquisition.fetch.guard import ValidatedTarget, validate_url
 from aedifex.acquisition.fetch.hosts import SourceHostPolicy
+from aedifex.acquisition.fetch.httpx_transport import HttpxTransport
 from aedifex.acquisition.fetch.redirects import (
     REDIRECT_STATUSES,
     RedirectDecision,
@@ -69,6 +76,22 @@ from aedifex.acquisition.fetch.timing import (
     TimeoutPolicy,
     parse_retry_after,
 )
+from aedifex.acquisition.fetch.transport import (
+    ALLOWED_METHODS,
+    DEFAULT_CHUNK_SIZE,
+    ConnectionFailedError,
+    ConnectTimeoutError,
+    ProtocolError,
+    RawResponse,
+    ReadTimeoutError,
+    ResponseHeaders,
+    ResponseStreamError,
+    TlsVerificationError,
+    Transport,
+    TransportError,
+    TransportTimeouts,
+    UnclassifiedTransportError,
+)
 from aedifex.acquisition.fetch.urls import (
     ALLOWED_PORTS,
     ALLOWED_SCHEMES,
@@ -79,8 +102,10 @@ from aedifex.acquisition.fetch.urls import (
 )
 
 __all__ = [
+    "ALLOWED_METHODS",
     "ALLOWED_PORTS",
     "ALLOWED_SCHEMES",
+    "DEFAULT_CHUNK_SIZE",
     "MAX_SERVER_REQUESTED_DELAY_SECONDS",
     "NON_RETRYABLE_STATUSES",
     "REDIRECT_STATUSES",
@@ -90,15 +115,23 @@ __all__ = [
     "AttemptResult",
     "BackoffPolicy",
     "Clock",
+    "ConnectTimeoutError",
+    "ConnectionFailedError",
+    "HttpxTransport",
     "MonotonicClock",
     "NormalizedUrl",
+    "ProtocolError",
     "RandomSource",
+    "RawResponse",
+    "ReadTimeoutError",
     "RedirectDecision",
     "RedirectOutcome",
     "RedirectPolicy",
     "RejectionReason",
     "ResolvedAddress",
     "Resolver",
+    "ResponseHeaders",
+    "ResponseStreamError",
     "RetryDecision",
     "RetryPolicy",
     "RetryVerdict",
@@ -111,6 +144,11 @@ __all__ = [
     "TimeoutBudget",
     "TimeoutBudgetExhaustedError",
     "TimeoutPolicy",
+    "TlsVerificationError",
+    "Transport",
+    "TransportError",
+    "TransportTimeouts",
+    "UnclassifiedTransportError",
     "UnparseableDnsAnswerError",
     "ValidatedTarget",
     "classify_address",

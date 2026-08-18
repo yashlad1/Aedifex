@@ -49,7 +49,9 @@ engine described above does not exist yet, and nothing here fabricates it.
 | Dependabot | ✅ Running — opened its first PRs immediately |
 | CI: static analysis (Semgrep CE, blocking + self-tested) | ✅ Green on GitHub Actions — 255 rules, 90 targets, 0 findings, 100% parsed; self-test verified 119 matches across 18 files, 0 scanner errors |
 | **CodeQL taint tracking** | ❌ **Known gap** — needs Advanced Security on a private repo; Semgrep CE covers SAST meanwhile. See [SECURITY.md](SECURITY.md) |
-| Crawlers, downloaders | ❌ Phase 1 |
+| SSRF guard + fetch policy layer (timeouts, retry, redirects) | ✅ Implemented, tested — pure policy, no network |
+| HTTP transport boundary (IP-pinned, hostname TLS identity) | ✅ Implemented — verified over real sockets and a real TLS handshake; 14/14 security mutations caught |
+| Crawlers, downloaders | ❌ Phase 1 — the transport exists, but nothing drives it and no source is enabled |
 | OCR, parsing, classification | ❌ Phase 4 |
 | Synthetic generator, anomaly injection | ❌ Phase 2 |
 | Evidence graph, rules, risk engine | ❌ Phases 5–6 |

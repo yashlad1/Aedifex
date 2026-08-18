@@ -3,13 +3,17 @@
 Derived from [the threat model](../security/threat-model-http-fetch.md). Every requirement states
 a number or a decidable condition, so "done" is testable rather than asserted.
 
-Status: **the guard and the pure policy layer are implemented** — SSRF validation (FR-100–109),
-timeout budget, retry classification, and redirect policy. 428 tests at 97% coverage of the
-package, with no new dependency.
+Status: **the guard, the pure policy layer, and the transport are implemented** — SSRF validation
+(FR-100–109), timeout budget, retry classification, redirect policy, and the socket-opening boundary
+(FR-170–181).
 
-Still Planned: the **transport** and the loops that act on these policies. That split is
-deliberate — every decision is pure and exhaustively tested before anything can open a socket.
-This file was written before any of the code.
+Still Planned: the **loops** that act on these policies — retry controller, redirect controller, rate
+limiter, and the streaming size ceiling. That split is deliberate: every decision was pure and
+exhaustively tested before anything could open a socket, and the thing that opens sockets owns no
+policy of its own.
+
+This file was written before any of the code, and the requirements above were not edited to match
+what was built.
 
 ## SSRF and destination validation
 
@@ -22,15 +26,15 @@ This file was written before any of the code.
 | FR-104 | **Every** address returned by DNS resolution shall be validated, not merely the first. | Implemented — `TestMixedDnsAnswers` — every address checked |
 | FR-105 | Requests shall be rejected when any resolved address is loopback, private (RFC1918), link-local (incl. `169.254.169.254`), CGNAT `100.64/10`, multicast, reserved, unspecified, IPv4-mapped IPv6, or NAT64. | Implemented — `test_fetch_addresses.py` — 62 tests, each address asserted with its reason |
 | FR-106 | Hostnames ending in `.local`, `.internal`, or `.localdomain`, and bare single-label hostnames, shall be rejected. | Implemented — `test_private_network_suffixes_rejected`, `test_single_label_hosts_rejected` |
-| FR-107 | The connection shall be made to an address that was validated in this request, such that no second DNS resolution can occur between validation and connection. | Implemented — `TestDnsRebinding` — `resolver.calls == 1`; target pins an address |
-| FR-108 | TLS certificate verification shall be performed against the original hostname and shall never be disabled or relaxed. | Implemented — Invariant documented in `guard.py`; `TestConnectionInvariant` asserts hostname and address are carried separately |
+| FR-107 | The connection shall be made to an address that was validated in this request, such that no second DNS resolution can occur between validation and connection. | Implemented **and enforced in the transport** — `TestDnsRebinding` (`resolver.calls == 1`); `test_the_connection_goes_to_the_validated_address` watches `socket.getaddrinfo` during a live request and asserts the hostname is never looked up |
+| FR-108 | TLS certificate verification shall be performed against the original hostname and shall never be disabled or relaxed. | Implemented **and proven over a real handshake** — certificate issued for the hostname and not for `127.0.0.1`: verification succeeds over the pinned address, and fails when the address is used as the identity. No parameter can disable it, asserted against both signatures |
 | FR-109 | A source with no resolvable, validatable address shall fail closed. | Implemented — `TestResolutionFailure` — unresolvable and empty answers both fail closed |
 
 ## Redirects
 
 | ID | Requirement | Status |
 | --- | --- | --- |
-| FR-110 | Automatic redirect following shall be disabled in the underlying client; redirects shall be followed only by our own loop. | Planned |
+| FR-110 | Automatic redirect following shall be disabled in the underlying client; redirects shall be followed only by our own loop. | Implemented — `follow_redirects=False`; `TestRedirectsAreNotFollowed` asserts each of 301/302/303/307/308 is returned as a response and that the server received exactly one request |
 | FR-111 | Every redirect hop shall re-enter validation from FR-100 step 1, including the hostname allowlist. | Implemented (policy) — `RedirectPolicy.evaluate` returns a URL and states that re-validation is required; it never grants permission. The loop lands with the transport |
 | FR-112 | Redirect chains shall be limited to 5 hops; exceeding the limit shall fail the request. | Implemented (policy) — `TestHopLimit`, default 5 |
 | FR-113 | A redirect loop shall be detected and shall fail rather than exhaust the hop budget silently. | Implemented (policy) — `TestLoopDetection`, detected explicitly rather than by exhausting the hop cap |
@@ -38,11 +42,30 @@ This file was written before any of the code.
 | FR-115 | The full redirect chain shall be recorded, so the requested URL and the answering URL are both retained as provenance. | Planned |
 | FR-116 | A redirect that downgrades transport (`https` → `http`) shall be rejected unless the source has explicitly accepted an insecure channel. | Implemented — `TestTransportDowngrade`; permission comes from the registry's `allow_insecure_transport`, never from an HTTP library default |
 
+## Transport
+
+The layer that opens sockets, and nothing else. See [ADR 0011](../adr/0011-transport-boundary.md).
+
+| ID | Requirement | Status |
+| --- | --- | --- |
+| FR-170 | The transport shall accept only a `ValidatedTarget`; no overload shall accept a URL, hostname, or address. | Implemented — enforced by type and by an explicit runtime check (not an `assert`, which `-O` strips); `test_open_accepts_no_parameter_that_could_carry_an_unvalidated_url` pins the signature |
+| FR-171 | No DNS resolution shall occur inside the transport. | Implemented — the transport holds no resolver; `socket.getaddrinfo` is observed during a live request and only ever receives the address |
+| FR-172 | TLS SNI shall carry the original hostname. | Implemented — asserted by a server-side SNI callback recording what it received |
+| FR-173 | The `Host` header shall be derived from the validated authority, including a non-default port, and shall not be settable by a caller. | Implemented — a caller-supplied `Host` is refused rather than overwritten |
+| FR-174 | Transport failures shall be converted into a closed taxonomy; no library exception shall escape. | Implemented — seven typed errors; every httpx exception class mapped, with an unrecognised exception becoming a non-retryable `UnclassifiedTransportError` |
+| FR-175 | Each transport error shall carry the retry classification for its own failure mode. | Implemented — `outcome` is a class attribute, and declaring it is enforced when a subclass is defined (rule 81d) |
+| FR-176 | Connection resources shall be released on success, failure, partial consumption, and interruption. | Implemented — context manager with a `finally`; tested for an unread body, an abandoned body, and an exception raised by the caller |
+| FR-177 | No response body shall be buffered by default. | Implemented — iteration is the only access path; `RawResponse` deliberately has no `content`, `text`, or `read`, asserted structurally |
+| FR-178 | The transport shall not retry, and shall not permit the HTTP library to retry. | Implemented — `retries=0`, asserted by timing: a refused connection returns in ≪ the 0.5 s httpcore would spend on its first backoff |
+| FR-179 | Only `GET` and `HEAD` shall be permitted. | Implemented — allowlist; write methods are refused before anything reaches the network |
+| FR-180 | The environment shall not be able to reroute or re-trust a validated request. | Implemented — an env proxy cannot reroute (explicit `transport=`), and `SSL_CERT_FILE` cannot inject a CA (explicit `SSLContext`). Both mechanisms measured rather than assumed; see ADR 0011 |
+| FR-181 | A connection shall be reusable only when scheme, validated hostname, validated address, and port all match. | **Deferred, and reuse is off until it holds** — `max_keepalive_connections=0`, because httpcore keys its pool by `(scheme, address, port)` and would let two hostnames on one address share a TLS identity. Asserted by observing distinct client source ports across requests |
+
 ## Timeouts and resource limits
 
 | ID | Requirement | Target | Status |
 | --- | --- | --- | --- |
-| FR-120 | Separate connect, read, and total-request timeouts shall be enforced. | connect 10 s, read 30 s, total 300 s (configurable) | Implemented (policy) — `TimeoutPolicy`; applied by the transport |
+| FR-120 | Separate connect, read, and total-request timeouts shall be enforced. | connect 10 s, read 30 s, total 300 s (configurable) | Partial — `TimeoutPolicy` decides; the transport applies per-attempt connect and read timeouts (`TransportTimeouts`), verified by a stalling server. Wiring the total budget through is the next slice |
 | FR-121 | A total-request timeout shall bound the whole exchange including redirects, so slow-drip responses cannot evade a per-read timeout. | — | Implemented — `TimeoutBudget` does not reset across attempts; `test_the_budget_does_not_reset_across_attempts` |
 | FR-122 | A response whose declared `Content-Length` exceeds the size cap shall be rejected before the body is read. | — | Planned |
 | FR-123 | Response bodies shall be streamed with the cap enforced during read, never buffered then measured. | default 256 MiB | Planned |
@@ -96,7 +119,7 @@ This file was written before any of the code.
 | --- | --- | --- | --- |
 | NFR-110 | The SSRF guard shall be pure logic, testable with no network. | — | Implemented — no new dependency; stdlib only |
 | NFR-111 | Failure-path tests shall cover every case listed in the threat model's verification obligations. | 30+ cases | Planned |
-| NFR-112 | Transport behaviour shall be tested against a controlled local HTTP server, not mocks. | — | Planned |
+| NFR-112 | Transport behaviour shall be tested against a controlled local HTTP server, not mocks. | — | Implemented — real sockets and a real TLS handshake against a throwaway CA, with a server-side callback recording the SNI value received. 14 mutations of security-relevant lines each confirmed to fail a test, plus a control confirmed to fail none |
 | NFR-113 | DNS rebinding shall be tested with a resolver returning a public address then a private one. | — | Implemented — `RecordingResolver` scripts successive answers; the second is never consulted |
 | NFR-114 | Fetch failures shall never lose the reason: every rejection carries a typed error. | — | Implemented — `SsrfRejectionError` carries a `RejectionReason` |
 | NFR-115 | Retry and timeout policy shall be testable without sleeping or reading real time. | — | Implemented — `Clock`, `Sleeper`, and `RandomSource` are injected; no test sleeps |

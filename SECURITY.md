@@ -27,7 +27,13 @@ Implemented in [`acquisition/content.py`](src/aedifex/acquisition/content.py) an
 | Arbitrary object construction from config | `yaml.safe_load` only | `registry/loader.py` |
 | Tampering in transit | Plain HTTP requires explicit per-source acknowledgement | `registry/models.py` |
 | SSRF to internal services, IMDS, loopback | Ordered validation; every resolved address checked; mixed answers rejected entirely | `fetch/guard.py`, `fetch/addresses.py` |
-| DNS rebinding / TOCTOU | Resolved once, then the validated address is pinned to the connection; no second lookup exists | `fetch/guard.py` |
+| DNS rebinding / TOCTOU | Resolved once, then the validated address is pinned to the connection; the transport holds no resolver, and `getaddrinfo` is observed during a live request to prove the hostname is never looked up | `fetch/guard.py`, `fetch/httpx_transport.py` |
+| Certificate verified against the IP instead of the hostname | The connection is pinned to the address while SNI and certificate identity both use the hostname; proven with a certificate valid for the name and not for the address | `fetch/httpx_transport.py` |
+| Verification disabled while debugging | No `verify`, `insecure`, or `ssl` parameter exists on the transport; asserted against the signatures so adding one fails the build | `fetch/httpx_transport.py` |
+| Environment reroutes or re-trusts a validated request | An env proxy cannot reroute (explicit transport) and `SSL_CERT_FILE` cannot inject a CA (explicit SSL context) | `fetch/httpx_transport.py` |
+| A pooled connection inheriting another hostname's TLS identity | Connection reuse is disabled until pool identity includes the validated hostname and address | ADR 0011 |
+| Library-chosen redirect following | `follow_redirects=False`; a redirect is returned as a response, never followed | `fetch/httpx_transport.py` |
+| A crawler issuing state-changing requests | `GET` and `HEAD` only, as an allowlist | `fetch/transport.py` |
 | Redirect used to escape validation | Every hop re-validated from the start; loops and hop overruns rejected | `fetch/redirects.py` |
 | Transport downgrade via redirect (`https` → `http`) | Refused unless the source explicitly accepted an insecure channel | `fetch/redirects.py` |
 | Hostile `Retry-After` parking a worker | Server-requested delays above 300s abandon rather than sleep | `fetch/retry.py` |
@@ -49,9 +55,11 @@ Honest about what is not yet built, because these matter before any crawler is e
   accepts only a `ValidatedTarget`, host allowlisting per source, every resolved address
   validated, mixed answers rejected wholesale, and the validated address pinned to the
   connection so no second DNS lookup can occur. See
-  [the threat model](docs/security/threat-model-http-fetch.md) and
-  [ADR 0010](docs/adr/0010-fetch-retry-ssrf-policy.md). The transport that consumes it is not
-  built yet, so nothing makes outbound requests today.
+  [the threat model](docs/security/threat-model-http-fetch.md),
+  [ADR 0010](docs/adr/0010-fetch-retry-ssrf-policy.md), and
+  [ADR 0011](docs/adr/0011-transport-boundary.md). The transport now exists and enforces the
+  address/identity split over real TLS, but no crawler drives it and no source is enabled, so
+  nothing makes outbound requests today.
 - **PII detection and redaction.** Sources that publish personal data are flagged
   (`contains_personal_data`), but no screening is implemented. This must exist before the
   corpus is used for training.
