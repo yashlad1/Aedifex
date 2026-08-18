@@ -11,8 +11,9 @@ The order was deliberate: every decision was pure and exhaustively tested before
 a socket, and the thing that opens sockets owns no policy of its own. The loops came last and add no
 rules — they sequence the decisions that were already made and tested elsewhere.
 
-Still Planned: the adversarial integration suite (NFR-111), which exercises these paths against a
-local server rather than a scripted transport.
+Still Planned: nothing in this slice. The adversarial suite (NFR-111) closed the last gap and found
+a real defect in the streaming deadline while doing so; FR-124 and FR-134 remain deliberately
+unmet and are recorded as such rather than reworded.
 
 This file was written before any of the code, and the requirements above were not edited to match
 what was built.
@@ -72,10 +73,10 @@ The layer that opens sockets, and nothing else. See [ADR 0011](../adr/0011-trans
 | ID | Requirement | Target | Status |
 | --- | --- | --- | --- |
 | FR-120 | Separate connect, read, and total-request timeouts shall be enforced. | connect 10 s, read 30 s, total 300 s (configurable) | Implemented — `TimeoutPolicy` decides, `TransportTimeouts.from_budget` clamps each attempt to what remains, and the transport applies all three. Verified with a stalling server (read) and a drip server (total) |
-| FR-121 | A total-request timeout shall bound the whole exchange including redirects, so slow-drip responses cannot evade a per-read timeout. | — | Implemented **and enforced during streaming** — the deadline is checked at every chunk boundary, so a server sending one byte every 20 ms inside a 300 ms read timeout is stopped by the total. `TimeoutBudget` still does not reset across attempts, now also asserted through the transport across three sequential requests |
+| FR-121 | A total-request timeout shall bound the whole exchange including redirects, so slow-drip responses cannot evade a per-read timeout. | — | Implemented **and enforced as bytes arrive**, which is a correction. The check used to run per chunk *yielded*, and `httpx.iter_bytes(n)` buffers until it holds `n` bytes — so at the 256 KiB default a one-byte-per-20 ms drip never reached a checkpoint and the total was never consulted. The transport's own test had passed only because it read with a chunk size of one. Found by the adversarial suite (NFR-111); now checked per arriving piece, with regression tests at the default chunk size in both suites and 5/5 mutations caught. One budget still spans every attempt and every hop, asserted through the redirect controller as read timeouts of 30 → 25 → 10 |
 | FR-122 | A response whose declared `Content-Length` exceeds the size cap shall be rejected before the body is read. | — | Implemented — refused before `RawResponse` is yielded, so the caller's block never runs and no body byte can be read. Skipped for `HEAD`, where no body is sent and refusing would break the one request whose purpose is to discover a size |
-| FR-123 | Response bodies shall be streamed with the cap enforced during read, never buffered then measured. | default 256 MiB | Implemented — the running total is checked at every chunk and the chunk is refused before being yielded. A 200 KiB body against a 1 KiB cap is asserted to abort holding at most limit + one chunk, so the bound is numeric rather than claimed |
-| FR-124 | A request shall be cancellable, and cancellation shall release the connection. | — | Planned |
+| FR-123 | Response bodies shall be streamed with the cap enforced during read, never buffered then measured. | default 256 MiB | Implemented — the running total is checked on every arriving piece and refused before anything is yielded, so the ceiling does not depend on the caller's chunk size (the same correction as FR-121). A 200 KiB body against a 1 KiB cap is asserted to abort holding at most limit + one chunk, so the bound is numeric rather than claimed, and a chunked body with no `Content-Length` is stopped mid-stream at the default chunk size |
+| FR-124 | A request shall be cancellable, and cancellation shall release the connection. | — | **Partly met, stated as such.** A backoff is interruptible: the controller waits on a `Cancellation` token rather than sleeping, so a worker asked to stop during a 30 s delay stops, and the connection was already released before the wait. An *in-flight* read is not interruptible — the socket is bounded by the read timeout and the total budget, not by the token. Recorded as unmet rather than reworded, since "cancellable between attempts" is a weaker claim than the requirement makes |
 
 ## Rate limiting and concurrency
 
@@ -127,7 +128,7 @@ The layer that opens sockets, and nothing else. See [ADR 0011](../adr/0011-trans
 | ID | Requirement | Target | Status |
 | --- | --- | --- | --- |
 | NFR-110 | The SSRF guard shall be pure logic, testable with no network. | — | Implemented — no new dependency; stdlib only |
-| NFR-111 | Failure-path tests shall cover every case listed in the threat model's verification obligations. | 30+ cases | Planned |
+| NFR-111 | Failure-path tests shall cover every case listed in the threat model's verification obligations. | 30+ cases | Implemented — `test_fetch_adversarial.py`, 68 tests driving the assembled stack against a hostile local server: redirect chains, hop caps, cycles, statuses, `Retry-After` edge cases, stalls, drip feeds, oversized declared and chunked bodies, framing errors, resets, and cancellation. It earned its place immediately by finding the FR-121 defect. Wire behaviour is asserted as measured, not as assumed — three expectations were wrong, including that a CRLF in `Location` never survives `h11` and that an obs-folded header arrives joined with a space |
 | NFR-112 | Transport behaviour shall be tested against a controlled local HTTP server, not mocks. | — | Implemented — real sockets and a real TLS handshake against a throwaway CA, with a server-side callback recording the SNI value received. 14 mutations of security-relevant lines each confirmed to fail a test, plus a control confirmed to fail none |
 | NFR-113 | DNS rebinding shall be tested with a resolver returning a public address then a private one. | — | Implemented — `RecordingResolver` scripts successive answers; the second is never consulted |
 | NFR-114 | Fetch failures shall never lose the reason: every rejection carries a typed error. | — | Implemented — `SsrfRejectionError` carries a `RejectionReason` |

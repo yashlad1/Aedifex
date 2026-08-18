@@ -1427,6 +1427,9 @@ class TestTotalBudget:
 
         Bytes arrive every 20ms against a 300ms read timeout, so every read succeeds and the
         server would hold the connection as long as it liked. Only the total ends it.
+
+        Reading one byte at a time is the weaker half of this claim, and on its own it was
+        misleading — see the test below, which holds the enforcement point still.
         """
         server = start_server(drip_body(interval=0.02))
         timeouts = TransportTimeouts.from_budget(self.budget(0.5, connect=0.1, read=0.3))
@@ -1439,6 +1442,32 @@ class TestTotalBudget:
             b"".join(response.iter_bytes(1))
         elapsed = time.monotonic() - started
 
+        assert 0.4 < elapsed < 3.0, f"expected the budget to end it near 0.5s, took {elapsed:.2f}s"
+
+    def test_the_budget_bounds_a_drip_at_the_default_chunk_size_too(
+        self, transport: HttpxTransport
+    ) -> None:
+        """The enforcement point must not depend on how much the caller asked for per chunk.
+
+        A regression test for a real defect. The checks used to run once per chunk *yielded*, and
+        ``httpx.iter_bytes(n)`` buffers until it holds ``n`` bytes — so at the 256 KB default a
+        one-byte drip never reached a checkpoint and the total budget was never consulted. The test
+        above passed throughout, because a chunk size of one made every byte a checkpoint by
+        accident. Found by the adversarial suite composing the layers.
+        """
+        server = start_server(drip_body(interval=0.02, max_bytes=2000))
+        timeouts = TransportTimeouts.from_budget(self.budget(0.5, connect=0.1, read=0.3))
+
+        started = time.monotonic()
+        with (
+            pytest.raises(BudgetExhaustedError, match="while reading the body"),
+            transport.open(target_for(server.port), timeouts=timeouts) as response,
+        ):
+            # No chunk size: the default, which is what a real caller uses.
+            b"".join(response.iter_bytes())
+        elapsed = time.monotonic() - started
+
+        # The drip alone would run for 40s. Anything near that means the budget was not consulted.
         assert 0.4 < elapsed < 3.0, f"expected the budget to end it near 0.5s, took {elapsed:.2f}s"
 
     def test_the_read_timeout_still_catches_a_stall(self, transport: HttpxTransport) -> None:

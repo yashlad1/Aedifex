@@ -402,20 +402,30 @@ def _iter_mapped(
 ) -> Iterator[bytes]:
     """Iterate the body, converting library exceptions and enforcing the total deadline.
 
-    The deadline check is what makes a slow-drip response fail. A per-read timeout restarts on every
-    chunk received, so a server sending a byte just inside that window never trips it and holds the
-    connection for as long as it likes. Checking the total at each chunk boundary is the only thing
-    that bounds the exchange (FR-121).
+    The deadline check is what makes a slow-drip response fail. A per-read timeout restarts on
+    every read, so a server sending a byte just inside that window never trips it and holds the
+    connection as long as it likes. Checking the total as the bytes arrive is the only thing that
+    bounds the exchange (FR-121).
 
-    The bound is the deadline plus at most one read timeout: a check happens between chunks, so a
+    **As they arrive, not as they are yielded.** ``httpx.Response.iter_bytes(n)`` buffers until it
+    holds ``n`` bytes, so checking once per yielded chunk means checking once per ``n`` bytes — and
+    a server dripping one byte at a time never reaches that point. With the 256 KB default that
+    left the deadline unconsulted for the whole exchange, which is precisely the attack it exists
+    to stop. Found by the adversarial suite; the earlier test passed only because it read with a
+    chunk size of one, so every byte happened to be a checkpoint. ``iter_bytes(None)`` is therefore
+    used here to receive every piece the moment it decodes, and the caller's ``chunk_size`` is
+    honoured by re-chunking below, where it cannot delay a check.
+
+    The bound is the deadline plus at most one read timeout: a check happens between reads, so a
     single read already in flight still runs to its own limit. That limit was itself clamped to the
     remaining budget when the attempt started, so the overrun is bounded rather than open-ended.
     Stated precisely because "enforces a 300s total" and "returns no later than 300s" are different
     claims, and only the first is true.
     """
     received = 0
+    pending = bytearray()
     try:
-        for chunk in response.iter_bytes(chunk_size):
+        for chunk in response.iter_bytes(None):
             received += len(chunk)
             if received > max_bytes:
                 # The check that actually protects us. A server can omit Content-Length, send a
@@ -442,7 +452,15 @@ def _iter_mapped(
                         f"request budget exhausted while reading the body of "
                         f"{target.describe()}: {error}"
                     ) from error
-            yield chunk
+            # Re-chunk to what the caller asked for. Bounded by chunk_size plus one arriving piece,
+            # so the memory claim survives the change: nothing accumulates while the connection is
+            # merely slow, because the checks above have already run on every byte counted here.
+            pending += chunk
+            while len(pending) >= chunk_size:
+                yield bytes(pending[:chunk_size])
+                del pending[:chunk_size]
+        if pending:
+            yield bytes(pending)
     except TransportError:
         # Already ours: mapping it again would relabel a budget exhaustion as a stream failure,
         # which is retryable. Rule 81d forbids a refusal becoming transient by re-classification.
