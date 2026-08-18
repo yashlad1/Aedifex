@@ -122,8 +122,14 @@ Things a reader might expect that are absent on purpose:
   workers ([0005](docs/adr/0005-synchronous-sqlalchemy.md)).
 - **No LLM integration.** Nothing yet needs interpretation. When it does, it goes behind a
   provider protocol with versioned prompts, never inline calls.
-- **No agent framework.** Deterministic workflows are sufficient for the payment auditor,
-  and are easier to trust for financially consequential decisions.
+- **No agent framework.** Deterministic workflows are sufficient for acquisition, and are
+  easier to trust for anything financially consequential later.
+- **No product-specific schema.** The product hypothesis is unvalidated (see
+  [README](README.md) and [customer discovery](docs/research/CUSTOMER_DISCOVERY.md)), so the
+  pipeline stores documents, provenance, and classification — never invoice-shaped or
+  payment-shaped structures. A schema that encodes one product's assumptions is the most
+  expensive thing to unwind if discovery points elsewhere, because migrations and extraction
+  code both settle around it.
 
 ## Testing shape
 

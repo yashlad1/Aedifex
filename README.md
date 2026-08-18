@@ -1,16 +1,27 @@
 # Aedifex
 
-An evidence-grounded auditing platform for construction and infrastructure projects.
+**What exists today: a production-grade acquisition platform for public construction documents.**
+It safely collects, verifies, stores, and catalogues real documents — tenders, BOQs, schedules of
+rates, specifications, contracts, procurement notices, drawings, technical documents — with complete
+provenance for every byte.
 
-Aedifex ingests the documents a construction project generates — contracts, BOQs, purchase
-orders, invoices, delivery challans, GRNs, material test certificates, inspection reports,
-change orders — and answers a question that no single document can answer on its own:
+## The product hypothesis is UNVALIDATED
 
-> **Is the evidence sufficient to approve this payment?**
+The original thesis was cross-document evidence reconciliation for construction payments: an invoice
+claiming 125 MT where the GRN confirms 118 MT, against a PO for 120 MT. It is a plausible problem and
+it is **not yet a validated one**. Customer discovery is running in parallel
+([docs/research/CUSTOMER_DISCOVERY.md](docs/research/CUSTOMER_DISCOVERY.md)), and the direction may
+change once 15–30 interviews reveal which document-heavy workflows are actually painful and
+commercially valuable.
 
-The hard problem is not reading one document. It is **cross-document evidence
-reconciliation**: an invoice claiming 125 MT when the GRN confirms 118 MT received, against
-a PO for 120 MT, supported by a test certificate for Fe500 when the PO required Fe500D.
+So the pipeline is deliberately built **not to know** which product will consume the corpus. It
+assumes construction documents are worth collecting with verifiable provenance; it assumes nothing
+about what will be done with them. Concretely, that means no invoice-shaped schema, no
+payment-specific extraction, no document type privileged over another, and no rules engine.
+
+If discovery points somewhere else — contract obligation tracking, tender intelligence, rate
+benchmarking, specification compliance — the acquisition layer should need no rewrite. That property
+is the reason to build it first.
 
 ## Design principle
 
@@ -18,15 +29,17 @@ a PO for 120 MT, supported by a test certificate for Fe500 when the PO required 
 
 Arithmetic, equality, thresholds, quantity reconciliation, and duplicate detection are
 deterministic code — always. Language models are used for classification, terminology
-mapping, obligation extraction, and explanation. A finding is never the unverified output of
-a model, and every finding points back to an exact page and bounding box in a source
-document.
+mapping, and explanation. A finding is never the unverified output of a model, and every
+extracted fact points back to an exact page and location in a source document.
 
-## Current status: Phase 0 complete, Phase 1 starting
+This holds whatever the product turns out to be, which is why it is stated as a principle rather
+than as a feature.
+
+## Current status: Phase 0 complete, acquisition pipeline in progress
 
 The engineering foundation, the source registry, and reproducibility/supply-chain controls are
-done. The **current product is the data acquisition platform** — not the auditor. The audit
-engine described above does not exist yet, and nothing here fabricates it.
+done. The **current product is the data acquisition platform**. No auditor, evidence graph, rules
+engine, agent, or synthetic generator exists, and nothing here fabricates one.
 
 | Area | State |
 | --- | --- |

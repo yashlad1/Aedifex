@@ -42,36 +42,55 @@ class DocumentCategory(StrEnum):
 class DocumentType(StrEnum):
     """Document types the platform recognises.
 
-    The first block is the payment-auditor wedge: these are the types whose
-    cross-references produce audit findings. The second block covers documents that
-    public procurement portals actually publish; we ingest and classify them to build the
-    corpus even though the audit engine does not yet reason over all of them.
+    Grouped by what a document *is*, not by which product might consume it. An earlier version
+    of this enum led with a block labelled "payment-auditor wedge", which encoded an unvalidated
+    product hypothesis into the vocabulary every other layer reads. That is the cheapest place to
+    embed an assumption and among the most expensive to remove, because storage keys, indexes, and
+    classifier labels all settle around it.
+
+    No type is privileged. A schedule of rates matters as much as an invoice until interviews say
+    otherwise, and the acquisition platform's job is to collect and catalogue whatever a portal
+    publishes. See ``docs/research/CUSTOMER_DISCOVERY.md``.
+
+    The vocabulary is expected to grow. It is stored as ``VARCHAR``, not a native database enum,
+    precisely so that adding a type needs no migration.
     """
 
-    # --- Payment-auditor wedge --------------------------------------------------
+    # --- Procurement and award --------------------------------------------------
+    TENDER_NOTICE = "tender_notice"
+    BID_DOCUMENT = "bid_document"
+    AWARD_NOTICE = "award_notice"
+    CORRIGENDUM = "corrigendum"
+    PURCHASE_ORDER = "purchase_order"
+
+    # --- Commercial basis of a project ------------------------------------------
     CONTRACT = "contract"
     BILL_OF_QUANTITIES = "bill_of_quantities"
-    PURCHASE_ORDER = "purchase_order"
+    SCHEDULE_OF_RATES = "schedule_of_rates"
+    """A published rate schedule (CPWD DSR, state PWD SOR, and equivalents).
+
+    Distinct from a bill of quantities: a BOQ prices one project's quantities, while a schedule of
+    rates is the reference rate list a whole department procures against. Widely published, revised
+    periodically, and useful for rate benchmarking — one of the directions discovery may point.
+    """
+    CHANGE_ORDER = "change_order"
+
+    # --- Engineering and technical ----------------------------------------------
+    TECHNICAL_SPECIFICATION = "technical_specification"
+    DRAWING = "drawing"
+    INSPECTION_REPORT = "inspection_report"
+    MATERIAL_TEST_CERTIFICATE = "material_test_certificate"
+
+    # --- Execution and settlement -----------------------------------------------
     INVOICE = "invoice"
     DELIVERY_CHALLAN = "delivery_challan"
     GOODS_RECEIPT_NOTE = "goods_receipt_note"
-    MATERIAL_TEST_CERTIFICATE = "material_test_certificate"
-    INSPECTION_REPORT = "inspection_report"
-    CHANGE_ORDER = "change_order"
-
-    # --- Wider public-procurement corpus ---------------------------------------
-    TENDER_NOTICE = "tender_notice"
-    TECHNICAL_SPECIFICATION = "technical_specification"
-    AWARD_NOTICE = "award_notice"
-    CORRIGENDUM = "corrigendum"
-    BID_DOCUMENT = "bid_document"
-    DRAWING = "drawing"
     PAYMENT_CERTIFICATE = "payment_certificate"
     BANK_GUARANTEE = "bank_guarantee"
 
     # --- Fallback ---------------------------------------------------------------
     # An honest "we do not know" is required: a misclassified document is worse than an
-    # unclassified one, because downstream rules would silently reason over the wrong
+    # unclassified one, because downstream consumers would silently reason over the wrong
     # evidence.
     UNKNOWN = "unknown"
 
@@ -82,6 +101,7 @@ DOCUMENT_TYPE_CATEGORY: Final[MappingProxyType[DocumentType, DocumentCategory]] 
     {
         DocumentType.CONTRACT: DocumentCategory.LEGAL,
         DocumentType.BILL_OF_QUANTITIES: DocumentCategory.PROCUREMENT,
+        DocumentType.SCHEDULE_OF_RATES: DocumentCategory.PROCUREMENT,
         DocumentType.PURCHASE_ORDER: DocumentCategory.PROCUREMENT,
         DocumentType.INVOICE: DocumentCategory.FINANCIAL,
         DocumentType.DELIVERY_CHALLAN: DocumentCategory.PROCUREMENT,
