@@ -118,6 +118,30 @@ Three ways to close it, none chosen unilaterally:
 Container and filesystem scanning (Trivy) **do** run, and their SARIF is retained as a build
 artifact rather than uploaded to code scanning.
 
+## Base-image vulnerability remediation
+
+Pinning the base image by digest buys reproducibility but freezes its package versions, so
+security updates must be applied explicitly rather than arriving with a moving tag. That tradeoff
+is deliberate, and this is the other half of it.
+
+The first real CI Trivy scan found **11 fixable HIGH findings, all in the base image and none in
+our locked dependencies** (every venv package reported zero):
+
+| Advisory | Count | Component | Remediation |
+| --- | --- | --- | --- |
+| CVE-2026-53615 | 9 | util-linux family — integer overflow in libblkid partition parsing | `apt-get --only-upgrade` to `2.41.5-0+deb13u1` |
+| CVE-2025-47273 | 1 | setuptools path traversal, vendored in pip as `pkg_resources` | pip removed from the runtime image |
+| GHSA-6v7p-g79w-8964 | 1 | msgpack out-of-bounds read, vendored in pip | pip removed from the runtime image |
+
+Upstream `python:3.13-slim` had not been rebuilt — the pinned digest was still the current one —
+so waiting for a newer digest was not available.
+
+Removing pip is a fix rather than a workaround: the venv is installed non-editable and
+self-contained, so nothing at runtime needs pip, setuptools, or `pkg_resources`, and an image that
+parses hostile documents has no business carrying a package installer. Verified after removal: the
+package still imports, production hardening still rejects placeholder credentials, `alembic`
+still runs, and the API still serves `/health` and `/health/ready`.
+
 ## Privacy
 
 Public procurement documents may contain PAN, Aadhaar, bank accounts, phone numbers,

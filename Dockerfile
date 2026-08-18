@@ -51,6 +51,32 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
 
+# Security remediation on top of the pinned base image.
+#
+# Pinning by digest buys reproducibility but freezes the base image's package versions, so
+# security updates have to be applied explicitly rather than arriving with a moving tag. The
+# first real CI Trivy scan found 11 fixable HIGH findings, all of them in the base image and
+# none in our locked dependencies:
+#
+#   CVE-2026-53615  (x9)  util-linux family; integer overflow in libblkid partition parsing
+#   CVE-2025-47273        setuptools path traversal — vendored inside pip as pkg_resources
+#   GHSA-6v7p-g79w-8964   msgpack out-of-bounds read — also vendored inside pip
+#
+# Upstream python:3.13-slim had not been rebuilt (the pinned digest was still the current one),
+# so waiting for a new digest was not an option.
+RUN apt-get update \
+ && apt-get install --only-upgrade --no-install-recommends -y \
+      bsdutils libblkid1 libmount1 libsmartcols1 libuuid1 mount util-linux \
+ && rm -rf /var/lib/apt/lists/*
+
+# Remove pip from the runtime image. The venv is self-contained and installed non-editable, so
+# nothing here needs pip, setuptools, or pkg_resources — and pip vendors both msgpack and
+# pkg_resources, which is where two of the HIGH findings live. Deleting it fixes those and
+# removes a package installer from an image that parses hostile documents.
+RUN rm -rf /usr/local/lib/python3.13/site-packages/pip \
+           /usr/local/lib/python3.13/site-packages/pip-*.dist-info \
+           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.13
+
 # Run as an unprivileged user. This process parses untrusted documents downloaded from the
 # public internet, so it must not be root.
 RUN groupadd --system --gid 1001 aedifex \
