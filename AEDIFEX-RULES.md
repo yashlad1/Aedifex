@@ -477,6 +477,57 @@ except Exception:
 
 Do not log and continue unless continuing is explicitly safe.
 
+18a. Stop When Sufficient Evidence Exists
+
+The purpose of verification is to establish adequate confidence, not to maximize the number of
+tests, verification passes, edge cases, or supporting infrastructure.
+
+Once a change has adequate evidence that it is correct for its risk level, continue implementing the
+next milestone rather than expanding verification.
+
+Adequate evidence means:
+
+LOW-RISK CHANGES
+- Existing coverage remains valid.
+- Relevant static checks pass.
+- At most one focused regression test if a new externally observable behavior was introduced.
+
+MEDIUM-RISK CHANGES
+- Existing tests plus a small number of focused tests demonstrate the intended behavior.
+- Relevant integration tests only if the change crosses a system boundary.
+
+HIGH-RISK CHANGES
+(Security boundaries, concurrency, financial correctness, state machines, migrations,
+cryptography, provenance, data integrity)
+
+- Strong verification is expected and may include integration, regression, property,
+or security testing where justified.
+
+Do not automatically create additional:
+
+- unit tests
+- integration tests
+- regression tests
+- property tests
+- fuzz tests
+- mutation tests
+- edge-case matrices
+- test harness improvements
+
+unless they materially increase confidence in a high-risk invariant.
+
+A feature is complete when there is sufficient evidence appropriate to its risk—not when every
+conceivable verification technique has been applied.
+
+When choosing between:
+
+A) expanding verification for already-supported behavior, or
+B) implementing the next planned milestone,
+
+prefer (B) unless a significant correctness or security risk remains unresolved.
+
+This rule overrides Rules 19–30 and Rules 80–81 whenever they would otherwise encourage
+verification beyond what is proportionate to the current implementation risk.
 ⸻
 
 19. Tests Are Part of the Feature
@@ -496,6 +547,64 @@ tests.
 
 Not every feature needs every category, but the categories must be considered.
 
+19a. Testing Is Risk-Based, Not Exhaustive
+
+Testing exists to provide sufficient evidence of correctness, not to maximize test count, coverage,
+mutation score, or edge-case enumeration.
+
+For every implementation slice, classify behavior:
+
+CRITICAL
+Security boundaries, financial calculations, state-machine integrity, provenance integrity,
+concurrency correctness, destructive migrations.
+
+→ Strong focused testing is justified.
+
+IMPORTANT
+Core product behavior where a defect would cause incorrect results but is recoverable.
+
+→ A small number of representative tests is sufficient.
+
+ROUTINE
+Configuration plumbing, straightforward CRUD, adapters, formatting, read models, simple
+transformations and implementation details.
+
+→ Existing regression coverage plus one representative test is normally sufficient.
+
+Do not automatically create:
+- unit tests
+- integration tests
+- property tests
+- fuzz tests
+- mutation tests
+- boundary matrices
+
+simply because new code was written.
+
+A new module does not imply a new test suite.
+
+Once the externally meaningful invariant is adequately protected, stop testing and continue
+implementation.
+
+Testing must never become the critical path unless the subsystem's risk justifies it.
+
+19b. No Test Expansion During Feature Sprint Without Need
+
+During an implementation milestone, ClaudeCode must prioritize completing the vertical slice.
+
+Unless explicitly requested or required by a newly discovered high-risk defect:
+
+- do not expand existing test infrastructure;
+- do not perform mutation testing;
+- do not perform fuzzing;
+- do not build exhaustive edge-case matrices;
+- do not refactor test harnesses;
+- do not add tests for implementation details;
+- do not add multiple tests asserting substantially the same invariant.
+
+Use existing tests wherever they already provide adequate evidence.
+
+If one focused regression test proves a newly fixed defect, one is enough.
 ⸻
 
 20. Test Failure Paths, Not Only Success Paths
