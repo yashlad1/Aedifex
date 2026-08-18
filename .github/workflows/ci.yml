@@ -182,31 +182,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Scan image for OS and library vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: aedifex:ci
-          format: sarif
-          output: trivy-image.sarif
-          severity: HIGH,CRITICAL
-          # Report rather than block: a base-image CVE with no available fix must not stop
-          # unrelated work. The scheduled scan and Dependabot drive remediation.
-          exit-code: "0"
-          ignore-unfixed: true
-
-      - name: Upload image scan results
-        uses: github/codeql-action/upload-sarif@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
-        with:
-          sarif_file: trivy-image.sarif
-          category: trivy-image
-
-      - name: Generate SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
-        with:
-          image: aedifex:ci
-          format: spdx-json
-          artifact-name: aedifex-sbom.spdx.json
-
+      # Verification runs BEFORE reporting. In the first real CI run these steps were ordered
+      # after the scan upload, so when the upload failed they were all skipped — a reporting
+      # integration silently prevented the regression guards from running. Gates first.
       - name: Assert the application package is importable in the image
         # Regression guard. `uv sync` installs the project editable by default, which writes a
         # .pth pointing at the builder stage's /build/src — a path absent from the runtime
@@ -243,3 +221,56 @@ jobs:
           done
           test "$(docker exec aedifex_ci id -u)" != "0"
           docker rm -f aedifex_ci
+
+      # --- Reporting. Runs after every gate above, and cannot mask them. ---
+
+      - name: Scan image for OS and library vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: aedifex:ci
+          format: table
+          severity: HIGH,CRITICAL
+          # Report rather than block on a pull request: a base-image CVE with no available fix
+          # must not stop unrelated work. The scheduled scan blocks, and Dependabot drives
+          # remediation. See ADR 0009.
+          exit-code: "0"
+          ignore-unfixed: true
+
+      - name: Record image scan results
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: aedifex:ci
+          format: sarif
+          output: trivy-image.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+          ignore-unfixed: true
+
+      # Retained as a build artifact rather than uploaded to code scanning. Code scanning
+      # requires GitHub Advanced Security on a private repository, and this one does not have it
+      # ("Code scanning is not enabled for this repository", HTTP 403), which is what broke the
+      # first real CI run. The findings are still produced, printed above, and kept here.
+      - name: Retain image scan results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-image-sarif
+          path: trivy-image.sarif
+          retention-days: 30
+
+      # Enabled by setting the repository variable ENABLE_CODE_SCANNING_UPLOAD to 'true', which
+      # is only useful once Advanced Security is available. Kept so turning it on is one setting
+      # rather than a workflow change.
+      - name: Upload image scan results to code scanning
+        if: vars.ENABLE_CODE_SCANNING_UPLOAD == 'true'
+        uses: github/codeql-action/upload-sarif@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: aedifex:ci
+          format: spdx-json
+          artifact-name: aedifex-sbom.spdx.json

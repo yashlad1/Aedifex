@@ -1,20 +1,33 @@
 # Static application security testing.
 #
 # Ruff's bandit-derived rules run on every commit and catch common patterns, but they are not a
-# SAST strategy: they do not follow data flow. CodeQL does taint tracking, which is what finds
-# an attacker-controlled value reaching a dangerous sink — the class of bug that matters most in
-# a system that deliberately ingests hostile documents.
+# SAST strategy: they do not follow data flow. CodeQL does taint tracking, which is what finds an
+# attacker-controlled value reaching a dangerous sink — the class of bug that matters most in a
+# system that deliberately ingests hostile documents.
+#
+# ┌─────────────────────────────────────────────────────────────────────────────────────────┐
+# │ NOT CURRENTLY RUNNING. CodeQL publishes its results through GitHub code scanning, which  │
+# │ on a PRIVATE repository requires GitHub Advanced Security. This repository does not have │
+# │ it: the API returns "Code scanning is not enabled for this repository" (HTTP 403), and    │
+# │ the first real CI run failed for exactly that reason.                                    │
+# │                                                                                          │
+# │ So SAST is a KNOWN GAP, not a passing check. It is deliberately not wired into push or    │
+# │ pull_request, because a workflow that can only fail is worse than an acknowledged gap —   │
+# │ it trains people to ignore red.                                                          │
+# │                                                                                          │
+# │ To enable: turn on code scanning / Advanced Security for the repository, then restore the │
+# │ push, pull_request, and schedule triggers below. Nothing else needs to change.            │
+# │                                                                                          │
+# │ Alternatives if Advanced Security is not wanted: make the repository public (CodeQL is    │
+# │ free for public repos, but see docs/ip/ first — the trade-secret register must not be     │
+# │ published), or adopt a SAST tool that gates the build without needing code scanning.      │
+# │ That is a tooling decision, deliberately left open rather than made unilaterally.         │
+# └─────────────────────────────────────────────────────────────────────────────────────────┘
 
 name: CodeQL
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    # Weekly, so newly published queries run against unchanged code.
-    - cron: "17 4 * * 1"
+  # Manual only, until code scanning is available. See the note above.
   workflow_dispatch:
 
 permissions:

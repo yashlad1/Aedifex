@@ -82,6 +82,32 @@ No authentication, authorisation, or RBAC. The API is read-only metadata and is 
 to be internet-facing yet. This must be in place before any write endpoint or any deployment
 beyond a private network — tracked for Phase 10.
 
+### Known gap: no data-flow SAST
+
+**CodeQL is not running.** It reports through GitHub code scanning, which on a private
+repository requires GitHub Advanced Security. This repository does not have it — the API returns
+`Code scanning is not enabled for this repository` (HTTP 403), and the first real CI run failed
+for that reason.
+
+What this means concretely: ruff's bandit-derived rules run on every commit and catch common
+patterns, but **nothing currently follows data flow**, so an attacker-controlled value reaching a
+dangerous sink would not be detected automatically. That is the bug class that matters most for a
+system built to ingest hostile documents, so this gap is real rather than cosmetic.
+
+The workflow is kept but triggered manually only. A check that can only fail is worse than an
+acknowledged gap, because it trains people to ignore red.
+
+Three ways to close it, none chosen unilaterally:
+
+| Option | Cost | Note |
+| --- | --- | --- |
+| Enable Advanced Security | Paid add-on | One setting, then restore the workflow triggers |
+| Make the repository public | Free CodeQL | **Read [docs/ip/](docs/ip/) first** — the trade-secret register and invention records must not be published |
+| Adopt a SAST tool that gates the build directly | Free | Does not need code scanning; a new tool dependency |
+
+Container and filesystem scanning (Trivy) **do** run, and their SARIF is retained as a build
+artifact rather than uploaded to code scanning.
+
 ## Privacy
 
 Public procurement documents may contain PAN, Aadhaar, bank accounts, phone numbers,

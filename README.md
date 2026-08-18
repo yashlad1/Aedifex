@@ -42,7 +42,12 @@ engine described above does not exist yet, and nothing here fabricates it.
 | Reproducible dependency lock (`uv.lock`) | ✅ 73 packages; `--locked` installs everywhere |
 | Docker Compose stack (PostgreSQL + MinIO) | ✅ Executed via Colima; both healthy, bucket created with versioning |
 | Container image | ✅ Built and smoke-tested; serves `/health`, reaches Compose PostgreSQL, runs as uid 1001 |
-| Supply-chain scanning (CodeQL, Trivy, dependency review, SBOM) | ⚠️ Workflows authored; **never executed** (no CI run yet) |
+| CI: lint, types, unit tests (3.12 + 3.13) | ✅ Green on GitHub Actions |
+| CI: migrations + integration tests vs PostgreSQL service container | ✅ Green on GitHub Actions |
+| CI: secret scanning (gitleaks, full history) + dependency audit | ✅ Green on GitHub Actions |
+| CI: container build, guards, smoke test, Trivy, SBOM | ✅ Green on GitHub Actions |
+| Dependabot | ✅ Running — opened its first PRs immediately |
+| **SAST (CodeQL)** | ❌ **Known gap** — needs Advanced Security on a private repo; see [SECURITY.md](SECURITY.md) |
 | Crawlers, downloaders | ❌ Phase 1 |
 | OCR, parsing, classification | ❌ Phase 4 |
 | Synthetic generator, anomaly injection | ❌ Phase 2 |

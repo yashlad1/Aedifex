@@ -65,7 +65,18 @@ jobs:
           output: trivy-fs.sarif
           severity: MEDIUM,HIGH,CRITICAL
 
-      - name: Upload results
+      # Retained as an artifact, not uploaded to code scanning: that needs Advanced Security on
+      # a private repository, which this one does not have.
+      - name: Retain results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-filesystem-sarif
+          path: trivy-fs.sarif
+          retention-days: 90
+
+      - name: Upload results to code scanning
+        if: vars.ENABLE_CODE_SCANNING_UPLOAD == 'true'
         uses: github/codeql-action/upload-sarif@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
         with:
           sarif_file: trivy-fs.sarif
@@ -103,8 +114,16 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
 
-      - name: Upload results
+      - name: Retain results
         if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-image-scheduled-sarif
+          path: trivy-scheduled.sarif
+          retention-days: 90
+
+      - name: Upload results to code scanning
+        if: always() && vars.ENABLE_CODE_SCANNING_UPLOAD == 'true'
         uses: github/codeql-action/upload-sarif@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
         with:
           sarif_file: trivy-scheduled.sarif
