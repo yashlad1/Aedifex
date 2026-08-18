@@ -81,9 +81,9 @@ stays visible that they were not foreseen.
 | --- | --- | --- | --- |
 | FR-050 | The system shall represent document processing state explicitly, as a state machine. | Implemented | `test_domain_documents.py::TestStateMachine` |
 | FR-051 | The system shall reject illegal state transitions loudly. | Implemented | `test_skipping_stages_is_rejected` |
-| FR-052 | The system shall record `error_type`, message, retry count, and timestamp for failures. | Implemented | `models.py` (`DiscoveredUrl`, `CrawlJob`) |
+| FR-052 | The system shall record `error_type`, message, retry count, and timestamp for failures. | Implemented | `models.py`, written by the acquirer on every failure path. `error_type` holds the failure's *classification* (`ssrf_rejected`, `http_status`) where the error carries one, because a Python type name flattens cases worth telling apart — `RedirectRejectedError` covers both an SSRF refusal and a hop-cap breach |
 | FR-053 | The system shall allow a failed document to be retried as a legal state transition. | Implemented | `test_failure_is_retryable` |
-| FR-054 | The system shall quarantine unsafe content in a terminal state requiring human release. | Implemented | `test_quarantine_is_not_self_serve` |
+| FR-054 | The system shall quarantine unsafe content in a terminal state requiring human release. | Implemented | `test_quarantine_is_not_self_serve`, and the acquirer routes content failures there rather than to `FAILED` — a portal serving a login page will serve one again, so a retry is pointless. A second attempt at a quarantined URL raises rather than silently no-opping |
 | FR-055 | The system shall persist a resumable checkpoint per crawl run. | Implemented | `test_checkpoint_round_trips_as_json` |
 | FR-056 | The system shall dead-letter jobs that exhaust their retries. | Planned | — |
 
@@ -103,7 +103,7 @@ stays visible that they were not foreseen.
 | --- | --- | --- | --- |
 | FR-070 | The system shall download publicly available construction procurement documents. | **Mechanism implemented; blocked on source approval** | `test_download.py`, and `TestADocumentEndToEnd` takes a PDF from a URL through the guard, a redirect, a retried 503, a real socket, and onto disk with a matching digest. No source is enabled, so nothing has been downloaded from a real portal |
 | FR-071 | The system shall rate-limit, retry with backoff, and bound concurrency per source. | Implemented | `test_fetch_ratelimit.py`, `test_fetch_controller.py`; see [fetch.md](fetch.md) FR-130–135, FR-140–148 |
-| FR-072 | The system shall resume an interrupted crawl without duplicating work. | Planned | — |
+| FR-072 | The system shall resume an interrupted crawl without duplicating work. | **Partly met.** A URL already `DOWNLOADED` is skipped without touching the network, and the frontier row is marked `DOWNLOADING` *before* the request, so a crashed worker leaves evidence rather than a URL indistinguishable from one never tried. What is not built is the crawl loop that reads the frontier and resumes — `test_acquiring_the_same_url_twice_reuses_the_row_and_the_object` covers one URL, not a run |
 | FR-073 | The system shall identify itself with a User-Agent carrying a contact address. | Implemented | `test_anonymous_user_agent_is_rejected` |
 
 ## Audit engine
