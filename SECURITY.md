@@ -37,6 +37,8 @@ Implemented in [`acquisition/content.py`](src/aedifex/acquisition/content.py) an
 | Redirect used to escape validation | Every hop re-validated from the start; loops and hop overruns rejected | `fetch/redirects.py` |
 | Transport downgrade via redirect (`https` → `http`) | Refused unless the source explicitly accepted an insecure channel | `fetch/redirects.py` |
 | Hostile `Retry-After` parking a worker | Server-requested delays above 300s abandon rather than sleep | `fetch/retry.py` |
+| Slow-drip response evading the read timeout | Every chunk restarts a per-read timeout, so the total budget is enforced at each chunk boundary instead; a byte every 20 ms inside a 300 ms read timeout is still stopped | `fetch/transport.py`, `fetch/httpx_transport.py` |
+| A retry loop silently resetting the request budget | The transport is handed a read-only deadline and holds no timeout policy, so it cannot restart the clock | `fetch/transport.py` |
 
 Content that trips a limit moves to `QUARANTINED`, which is a terminal state. Release requires
 an explicit human decision, so a bad payload cannot loop back into the pipeline automatically.

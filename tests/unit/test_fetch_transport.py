@@ -56,11 +56,19 @@ from aedifex.acquisition.fetch.retry import (
     RetryPolicy,
     RetryVerdict,
 )
-from aedifex.acquisition.fetch.timing import SystemRandomSource
+from aedifex.acquisition.fetch.timing import (
+    MonotonicClock,
+    SystemRandomSource,
+    TimeoutBudget,
+    TimeoutBudgetExhaustedError,
+    TimeoutPolicy,
+)
 from aedifex.acquisition.fetch.transport import (
     ALLOWED_METHODS,
+    BudgetExhaustedError,
     ConnectionFailedError,
     ConnectTimeoutError,
+    Deadline,
     ProtocolError,
     RawResponse,
     ReadTimeoutError,
@@ -182,6 +190,36 @@ def stall_before_body(delay: float = 3.0, body: bytes = b"late") -> Responder:
         with contextlib.suppress(OSError):
             # The client has usually timed out and gone by now, which is the point.
             handler.wfile.write(body)
+
+    return respond
+
+
+def drip_body(
+    interval: float = 0.02, declared_length: int = 10_000_000, max_bytes: int = 100
+) -> Responder:
+    """Send one byte at a time, never pausing long enough to time out a read.
+
+    The shape of a hostile or dying server, and the reason a total budget exists. While the
+    interval stays shorter than the read timeout, every read succeeds, so no per-read timeout ever
+    fires and the connection is held for as long as the server likes.
+
+    ``max_bytes`` stops it after about two seconds even though it promised ten megabytes. That is
+    a safety stop for the suite, not part of the scenario: if the deadline check were removed, an
+    unbounded drip would hang the run forever rather than fail it, and a suite that hangs on a
+    regression reports nothing at all. With the stop, the client sees a truncated body and the
+    test fails properly.
+    """
+
+    def respond(handler: BaseHTTPRequestHandler) -> None:
+        handler.send_response(200)
+        handler.send_header("Content-Length", str(declared_length))
+        handler.end_headers()
+        handler.wfile.flush()
+        with contextlib.suppress(OSError):
+            for _ in range(max_bytes):
+                handler.wfile.write(b"x")
+                handler.wfile.flush()
+                threading.Event().wait(interval)
 
     return respond
 
@@ -978,6 +1016,178 @@ class TestResourceRelease:
         ports = [record.client_port for record in server.recorded]
         assert len(ports) == 2
         assert ports[0] != ports[1], f"connection was reused across requests: {ports}"
+
+
+class TestTotalBudget:
+    """FR-121: the total bounds the whole exchange, including a body that never ends.
+
+    These use real time deliberately, with small values. A fake clock would have to be advanced from
+    inside the streaming loop, which means the test would be driving the very mechanism it claims to
+    verify. The drip interval is an order of magnitude below the read timeout, so the per-read
+    timeout provably cannot be what stops these.
+    """
+
+    @staticmethod
+    def budget(total: float, *, connect: float, read: float) -> TimeoutBudget:
+        """A real budget on a real clock.
+
+        Values are passed explicitly rather than defaulted, because TimeoutPolicy requires the total
+        to permit one whole attempt and a mismatched default would fail confusingly. Note that
+        connect + read must stay clear of the total by more than float noise: 0.2 + 0.4 is
+        0.6000000000000001, which a total of 0.6 rejects. Production values are whole seconds, so
+        the policy is left as it is rather than loosened to suit a test.
+        """
+        return TimeoutBudget(
+            policy=TimeoutPolicy(connect_seconds=connect, read_seconds=read, total_seconds=total),
+            clock=MonotonicClock(),
+        )
+
+    def test_a_slow_drip_body_is_stopped_by_the_total_budget(
+        self, transport: HttpxTransport
+    ) -> None:
+        """The case a per-read timeout cannot catch.
+
+        Bytes arrive every 20ms against a 300ms read timeout, so every read succeeds and the
+        server would hold the connection as long as it liked. Only the total ends it.
+        """
+        server = start_server(drip_body(interval=0.02))
+        timeouts = TransportTimeouts.from_budget(self.budget(0.5, connect=0.1, read=0.3))
+
+        started = time.monotonic()
+        with (
+            pytest.raises(BudgetExhaustedError, match="while reading the body"),
+            transport.open(target_for(server.port), timeouts=timeouts) as response,
+        ):
+            b"".join(response.iter_bytes(1))
+        elapsed = time.monotonic() - started
+
+        assert 0.4 < elapsed < 3.0, f"expected the budget to end it near 0.5s, took {elapsed:.2f}s"
+
+    def test_the_read_timeout_still_catches_a_stall(self, transport: HttpxTransport) -> None:
+        """The companion case, so the two mechanisms are shown to be distinct rather than assumed.
+
+        Here the gap exceeds the read timeout and the read timeout fires, with plenty of total
+        budget left, so the budget cannot be what did the work.
+        """
+        server = start_server(stall_before_body(delay=3.0))
+        timeouts = TransportTimeouts(
+            connect_seconds=1.0,
+            read_seconds=0.2,
+            deadline=self.budget(60.0, connect=10.0, read=30.0),
+        )
+
+        with (
+            pytest.raises(ReadTimeoutError),
+            transport.open(target_for(server.port), timeouts=timeouts) as response,
+        ):
+            b"".join(response.iter_bytes())
+
+    def test_an_exhausted_budget_opens_no_socket(self, transport: HttpxTransport) -> None:
+        """Checked before connecting: a request with no time left cannot succeed."""
+        server = start_server(ok_body())
+        budget = self.budget(0.1, connect=0.02, read=0.05)
+        # Derived while time remained, then spent — exactly what a backoff sleep does between
+        # attempts. So this exercises the transport's own pre-flight check, not from_budget's.
+        timeouts = TransportTimeouts.from_budget(budget)
+        time.sleep(0.12)
+
+        with (
+            pytest.raises(BudgetExhaustedError, match="no time remains"),
+            transport.open(target_for(server.port), timeouts=timeouts),
+        ):
+            pass
+
+        assert server.recorded == [], "the server was contacted despite an exhausted budget"
+
+    def test_from_budget_clamps_the_attempt_to_what_remains(self) -> None:
+        """A 30s read timeout is a fiction when 4s of the operation remain."""
+        generous = TransportTimeouts.from_budget(self.budget(60.0, connect=10.0, read=30.0))
+        assert (generous.connect_seconds, generous.read_seconds) == (10.0, 30.0)
+
+        nearly_spent = self.budget(0.5, connect=0.2, read=0.25)
+        time.sleep(0.3)
+        tight = TransportTimeouts.from_budget(nearly_spent)
+        assert tight.connect_seconds <= 0.2
+        assert tight.read_seconds <= 0.25
+        assert tight.read_seconds < 0.25, "the read timeout was not clamped to the remaining budget"
+
+    def test_from_budget_attaches_the_deadline(self) -> None:
+        """Clamping and attaching happen together, so a caller cannot do one and skip the other."""
+        budget = self.budget(10.0, connect=1.0, read=2.0)
+        assert TransportTimeouts.from_budget(budget).deadline is budget
+
+    def test_from_budget_refuses_an_exhausted_budget(self) -> None:
+        budget = self.budget(0.1, connect=0.02, read=0.05)
+        time.sleep(0.12)
+        with pytest.raises(TimeoutBudgetExhaustedError):
+            TransportTimeouts.from_budget(budget)
+
+    def test_the_budget_is_not_reset_by_the_transport(self, transport: HttpxTransport) -> None:
+        """Structural: the transport is handed a read-only deadline and cannot restart it.
+
+        The ``Deadline`` protocol exposes ``remaining_seconds`` and ``check`` and nothing else, and
+        the transport takes no ``TimeoutPolicy``, so it has no way to build a fresh budget either.
+        A budget that resets per attempt is the bug this whole layer exists to prevent.
+        """
+        assert hasattr(Deadline, "check") and hasattr(Deadline, "remaining_seconds")
+        for mutator in ("reset", "restart", "extend", "clear", "policy", "attempt_timeouts"):
+            assert not hasattr(Deadline, mutator), f"Deadline exposes {mutator}"
+        assert "timeouts" in inspect.signature(HttpxTransport.open).parameters
+        assert not {"policy", "budget", "timeout_policy"} & set(
+            inspect.signature(HttpxTransport.__init__).parameters
+        )
+
+    def test_the_budget_survives_across_sequential_attempts(
+        self, transport: HttpxTransport
+    ) -> None:
+        """One budget, several requests: the remaining time only ever decreases.
+
+        This is the retry-spanning property, exercised through the transport rather than only in the
+        budget's own unit tests — a per-attempt reset would show up here as time going back up.
+        """
+        server = start_server(ok_body())
+        budget = self.budget(30.0, connect=10.0, read=20.0)
+        observed: list[float] = []
+
+        for _ in range(3):
+            observed.append(budget.remaining_seconds)
+            with transport.open(
+                target_for(server.port), timeouts=TransportTimeouts.from_budget(budget)
+            ) as response:
+                b"".join(response.iter_bytes())
+
+        assert observed == sorted(observed, reverse=True), observed
+        assert observed[0] > observed[-1], "the budget did not advance across attempts"
+
+    def test_budget_exhaustion_is_never_retryable(self) -> None:
+        """Not because it is unsafe, but because there is no time left to retry in."""
+        assert BudgetExhaustedError.outcome is AttemptOutcome.BUDGET_EXHAUSTED
+        assert BudgetExhaustedError.outcome in _NEVER_RETRY
+        decision = RetryPolicy().classify(
+            AttemptResult(
+                outcome=BudgetExhaustedError.outcome,
+                attempt=1,
+                status_code=503,
+                retry_after_seconds=1.0,
+            ),
+            randomness=SystemRandomSource(),
+            remaining_budget_seconds=3600.0,
+        )
+        assert decision.verdict is RetryVerdict.DO_NOT_RETRY
+
+    def test_budget_exhaustion_is_catchable_as_either_concern(self) -> None:
+        """One condition, two audiences: transport handling and budget reasoning."""
+        assert issubclass(BudgetExhaustedError, TransportError)
+        assert issubclass(BudgetExhaustedError, TimeoutBudgetExhaustedError)
+
+    def test_a_deadline_is_optional_so_the_transport_stays_testable_alone(
+        self, transport: HttpxTransport
+    ) -> None:
+        """Without one, per-attempt timeouts still apply; only the total is absent."""
+        server = start_server(ok_body())
+        with transport.open(target_for(server.port), timeouts=FAST) as response:
+            assert FAST.deadline is None
+            assert b"".join(response.iter_bytes()) == b"payload"
 
 
 class TestResponseSurface:

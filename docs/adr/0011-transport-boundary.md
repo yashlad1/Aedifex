@@ -93,7 +93,24 @@ bottleneck, and no correctness or security property depends on reuse.
 pool keyed by hostname alone would defeat address pinning; a pool keyed by address alone would
 confuse TLS identities.
 
-### 5. `GET` and `HEAD` only
+### 5. The total deadline is enforced while the body is read
+
+Per-attempt timeouts alone are escapable, and this is the reason the transport is given a deadline at
+all rather than only two numbers. Every chunk received restarts the read timeout, so a server sending
+one byte just inside that window never trips it and holds the connection indefinitely. The deadline is
+therefore checked at each chunk boundary, and before the connection is opened at all.
+
+Stated precisely, because "enforces a 300 s total" and "returns within 300 s" are different claims:
+the bound is the deadline **plus at most one read timeout**, since a read already in flight runs to
+its own limit. That limit was clamped to the remaining budget when the attempt began, so the overrun
+is bounded rather than open-ended.
+
+The transport receives the budget through a read-only `Deadline` protocol — `remaining_seconds` and
+`check`, nothing else — and takes no `TimeoutPolicy`. It therefore cannot extend, reset, or rebuild
+the budget. A budget that resets per attempt is the defect the whole timing layer exists to prevent,
+so the layer most tempted to do it is given no means.
+
+### 6. `GET` and `HEAD` only
 
 An allowlist. Aedifex reads published documents and never submits anything, so a crawler that can
 issue a state-changing request is only a liability. `POST` is refused rather than unimplemented.

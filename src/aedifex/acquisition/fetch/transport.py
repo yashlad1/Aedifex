@@ -71,13 +71,16 @@ from typing import ClassVar, Final, Protocol, runtime_checkable
 
 from aedifex.acquisition.fetch.guard import ValidatedTarget
 from aedifex.acquisition.fetch.retry import AttemptOutcome
+from aedifex.acquisition.fetch.timing import TimeoutBudget, TimeoutBudgetExhaustedError
 from aedifex.errors import AcquisitionError
 
 __all__ = [
     "ALLOWED_METHODS",
     "DEFAULT_CHUNK_SIZE",
+    "BudgetExhaustedError",
     "ConnectTimeoutError",
     "ConnectionFailedError",
+    "Deadline",
     "ProtocolError",
     "RawResponse",
     "ReadTimeoutError",
@@ -167,6 +170,23 @@ class ResponseStreamError(TransportError):
     outcome: ClassVar[AttemptOutcome] = AttemptOutcome.RESPONSE_STREAM_ERROR
 
 
+class BudgetExhaustedError(TransportError, TimeoutBudgetExhaustedError):
+    """The total time allowed for the whole request ran out.
+
+    Inherits from both hierarchies deliberately, rather than duplicating the concept. There is one
+    condition here — the operation's time is gone — and two audiences for it: code handling
+    transport failures catches :class:`TransportError`, while the retry controller reasons about
+    budgets and catches
+    :class:`~aedifex.acquisition.fetch.timing.TimeoutBudgetExhaustedError`. Defining two separate
+    classes for one condition would guarantee that some ``except`` clause eventually misses one.
+
+    Never retryable, and for a different reason from a TLS failure: retrying is not *unsafe*, it is
+    impossible. There is no time left to do it in.
+    """
+
+    outcome: ClassVar[AttemptOutcome] = AttemptOutcome.BUDGET_EXHAUSTED
+
+
 class UnclassifiedTransportError(TransportError):
     """A library exception the mapping does not recognise.
 
@@ -179,17 +199,42 @@ class UnclassifiedTransportError(TransportError):
     outcome: ClassVar[AttemptOutcome] = AttemptOutcome.TRANSPORT_UNCLASSIFIED
 
 
+@runtime_checkable
+class Deadline(Protocol):
+    """The read-only face of a time budget, as the transport sees it.
+
+    Narrow on purpose. The transport must be able to ask "is there time left?" without being able
+    to extend, reset, or restart anything — resetting a budget across attempts is the exact bug
+    :class:`~aedifex.acquisition.fetch.timing.TimeoutBudget` exists to prevent, so the socket layer
+    is handed no method that could do it.
+    """
+
+    @property
+    def remaining_seconds(self) -> float: ...
+
+    def check(self) -> None:
+        """Raise if no time remains."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class TransportTimeouts:
-    """Per-attempt timeouts, handed to the transport rather than decided by it.
+    """Per-attempt timeouts plus the deadline for the whole operation.
 
-    The transport applies these; it does not know about the overall request budget. Deriving them
-    from :class:`~aedifex.acquisition.fetch.timing.TimeoutBudget` is the caller's job, which is
-    what keeps a budget that spans retries from being reset by the layer that opens sockets.
+    The transport applies these; it does not decide them, and it cannot construct a budget of its
+    own — it takes no :class:`~aedifex.acquisition.fetch.timing.TimeoutPolicy`. That is what keeps a
+    total that spans retries from being reset by the layer that opens sockets.
+
+    ``deadline`` carries the total. Without it, per-attempt timeouts alone are escapable: every
+    received chunk restarts the read timeout, so a server trickling one byte just inside that window
+    holds the connection open indefinitely while never once timing out. The deadline is what makes
+    the whole exchange bounded, and it is why this is a required part of the value rather than an
+    optional extra a caller might forget — see :meth:`from_budget`.
     """
 
     connect_seconds: float
     read_seconds: float
+    deadline: Deadline | None = None
 
     def __post_init__(self) -> None:
         if self.connect_seconds <= 0 or self.read_seconds <= 0:
@@ -198,6 +243,24 @@ class TransportTimeouts:
                 f"fails immediately depending on the library, and neither is acceptable "
                 f"(connect={self.connect_seconds}, read={self.read_seconds})"
             )
+
+    @classmethod
+    def from_budget(cls, budget: TimeoutBudget) -> TransportTimeouts:
+        """Derive per-attempt timeouts from what remains of the request's total allowance.
+
+        The single supported way to run a real fetch, because it does two things together that are
+        wrong to do separately: it clamps this attempt's timeouts to the remaining budget, and it
+        attaches the budget as the deadline so the body read is bounded too.
+
+        Raises:
+            TimeoutBudgetExhaustedError: if nothing remains, before any socket is opened.
+        """
+        connect_seconds, read_seconds = budget.attempt_timeouts()
+        return cls(
+            connect_seconds=connect_seconds,
+            read_seconds=read_seconds,
+            deadline=budget,
+        )
 
 
 @dataclass(frozen=True, slots=True)

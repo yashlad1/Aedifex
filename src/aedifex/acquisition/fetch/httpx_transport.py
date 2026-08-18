@@ -82,10 +82,13 @@ import certifi
 import httpx
 
 from aedifex.acquisition.fetch.guard import ValidatedTarget
+from aedifex.acquisition.fetch.timing import TimeoutBudgetExhaustedError
 from aedifex.acquisition.fetch.transport import (
     ALLOWED_METHODS,
+    BudgetExhaustedError,
     ConnectionFailedError,
     ConnectTimeoutError,
+    Deadline,
     ProtocolError,
     RawResponse,
     ReadTimeoutError,
@@ -302,6 +305,17 @@ class HttpxTransport:
                 f"submits, so only {sorted(ALLOWED_METHODS)} are allowed"
             )
 
+        if timeouts.deadline is not None:
+            # Before the socket, not after. A request issued with no time left cannot succeed, and
+            # opening it anyway would consume a connection slot and touch a remote server to learn
+            # something already known.
+            try:
+                timeouts.deadline.check()
+            except TimeoutBudgetExhaustedError as error:
+                raise BudgetExhaustedError(
+                    f"no time remains to fetch {target.describe()}: {error}"
+                ) from error
+
         request = self._client.build_request(
             normalized_method,
             _request_url(target),
@@ -327,7 +341,9 @@ class HttpxTransport:
                 status_code=response.status_code,
                 http_version=response.http_version,
                 headers=ResponseHeaders(tuple(response.headers.multi_items())),
-                stream=lambda chunk_size: _iter_mapped(response, target, chunk_size),
+                stream=lambda chunk_size: _iter_mapped(
+                    response, target, chunk_size, timeouts.deadline
+                ),
                 close=response.close,
             )
         finally:
@@ -338,10 +354,38 @@ class HttpxTransport:
 
 
 def _iter_mapped(
-    response: httpx.Response, target: ValidatedTarget, chunk_size: int
+    response: httpx.Response,
+    target: ValidatedTarget,
+    chunk_size: int,
+    deadline: Deadline | None,
 ) -> Iterator[bytes]:
-    """Iterate the body, converting library exceptions as they surface."""
+    """Iterate the body, converting library exceptions and enforcing the total deadline.
+
+    The deadline check is what makes a slow-drip response fail. A per-read timeout restarts on every
+    chunk received, so a server sending a byte just inside that window never trips it and holds the
+    connection for as long as it likes. Checking the total at each chunk boundary is the only thing
+    that bounds the exchange (FR-121).
+
+    The bound is the deadline plus at most one read timeout: a check happens between chunks, so a
+    single read already in flight still runs to its own limit. That limit was itself clamped to the
+    remaining budget when the attempt started, so the overrun is bounded rather than open-ended.
+    Stated precisely because "enforces a 300s total" and "returns no later than 300s" are different
+    claims, and only the first is true.
+    """
     try:
-        yield from response.iter_bytes(chunk_size)
+        for chunk in response.iter_bytes(chunk_size):
+            if deadline is not None:
+                try:
+                    deadline.check()
+                except TimeoutBudgetExhaustedError as error:
+                    raise BudgetExhaustedError(
+                        f"request budget exhausted while reading the body of "
+                        f"{target.describe()}: {error}"
+                    ) from error
+            yield chunk
+    except TransportError:
+        # Already ours: mapping it again would relabel a budget exhaustion as a stream failure,
+        # which is retryable. Rule 81d forbids a refusal becoming transient by re-classification.
+        raise
     except Exception as error:
         raise _map_stream_error(error, target) from error

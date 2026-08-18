@@ -5,7 +5,7 @@ a number or a decidable condition, so "done" is testable rather than asserted.
 
 Status: **the guard, the pure policy layer, and the transport are implemented** — SSRF validation
 (FR-100–109), timeout budget, retry classification, redirect policy, and the socket-opening boundary
-(FR-170–181).
+(FR-170–183).
 
 Still Planned: the **loops** that act on these policies — retry controller, redirect controller, rate
 limiter, and the streaming size ceiling. That split is deliberate: every decision was pure and
@@ -59,14 +59,16 @@ The layer that opens sockets, and nothing else. See [ADR 0011](../adr/0011-trans
 | FR-178 | The transport shall not retry, and shall not permit the HTTP library to retry. | Implemented — `retries=0`, asserted by timing: a refused connection returns in ≪ the 0.5 s httpcore would spend on its first backoff |
 | FR-179 | Only `GET` and `HEAD` shall be permitted. | Implemented — allowlist; write methods are refused before anything reaches the network |
 | FR-180 | The environment shall not be able to reroute or re-trust a validated request. | Implemented — an env proxy cannot reroute (explicit `transport=`), and `SSL_CERT_FILE` cannot inject a CA (explicit `SSLContext`). Both mechanisms measured rather than assumed; see ADR 0011 |
+| FR-182 | The transport shall refuse to open a connection when no time remains, and shall enforce the total deadline while reading a body. | Implemented — pre-flight check before any socket (asserted by a server that records zero requests); deadline re-checked between chunks. Bound is the deadline plus at most one read timeout, which is itself clamped to the remaining budget |
+| FR-183 | The transport shall be unable to reset or extend the request budget. | Implemented — it receives a read-only `Deadline` protocol exposing only `remaining_seconds` and `check`, and takes no `TimeoutPolicy`, so it cannot construct a fresh budget either |
 | FR-181 | A connection shall be reusable only when scheme, validated hostname, validated address, and port all match. | **Deferred, and reuse is off until it holds** — `max_keepalive_connections=0`, because httpcore keys its pool by `(scheme, address, port)` and would let two hostnames on one address share a TLS identity. Asserted by observing distinct client source ports across requests |
 
 ## Timeouts and resource limits
 
 | ID | Requirement | Target | Status |
 | --- | --- | --- | --- |
-| FR-120 | Separate connect, read, and total-request timeouts shall be enforced. | connect 10 s, read 30 s, total 300 s (configurable) | Partial — `TimeoutPolicy` decides; the transport applies per-attempt connect and read timeouts (`TransportTimeouts`), verified by a stalling server. Wiring the total budget through is the next slice |
-| FR-121 | A total-request timeout shall bound the whole exchange including redirects, so slow-drip responses cannot evade a per-read timeout. | — | Implemented — `TimeoutBudget` does not reset across attempts; `test_the_budget_does_not_reset_across_attempts` |
+| FR-120 | Separate connect, read, and total-request timeouts shall be enforced. | connect 10 s, read 30 s, total 300 s (configurable) | Implemented — `TimeoutPolicy` decides, `TransportTimeouts.from_budget` clamps each attempt to what remains, and the transport applies all three. Verified with a stalling server (read) and a drip server (total) |
+| FR-121 | A total-request timeout shall bound the whole exchange including redirects, so slow-drip responses cannot evade a per-read timeout. | — | Implemented **and enforced during streaming** — the deadline is checked at every chunk boundary, so a server sending one byte every 20 ms inside a 300 ms read timeout is stopped by the total. `TimeoutBudget` still does not reset across attempts, now also asserted through the transport across three sequential requests |
 | FR-122 | A response whose declared `Content-Length` exceeds the size cap shall be rejected before the body is read. | — | Planned |
 | FR-123 | Response bodies shall be streamed with the cap enforced during read, never buffered then measured. | default 256 MiB | Planned |
 | FR-124 | A request shall be cancellable, and cancellation shall release the connection. | — | Planned |
