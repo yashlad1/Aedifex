@@ -15,6 +15,7 @@ import pytest
 
 from aedifex.acquisition.content import (
     DOCUMENT_ID_NAMESPACE,
+    ContentAccumulator,
     ContentIdentity,
     digests_are_distinct,
     document_id_for_digest,
@@ -171,6 +172,54 @@ class TestSafetyLimits:
     def test_nonpositive_limit_is_a_programming_error(self, max_bytes: int) -> None:
         with pytest.raises(ValueError, match="must be positive"):
             hash_bytes(b"data", max_bytes=max_bytes)
+
+
+class TestContentAccumulator:
+    """The incremental core, used directly by the downloader as it writes bytes to disk.
+
+    ``hash_stream`` is a loop over this, so the rules are tested above through that path too. What
+    only shows up here is the single-use contract, which the downloader depends on and no reader of
+    the loop would notice was missing.
+    """
+
+    def test_it_produces_the_same_identity_as_hashing_the_whole_payload(self) -> None:
+        payload = b"%PDF-1.7\n" + b"x" * 5000
+        accumulator = ContentAccumulator(max_bytes=1024 * 1024)
+        for start in range(0, len(payload), 512):
+            accumulator.update(payload[start : start + 512])
+
+        assert accumulator.finish() == hash_bytes(payload, max_bytes=1024 * 1024)
+
+    def test_the_sniff_prefix_survives_being_split_across_chunks(self) -> None:
+        """A one-byte-at-a-time arrival must still identify the format.
+
+        The prefix is assembled from the front of the stream however the chunks fall, so a server
+        dribbling a PDF header out in single bytes is recognised the same as one sending it at once.
+        """
+        accumulator = ContentAccumulator(max_bytes=1024)
+        for byte in b"%PDF-1.7\nbody":
+            accumulator.update(bytes([byte]))
+
+        assert accumulator.finish().sniffed_format is FileFormat.PDF
+
+    def test_feeding_it_after_finishing_is_refused(self) -> None:
+        """Otherwise the identity would describe neither what was hashed nor what was written."""
+        accumulator = ContentAccumulator(max_bytes=1024)
+        accumulator.update(b"data")
+        accumulator.finish()
+
+        with pytest.raises(ValueError, match="already finished"):
+            accumulator.update(b"more")
+
+    def test_an_empty_accumulator_has_no_identity(self) -> None:
+        with pytest.raises(UnsafeContentError, match="empty"):
+            ContentAccumulator(max_bytes=1024).finish()
+
+    def test_the_ceiling_is_reported_with_what_had_arrived(self) -> None:
+        accumulator = ContentAccumulator(max_bytes=1000)
+        accumulator.update(b"x" * 600)
+        with pytest.raises(UnsafeContentError, match="read 1200 bytes so far"):
+            accumulator.update(b"x" * 600)
 
 
 class TestResolveFormat:

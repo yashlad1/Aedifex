@@ -15,8 +15,24 @@ Still Planned: nothing in this slice. The adversarial suite (NFR-111) closed the
 a real defect in the streaming deadline while doing so; FR-124 and FR-134 remain deliberately
 unmet and are recorded as such rather than reworded.
 
-This file was written before any of the code, and the requirements above were not edited to match
-what was built.
+## This subsystem is frozen
+
+**No further expansion of the fetch layer without a concrete defect.** Frozen as of the adversarial
+suite going green, and the freeze is a decision about attention rather than about quality: the layer
+now does what a crawler needs, every claim in this file is backed by a test, and the remaining risk
+in the project is not here. It is in the parts that do not exist yet.
+
+What that means in practice:
+
+* A **defect** — a failing test, a real portal behaving in a way the suite does not cover, a
+  security review finding — is a reason to change this code. Fix it, and add the test that would
+  have caught it.
+* A **feature** is not. Connection pooling (FR-134), interruptible reads (FR-124), HTTP/2, and
+  per-source byte ceilings are all recorded, all unmet, and all deliberately deferred. They are
+  improvements to something that already works.
+
+The thing that will actually reveal problems here is running it against a real source, and that is
+blocked on source approval rather than on more code.
 
 ## SSRF and destination validation
 

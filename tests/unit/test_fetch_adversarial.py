@@ -36,6 +36,7 @@ second TLS harness would not put a new claim on the wire.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import socket
 import struct
 import threading
@@ -46,10 +47,12 @@ from dataclasses import dataclass, field
 from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
+from aedifex.acquisition.download import DownloadPolicy, download
 from aedifex.acquisition.fetch import guard as guard_module
 from aedifex.acquisition.fetch import urls as urls_module
 from aedifex.acquisition.fetch.addresses import IpAddress, classify_address
@@ -82,6 +85,8 @@ from aedifex.acquisition.fetch.transport import (
     TransportError,
 )
 from aedifex.acquisition.fetch.urls import SsrfRejectionError
+from aedifex.domain.files import FileFormat
+from aedifex.errors import UnsafeContentError
 
 HOSTNAME = "example.test"
 OTHER_HOSTNAME = "docs.example.test"
@@ -201,6 +206,24 @@ def status_only(status: int, *, headers: Sequence[tuple[str, str]] = ()) -> Resp
 
 def redirect_to(location: str, status: int = 302) -> Responder:
     return status_only(status, headers=(("Location", location),))
+
+
+def pdf_response(body: bytes) -> Responder:
+    """A body served as a PDF, whatever the bytes actually are.
+
+    Used both for a real PDF and for the login page a portal answers with instead of one, because
+    from the response's point of view those two cases are indistinguishable.
+    """
+
+    def respond(handler: BaseHTTPRequestHandler) -> None:
+        handler.send_response(200)
+        handler.send_header("Content-Type", "application/pdf")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        if handler.command != "HEAD":
+            handler.wfile.write(body)
+
+    return respond
 
 
 def retry_after(value: str, status: int = 503) -> Responder:
@@ -1351,3 +1374,100 @@ class _FixedResolver:
 
     def resolve(self, hostname: str, port: int) -> Sequence[ResolvedAddress]:
         return (ResolvedAddress(ip=ip_address(self._address), port=port),)
+
+
+# ---------------------------------------------------------------------------
+# A document, end to end
+# ---------------------------------------------------------------------------
+
+PDF_BODY = b"%PDF-1.7\n" + b"schedule of rates " * 512 + b"\n%%EOF\n"
+
+
+class TestADocumentEndToEnd:
+    """One document from a URL to a file on disk, through every layer that will run in production.
+
+    Every layer is real: the guard validates, the redirect controller follows a hop, the retry
+    controller retries a 503, the transport opens a socket, and the downloader streams the body to
+    disk while hashing it. Nothing is scripted except the server's answers.
+
+    This is the assertion the whole slice exists to make, so it is deliberately end-to-end rather
+    than a sum of parts: the digest of the file on disk equals the digest of the bytes the server
+    was given to send.
+    """
+
+    def test_a_pdf_survives_the_whole_pipeline_byte_for_byte(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        with stack(
+            {
+                "/tenders/notice": [redirect_to("/docs/notice.pdf")],
+                "/docs/notice.pdf": [
+                    # A 503 first, so the retry path is part of the end-to-end claim rather than
+                    # something only the unit tests ever exercise.
+                    status_only(503),
+                    pdf_response(PDF_BODY),
+                ],
+            }
+        ) as s:
+            permit_the_test_server(monkeypatch, s.port)
+            with s.redirects.fetch(
+                s.url("/tenders/notice"),
+                host_policy=HOST_POLICY,
+                limits=OPEN_LIMITS,
+                budget=s.budget(),
+            ) as chain:
+                stored = download(
+                    chain,
+                    source_id="cpwd",
+                    policy=DownloadPolicy(allowed_formats=frozenset({FileFormat.PDF})),
+                    directory=tmp_path,
+                    chunk_size=4096,
+                )
+
+            assert s.paths == ["/tenders/notice", "/docs/notice.pdf", "/docs/notice.pdf"]
+
+        assert stored.path.read_bytes() == PDF_BODY
+        assert stored.sha256 == hashlib.sha256(PDF_BODY).hexdigest()
+        assert stored.size_bytes == len(PDF_BODY)
+        assert stored.file_format is FileFormat.PDF
+        assert stored.filename == "notice.pdf"
+
+        # Provenance: what was asked for, what answered, and that it took three requests.
+        assert stored.requested_url.endswith("/tenders/notice")
+        assert stored.final_url.endswith("/docs/notice.pdf")
+        assert [record.outcome for record in stored.attempts] == [
+            AttemptOutcome.SUCCESS,
+            AttemptOutcome.HTTP_STATUS,
+            AttemptOutcome.SUCCESS,
+        ]
+        assert stored.storage_key.startswith("raw/cpwd/")
+        assert stored.sha256 in stored.storage_key
+
+    def test_an_html_error_page_served_as_a_pdf_is_not_stored(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The failure mode that matters most in practice, over a real socket.
+
+        HTTP 200, ``Content-Type: application/pdf``, a URL ending in ``.pdf`` — and a login page in
+        the body. Nothing about the response says anything is wrong; only the bytes do.
+        """
+        login_page = b"<!DOCTYPE html><html><body>Session expired. Please log in.</body></html>"
+        with stack({"/docs/notice.pdf": [pdf_response(login_page)]}) as s:
+            permit_the_test_server(monkeypatch, s.port)
+            with (
+                pytest.raises(UnsafeContentError, match="carries no pdf signature"),
+                s.redirects.fetch(
+                    s.url("/docs/notice.pdf"),
+                    host_policy=HOST_POLICY,
+                    limits=OPEN_LIMITS,
+                    budget=s.budget(),
+                ) as chain,
+            ):
+                download(
+                    chain,
+                    source_id="cpwd",
+                    policy=DownloadPolicy(allowed_formats=frozenset({FileFormat.PDF})),
+                    directory=tmp_path,
+                )
+
+        assert list(tmp_path.iterdir()) == [], "a login page was stored as a construction document"

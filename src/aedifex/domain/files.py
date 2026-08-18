@@ -18,6 +18,7 @@ from typing import Final
 
 __all__ = [
     "EXTENSIONS_BY_FORMAT",
+    "FORMATS_WITH_A_SIGNATURE",
     "MEDIA_TYPES_BY_FORMAT",
     "SNIFF_PREFIX_BYTES",
     "FileFormat",
@@ -134,6 +135,22 @@ _ZIP_CONTAINER_FORMATS: Final[frozenset[FileFormat]] = frozenset(
 
 # Formats that share the legacy OLE container.
 _OLE_CONTAINER_FORMATS: Final[frozenset[FileFormat]] = frozenset({FileFormat.DOC, FileFormat.XLS})
+
+FORMATS_WITH_A_SIGNATURE: Final[frozenset[FileFormat]] = (
+    frozenset(file_format for _, file_format in _SIGNATURES)
+    | _ZIP_CONTAINER_FORMATS
+    | _OLE_CONTAINER_FORMATS
+)
+"""Formats whose leading bytes are always recognisable, so their absence is evidence.
+
+For these, :func:`sniff_format` returning ``None`` means the content is *not* the declared format —
+a PDF always starts with ``%PDF-``. For the rest (CSV, JSON, XML, HTML) ``None`` means only that
+there was nothing to confirm, which is why the two cases must be distinguished rather than both
+treated as "unconfirmed".
+
+Derived from the signature table rather than listed, so adding a binary format in one place cannot
+leave it silently exempt here.
+"""
 
 
 def normalize_media_type(media_type: str) -> str:

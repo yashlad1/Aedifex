@@ -6,6 +6,7 @@ import pytest
 
 from aedifex.domain.files import (
     EXTENSIONS_BY_FORMAT,
+    FORMATS_WITH_A_SIGNATURE,
     MEDIA_TYPES_BY_FORMAT,
     SNIFF_PREFIX_BYTES,
     FileFormat,
@@ -135,6 +136,65 @@ class TestSniffing:
         """Callers buffer only SNIFF_PREFIX_BYTES, so it must cover the longest signature."""
         for payload in (PDF_HEADER, PNG_HEADER, ZIP_HEADER, OLE_HEADER, TIFF_LE_HEADER):
             assert sniff_format(payload[:SNIFF_PREFIX_BYTES]) is not None
+
+
+class TestFormatsWithASignature:
+    """Which formats make a missing signature meaningful rather than merely inconclusive.
+
+    The distinction earns its place in the downloader: a payload declared as a PDF that carries no
+    PDF signature is something else, while a payload declared as CSV has nothing to be missing. Both
+    look identical to :func:`sniff_format`, which returns ``None`` either way.
+    """
+
+    @pytest.mark.parametrize(
+        "file_format",
+        [
+            FileFormat.PDF,
+            FileFormat.PNG,
+            FileFormat.JPEG,
+            FileFormat.TIFF,
+            FileFormat.ZIP,
+            FileFormat.XLSX,
+            FileFormat.DOCX,
+            FileFormat.DOC,
+            FileFormat.XLS,
+        ],
+    )
+    def test_binary_formats_always_carry_one(self, file_format: FileFormat) -> None:
+        assert file_format in FORMATS_WITH_A_SIGNATURE
+
+    @pytest.mark.parametrize(
+        "file_format",
+        [FileFormat.CSV, FileFormat.JSON, FileFormat.XML, FileFormat.HTML],
+    )
+    def test_text_formats_do_not(self, file_format: FileFormat) -> None:
+        assert file_format not in FORMATS_WITH_A_SIGNATURE
+
+    def test_every_listed_format_is_actually_recognised_from_its_own_bytes(self) -> None:
+        """The set must not claim a signature exists where sniffing cannot find one.
+
+        Otherwise the downloader would refuse a legitimate document for lacking a marker that was
+        never detectable in the first place. Checked against the container members too, since an
+        ``.xlsx`` is recognised through its ZIP header rather than one of its own.
+        """
+        samples: dict[FileFormat, bytes] = {
+            FileFormat.PDF: PDF_HEADER,
+            FileFormat.PNG: PNG_HEADER,
+            FileFormat.JPEG: JPEG_HEADER,
+            FileFormat.TIFF: TIFF_LE_HEADER,
+            FileFormat.ZIP: ZIP_HEADER,
+            FileFormat.XLSX: ZIP_HEADER,
+            FileFormat.DOCX: ZIP_HEADER,
+            FileFormat.DOC: OLE_HEADER,
+            FileFormat.XLS: OLE_HEADER,
+        }
+        assert set(samples) == set(
+            FORMATS_WITH_A_SIGNATURE
+        ), "a format was added to FORMATS_WITH_A_SIGNATURE without a sample proving it sniffs"
+        for file_format, payload in samples.items():
+            sniffed = sniff_format(payload)
+            assert sniffed is not None
+            assert formats_are_compatible(file_format, sniffed)
 
 
 class TestCompatibility:

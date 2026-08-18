@@ -38,6 +38,7 @@ from aedifex.errors import UnsafeContentError
 
 __all__ = [
     "DOCUMENT_ID_NAMESPACE",
+    "ContentAccumulator",
     "ContentIdentity",
     "digests_are_distinct",
     "document_id_for_digest",
@@ -99,6 +100,69 @@ def document_id_for_digest(sha256: str) -> uuid.UUID:
     return uuid.uuid5(DOCUMENT_ID_NAMESPACE, sha256)
 
 
+class ContentAccumulator:
+    """Derives a :class:`ContentIdentity` from bytes as they go past, in one pass.
+
+    Separate from :func:`hash_stream` because two callers need the same rules from different
+    shapes of input: a file-like object that must be read, and a network response that arrives
+    as chunks and is being written to disk at the same time. The rules are the part worth
+    sharing — the cap is enforced incrementally, an empty payload is refused, and the sniff
+    prefix is taken from the front of the stream however the chunks happen to fall.
+
+    Single-use: :meth:`finish` reads the digest, and continuing to feed it afterwards would
+    produce an identity that describes neither what was hashed nor what was written.
+    """
+
+    __slots__ = ("_digest", "_finished", "_max_bytes", "_prefix", "_size")
+
+    def __init__(self, *, max_bytes: int) -> None:
+        if max_bytes <= 0:
+            raise ValueError(f"max_bytes must be positive, got {max_bytes}")
+        self._max_bytes = max_bytes
+        self._digest = hashlib.sha256()
+        self._size = 0
+        self._prefix = bytearray()
+        self._finished = False
+
+    def update(self, chunk: bytes) -> None:
+        """Accept one chunk.
+
+        Raises:
+            UnsafeContentError: if the payload has exceeded ``max_bytes``. Raised before the
+                chunk is counted as stored, so a caller that stops here has written no more
+                than the limit plus this chunk.
+        """
+        if self._finished:
+            raise ValueError("accumulator already finished; identity would not match the bytes")
+        self._size += len(chunk)
+        if self._size > self._max_bytes:
+            raise UnsafeContentError(
+                f"payload exceeds the {self._max_bytes} byte limit (read {self._size} bytes so far)"
+            )
+        self._digest.update(chunk)
+        if len(self._prefix) < SNIFF_PREFIX_BYTES:
+            self._prefix.extend(chunk[: SNIFF_PREFIX_BYTES - len(self._prefix)])
+
+    def finish(self) -> ContentIdentity:
+        """Return the identity of everything accepted.
+
+        Raises:
+            UnsafeContentError: if nothing was accepted. An empty file is never valid evidence,
+                and its digest would collide with every other empty download, corrupting
+                deduplication.
+        """
+        if self._size == 0:
+            raise UnsafeContentError("payload is empty")
+        self._finished = True
+        sha256 = self._digest.hexdigest()
+        return ContentIdentity(
+            sha256=sha256,
+            size_bytes=self._size,
+            document_id=document_id_for_digest(sha256),
+            sniffed_format=sniff_format(bytes(self._prefix)),
+        )
+
+
 def hash_stream(stream: IO[bytes], *, max_bytes: int) -> ContentIdentity:
     """Hash a byte stream, enforcing ``max_bytes`` as it reads.
 
@@ -109,35 +173,10 @@ def hash_stream(stream: IO[bytes], *, max_bytes: int) -> ContentIdentity:
         UnsafeContentError: if the payload exceeds ``max_bytes`` or is empty.
         ValueError: if ``max_bytes`` is not positive.
     """
-    if max_bytes <= 0:
-        raise ValueError(f"max_bytes must be positive, got {max_bytes}")
-
-    digest = hashlib.sha256()
-    size = 0
-    prefix = bytearray()
-
+    accumulator = ContentAccumulator(max_bytes=max_bytes)
     while chunk := stream.read(_READ_CHUNK_BYTES):
-        size += len(chunk)
-        if size > max_bytes:
-            raise UnsafeContentError(
-                f"payload exceeds the {max_bytes} byte limit (read {size} bytes so far)"
-            )
-        digest.update(chunk)
-        if len(prefix) < SNIFF_PREFIX_BYTES:
-            prefix.extend(chunk[: SNIFF_PREFIX_BYTES - len(prefix)])
-
-    if size == 0:
-        # An empty file is never valid evidence, and its digest would collide with every
-        # other empty download, corrupting deduplication.
-        raise UnsafeContentError("payload is empty")
-
-    sha256 = digest.hexdigest()
-    return ContentIdentity(
-        sha256=sha256,
-        size_bytes=size,
-        document_id=document_id_for_digest(sha256),
-        sniffed_format=sniff_format(bytes(prefix)),
-    )
+        accumulator.update(chunk)
+    return accumulator.finish()
 
 
 def hash_bytes(payload: bytes, *, max_bytes: int) -> ContentIdentity:
@@ -166,7 +205,12 @@ def resolve_format(
         allowed: Formats the source is permitted to yield, from its registry definition.
         media_type: Raw ``Content-Type`` header value, if any.
         filename: Remote filename or URL basename, if any.
-        sniffed: Format confirmed from magic bytes, from :class:`ContentIdentity`.
+        sniffed: Format confirmed from magic bytes, from :class:`ContentIdentity`. ``None`` means
+            *unconfirmed*, which this function cannot distinguish from *not examined* — a caller
+            that did read the bytes knows more than that, and
+            :func:`~aedifex.acquisition.download.download` uses
+            :data:`~aedifex.domain.files.FORMATS_WITH_A_SIGNATURE` to treat a missing signature as
+            a mismatch for the formats that always have one.
 
     Raises:
         UnsafeContentError: if the format cannot be determined, the signals contradict
