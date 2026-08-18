@@ -50,7 +50,11 @@ from datetime import UTC, datetime
 
 from aedifex.acquisition.fetch.addresses import IpAddress, classify_address
 from aedifex.acquisition.fetch.hosts import SourceHostPolicy
-from aedifex.acquisition.fetch.resolver import ResolvedAddress, Resolver
+from aedifex.acquisition.fetch.resolver import (
+    ResolvedAddress,
+    Resolver,
+    UnparseableDnsAnswerError,
+)
 from aedifex.acquisition.fetch.urls import (
     NormalizedUrl,
     RejectionReason,
@@ -165,6 +169,13 @@ def _resolve_once(normalized: NormalizedUrl, resolver: Resolver) -> tuple[Resolv
     """Resolve the host exactly once, treating any failure as a rejection."""
     try:
         answers = tuple(resolver.resolve(normalized.host, normalized.port))
+    except UnparseableDnsAnswerError as error:
+        # Caught before the generic OSError case so the reason names the real problem. An answer
+        # we cannot classify is a rejection, never a skipped entry (see rule 81b).
+        raise SsrfRejectionError(
+            RejectionReason.MALFORMED_DNS_ANSWER,
+            f"host {normalized.host!r} resolved to an unparseable address: {error}",
+        ) from error
     except OSError as error:
         raise SsrfRejectionError(
             RejectionReason.UNRESOLVABLE_HOST,

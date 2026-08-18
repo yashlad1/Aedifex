@@ -18,7 +18,12 @@ from collections.abc import Sequence
 
 import pytest
 
-from aedifex.acquisition.fetch.resolver import ResolvedAddress, Resolver, SystemResolver
+from aedifex.acquisition.fetch.resolver import (
+    ResolvedAddress,
+    Resolver,
+    SystemResolver,
+    UnparseableDnsAnswerError,
+)
 
 
 class TestResolvedAddress:
@@ -117,10 +122,16 @@ class TestScopedIpv6:
         answers = SystemResolver().resolve("scoped.example", 443)
         assert [answer.ip for answer in answers] == [ipaddress.ip_address("fe80::1")]
 
-    def test_an_unparseable_answer_is_skipped_rather_than_passed_on(
+    def test_an_unparseable_answer_rejects_the_whole_resolution(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """An address the OS produced but Python cannot parse must not reach the policy."""
+        """Rejection, not omission — even when other answers in the same reply are fine.
+
+        This test previously asserted the *opposite*: that the bad answer was skipped and the
+        good one returned. That was a fail-open bug. Dropping an address we cannot classify means
+        it never reaches the policy that would have rejected it, and nothing records that it
+        existed. Constitution rule 81b.
+        """
 
         def fake_getaddrinfo(*_args: object, **_kwargs: object) -> list[object]:
             return [
@@ -129,5 +140,9 @@ class TestScopedIpv6:
             ]
 
         monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
-        answers = SystemResolver().resolve("mixed.example", 443)
-        assert [answer.ip for answer in answers] == [ipaddress.ip_address("93.184.216.34")]
+        with pytest.raises(UnparseableDnsAnswerError, match="not-an-address"):
+            SystemResolver().resolve("mixed.example", 443)
+
+    def test_the_unparseable_answer_error_is_an_oserror(self) -> None:
+        """So a caller that only knows about OSError still fails closed rather than crashing."""
+        assert issubclass(UnparseableDnsAnswerError, OSError)

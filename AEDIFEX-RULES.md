@@ -2318,6 +2318,85 @@ The most important philosophy to preserve is the one ClaudeCode already demonstr
 
 ⸻
 
+81a. Verification Is an Exit Code, Never Text
+
+A gate is verified only by capturing and checking its exit status.
+
+Command executed
+      ↓
+Capture exit code
+      ↓
+Exit code == 0 ?
+   ┌──────┴──────┐
+   │             │
+  YES            NO
+   │             │
+VERIFIED       FAILED
+
+Never infer success from stdout, from the absence of output, from a grep, or from an
+`&& echo PASS` sentinel. Applies to tests, formatting, linting, type checking, security scans,
+dependency audits, migrations, container builds, and deployment checks.
+
+This rule exists because it was broken. A lint failure was committed and reported as green: the
+check ran as `ruff check ... >/dev/null && echo PASS`, so the missing PASS was the only signal,
+and the merged output line was misread as success. Reading output is not verification.
+
+Corollary: when reporting a batch of gates, report each one's exit status. A summary line that
+does not distinguish which gate produced which result is not evidence.
+
+⸻
+
+81b. Inside a Security Boundary, Failure to Parse Means Reject — Never Omit
+
+If a value cannot be parsed, normalized, or classified inside a security boundary, the operation
+is rejected. It is never silently skipped.
+
+Correct:
+
+DNS answer
+   ↓
+cannot normalize IP
+   ↓
+REJECT RESOLUTION
+
+Wrong:
+
+cannot normalize
+   ↓
+skip that answer
+   ↓
+continue with the rest
+
+Omission is the more dangerous failure because it is invisible and it fails *open*. The
+resolver demonstrated exactly this: an IPv6 answer carrying a scope identifier ("fe80::1%en0")
+failed to parse, the answer was skipped, and a link-local address therefore never reached the
+policy whose entire purpose was to reject it — a fail-open outcome hidden inside a function that
+looked fail-closed.
+
+Apply this to every parser at a boundary:
+
+MIME and media types
+magic bytes
+filenames
+URLs and redirect targets
+DNS answers
+TLS certificates
+archive metadata (entry names, sizes, compression ratios)
+PDF structure
+OCR output
+LLM structured output
+queue messages
+configuration files
+
+Where partial results are genuinely acceptable (for example: skipping one unreadable document in
+a batch while continuing the batch), that must be an explicit, documented decision at the
+orchestration layer — never a silent `except: continue` inside a validator.
+
+Test obligation: for each parser at a boundary, include a malformed-but-meaningful input and
+assert it is *rejected*, not that it is absent from the output.
+
+⸻
+
 Aedifex IP / Patent Readiness Requirements
 
 These requirements apply alongside the engineering constitution above. They are recordkeeping

@@ -80,6 +80,7 @@ class RejectionReason(StrEnum):
     IP_LITERAL_NOT_ALLOWED = "ip_literal_not_allowed"
     UNRESOLVABLE_HOST = "unresolvable_host"
     NO_ADDRESSES_RETURNED = "no_addresses_returned"
+    MALFORMED_DNS_ANSWER = "malformed_dns_answer"
     FORBIDDEN_ADDRESS = "forbidden_address"
     TOO_MANY_REDIRECTS = "too_many_redirects"
     REDIRECT_LOOP = "redirect_loop"

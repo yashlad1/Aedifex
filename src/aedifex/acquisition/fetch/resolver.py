@@ -22,7 +22,24 @@ from typing import Protocol, runtime_checkable
 
 from aedifex.acquisition.fetch.addresses import IpAddress
 
-__all__ = ["ResolvedAddress", "Resolver", "SystemResolver"]
+__all__ = [
+    "ResolvedAddress",
+    "Resolver",
+    "SystemResolver",
+    "UnparseableDnsAnswerError",
+]
+
+
+class UnparseableDnsAnswerError(OSError):
+    """The resolver returned an address literal that could not be parsed.
+
+    Raised rather than skipping the offending answer. An earlier version of this module did skip
+    it, which was a fail-*open* bug hiding inside a fail-closed-looking function: an IPv6 answer
+    carrying a scope identifier (``fe80::1%en0``) failed to parse, was dropped, and a link-local
+    address therefore never reached the policy whose only job was to reject it.
+
+    Inside a security boundary, failure to parse means reject, never omit.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,10 +98,13 @@ class SystemResolver:
             literal = literal.split("%", 1)[0]
             try:
                 address = _parse(literal)
-            except ValueError:
-                # An address the OS produced but Python cannot parse is not something to guess
-                # about; skip it rather than pass an unvalidated value onward.
-                continue
+            except ValueError as error:
+                # Reject the whole resolution rather than dropping this answer. Skipping would
+                # mean an address we could not classify never reaches the policy that would have
+                # rejected it, which fails open and leaves no trace.
+                raise UnparseableDnsAnswerError(
+                    f"resolver returned an unparseable address for {hostname!r}: {literal!r}"
+                ) from error
             if address in seen:
                 continue
             seen.add(address)
