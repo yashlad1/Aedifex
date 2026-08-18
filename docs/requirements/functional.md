@@ -64,10 +64,10 @@ stays visible that they were not foreseen.
 
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
-| FR-040 | The system shall preserve raw documents immutably and never overwrite them with derived output. | Implemented | `test_writing_to_the_raw_tier_is_refused` |
-| FR-041 | The system shall derive storage keys deterministically from content, so re-download is idempotent. | Implemented | `test_storage_keys.py::test_is_deterministic` |
+| FR-040 | The system shall preserve raw documents immutably and never overwrite them with derived output. | Implemented | `test_writing_to_the_raw_tier_is_refused`, and `RawObjectStore` has no delete or overwrite path — asserted structurally, not promised. A key already holding different bytes is a refusal; bucket versioning makes the guarantee recoverable if something else ever writes there |
+| FR-041 | The system shall derive storage keys deterministically from content, so re-download is idempotent. | Implemented | `test_storage_keys.py::test_is_deterministic`; end to end, storing the same document twice uploads once and reports `already_present`, verified against MinIO by the version id not advancing |
 | FR-042 | The system shall key every derived artifact by the digest of the raw document it came from. | Implemented | `test_is_keyed_by_the_raw_digest` |
-| FR-043 | The system shall write documents to S3-compatible object storage. | Planned | — |
+| FR-043 | The system shall write documents to S3-compatible object storage. | Implemented | `RawObjectStore`; `test_storage_objects.py` against a fake that reproduces S3's failures, and `tests/integration/test_object_storage.py` against real MinIO. The upload carries a SHA-256 the store validates itself, and a corrupted body is refused with `XAmzContentChecksumMismatch` — measured for a streamed handle, not only for a `bytes` payload |
 
 ## Pipeline state
 

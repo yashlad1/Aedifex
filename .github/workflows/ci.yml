@@ -86,6 +86,10 @@ jobs:
     env:
       AEDIFEX_ENVIRONMENT: test
       AEDIFEX_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/aedifex
+      AEDIFEX_STORAGE_ENDPOINT_URL: http://localhost:9000
+      AEDIFEX_STORAGE_BUCKET: aedifex-test
+      AEDIFEX_STORAGE_ACCESS_KEY_ID: minioadmin
+      AEDIFEX_STORAGE_SECRET_ACCESS_KEY: minioadmin
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -95,6 +99,34 @@ jobs:
 
       - name: Install from lockfile
         run: uv sync --locked --extra dev
+
+      # MinIO is started as a step rather than as a service container, and not by preference:
+      # service containers cannot override an image's command, and this image needs `server /data`.
+      # The alternative was a different vendor's image that starts a server by default, which would
+      # mean two MinIO images in the project for no gain. Same pinned digest as docker-compose.yml,
+      # so CI and a developer's machine run the same build.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            server /data
+
+      - name: Wait for MinIO
+        # A bounded wait that fails rather than hangs (rule 81g). The integration suite runs with
+        # REQUIRE_INTEGRATION_TESTS=1, so a MinIO that never came up would fail the storage tests
+        # anyway — but failing here says why, in one line, instead of in a fixture's skip message.
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl -sf http://localhost:9000/minio/health/live; then
+              echo "MinIO is live after ${attempt} attempt(s)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "MinIO did not become live within 30s"
+          docker logs minio
+          exit 1
 
       - name: Apply migrations
         run: uv run alembic upgrade head

@@ -32,6 +32,11 @@ dependencies = [
     # relied on as an httpx transitive. A dependency we import is a dependency we own: if httpx
     # ever stops requiring certifi, this must not become an ImportError inside the TLS path.
     "certifi>=2025.1.31",
+    # S3-compatible object storage. boto3 rather than the lighter minio SDK because AWS S3 is the
+    # production target and MinIO is the development stand-in, not the other way round — and because
+    # the checksum support this uses to have the *server* verify an upload is an S3 API feature that
+    # a MinIO-specific client would not exercise the same way.
+    "boto3>=1.36,<2",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +47,9 @@ dev = [
     "ruff>=0.9,<1",
     "black>=26.3.1,<27",
     "types-pyyaml>=6.0.12,<7",
+    # boto3 ships no type information, so mypy --strict would see every S3 call as Any and the
+    # storage layer would be the one place with no type checking at all.
+    "boto3-stubs[s3]>=1.36,<2",
     "pip-audit>=2.9,<3",
     # Issues a throwaway CA and server certificates so the TLS path is tested with a real
     # handshake. Mocking TLS would leave the security-critical half of the transport unverified.
