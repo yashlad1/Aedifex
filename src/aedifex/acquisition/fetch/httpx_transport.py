@@ -285,6 +285,7 @@ class HttpxTransport:
         method: str = "GET",
         headers: Mapping[str, str] | None = None,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        body: bytes | None = None,
     ) -> Iterator[RawResponse]:
         """Send one request to ``target`` and yield the unread response.
 
@@ -324,9 +325,25 @@ class HttpxTransport:
                     f"no time remains to fetch {target.describe()}: {error}"
                 ) from error
 
+        # A body belongs to POST and to nothing else. Checked here rather than trusted, because the
+        # two mistakes this prevents are silent: a POST with no body reaches the server as an empty
+        # form and comes back "success" with an empty list, and a body attached to a GET is a caller
+        # that has confused two requests and will be debugging the wrong one.
+        if body is not None and normalized_method != "POST":
+            raise ValueError(
+                f"a request body is only sent with POST, not {normalized_method}; "
+                f"see ALLOWED_METHODS for why this is narrow"
+            )
+        if normalized_method == "POST" and body is None:
+            raise ValueError(
+                "POST requires a body; a bodyless POST is a mistake that a server will answer "
+                "cheerfully and emptily"
+            )
+
         request = self._client.build_request(
             normalized_method,
             _request_url(target),
+            content=body,
             headers={"User-Agent": self._user_agent, **_prepare_headers(target, headers)},
             timeout=httpx.Timeout(
                 connect=timeouts.connect_seconds,

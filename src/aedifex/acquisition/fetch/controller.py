@@ -225,6 +225,7 @@ class RetryController:
         headers: Mapping[str, str] | None = None,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         cancellation: Cancellation | None = None,
+        body: bytes | None = None,
     ) -> Iterator[FetchResult]:
         """Fetch ``target``, retrying transient failures, and yield the successful response.
 
@@ -265,6 +266,9 @@ class RetryController:
                             method=method,
                             headers=headers,
                             max_response_bytes=max_response_bytes,
+                            # The same bytes on every attempt. A retry that re-derived the body
+                            # could send a different request than the one that failed.
+                            body=body,
                         )
                     )
                 except TransportError as error:

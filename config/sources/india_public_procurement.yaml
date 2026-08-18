@@ -137,31 +137,57 @@ sources:
       documents, and technical specifications for road and bridge projects.
     country: IN
     category: government_procurement
-    retrieval: http_crawl
+    retrieval: http_api
     base_url: https://nhai.gov.in/
     robots_policy: respect
-    enabled: false
-    verification_status: unverified
-    crawler: null
+    enabled: true
+    verification_status: approved
+    crawler: nhai_tenders
     rate_limit:
       requests_per_minute: 10
       max_concurrency: 1
       min_delay_seconds: 3.0
       max_documents_per_run: 300
+    discovery:
+      # The listing endpoint, with its form fields carried as a query string: the frontier stores
+      # URLs, so an API call has to be expressible as one to survive a restart.
+      seed_paths:
+        - /nhai/api/tenderlist?language=en&totalrecord=10&index=0
+      # listing (0) -> tender detail (1) -> the documents it names.
+      max_depth: 2
+      max_pages: 60
+      # The only two endpoints that may be POSTed, and the whole of the control that replaced
+      # "GET only" in the transport. Parameter values may come from a response; these may not.
+      api_post_paths:
+        - /nhai/api/tenderlist
+        - /nhai/api/tenderdetail
     data_use:
-      license: unknown (pending review)
+      # 200-character limit, so the caveat lives in allowed_use and notes rather than here.
+      license: Government of India website content (terms reviewed in a browser; see notes)
+      terms_url: https://nhai.gov.in/terms-conditions
       access: public
       allowed_use: >
-        Pending review. No collection is permitted until the terms of use have been
-        assessed and recorded here.
+        Collection of publicly listed tender notices and the documents attached to them, from the
+        unauthenticated tender listing API that the portal's own front end uses, for research and
+        evaluation. The filtered tender search is out of scope permanently: it sends captcha_page
+        and verification parameters, and bypassing a CAPTCHA is forbidden regardless of review
+        outcome. The terms of use are published only as client-side routes and cannot be fetched by
+        any HTTP client, so they were read in a browser by the project owner rather than recorded
+        from a retrieved document.
       attribution_required: true
+      contains_personal_data: true
+      reviewed_by: project owner (lad.yas@northeastern.edu)
+      reviewed_on: 2026-08-18T00:00:00Z
     document_types:
       - tender_notice
       - contract
       - technical_specification
       - bill_of_quantities
       - inspection_report
-    file_formats: [pdf, xlsx, zip]
+    # No zip: rule 52 forbids archive expansion until bounded extraction exists, so archive links
+    # are discovered, named, and skipped with a reason. No xlsx yet either — the first live run is
+    # deliberately narrow.
+    file_formats: [pdf]
     notes: >
       TECHNICAL REVIEW 2026-08-18. Left unverified deliberately: the owner approved this source
       before these findings existed, and two of them change what approval would mean. Recorded here

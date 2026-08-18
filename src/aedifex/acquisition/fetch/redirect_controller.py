@@ -163,6 +163,7 @@ class RedirectController:
         headers: Mapping[str, str] | None = None,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
         cancellation: Cancellation | None = None,
+        body: bytes | None = None,
     ) -> Iterator[ChainResult]:
         """Fetch ``url`` for ``host_policy``'s source, following redirects within policy.
 
@@ -184,6 +185,7 @@ class RedirectController:
         current_url = url
         current_method = method
         current_headers = headers
+        current_body = body
 
         while True:
             target = self._validate(current_url, host_policy=host_policy, chain=tuple(chain))
@@ -209,6 +211,7 @@ class RedirectController:
                         headers=current_headers,
                         max_response_bytes=max_response_bytes,
                         cancellation=cancellation,
+                        body=current_body,
                     )
                 )
                 status = result.response.status_code
@@ -257,11 +260,21 @@ class RedirectController:
             # Outside the stack: this hop's response is closed and its slot returned before the
             # next hop asks for capacity.
             if rewrite_to_get:
+                # 303 means "fetch this other thing instead", so the method becomes GET and the
+                # body goes with it. redirects.py predicted that omitting this would become a
+                # correctness bug once POST existed. It exists now, and a body carried onto a GET is
+                # rejected by the transport at best, and sent to a server that never asked for it at
+                # worst.
                 current_method = "GET"
+                current_body = None
             if _crosses_host(target.hostname, next_url):
                 # Rebuilt, not carried over. A header set for one host has no business being sent
                 # to another one that a remote server chose (FR-114).
                 current_headers = None
+                # And neither does a body. A remote server that answers a POST with a redirect to a
+                # host of its choosing must not receive the form we sent to the first one.
+                current_body = None
+                current_method = "GET"
             current_url = next_url
 
     def _validate(

@@ -440,7 +440,12 @@ class TestTargetBoundary:
             pass
 
     def test_open_accepts_no_parameter_that_could_carry_an_unvalidated_url(self) -> None:
-        """There is no second door: no ``url=``, ``host=``, or ``address=`` overload."""
+        """There is no second door: no ``url=``, ``host=``, or ``address=`` overload.
+
+        ``body`` is on this list and is not such a door: it carries bytes to send, never a
+        destination. The assertion stays exact rather than becoming a subset check, so a genuinely
+        new parameter still has to be justified here.
+        """
         parameters = set(inspect.signature(HttpxTransport.open).parameters)
         assert parameters == {
             "self",
@@ -449,6 +454,7 @@ class TestTargetBoundary:
             "method",
             "headers",
             "max_response_bytes",
+            "body",
         }
 
 
@@ -718,9 +724,15 @@ class TestMethodPolicy:
             assert response.status_code == 200
         assert server.recorded[0].method == method.upper()
 
-    @pytest.mark.parametrize("method", ["POST", "PUT", "DELETE", "PATCH", "OPTIONS", "TRACE"])
+    @pytest.mark.parametrize("method", ["PUT", "DELETE", "PATCH", "OPTIONS", "TRACE"])
     def test_write_methods_are_refused(self, transport: HttpxTransport, method: str) -> None:
-        """An acquisition platform that can POST is one that can be aimed at an admin endpoint."""
+        """A platform that can PUT or DELETE is one aimed at someone's admin endpoint.
+
+        ``POST`` left this list when an approved source turned out to publish its tender listing
+        only through a form-body API. The reason for the original rule still holds, so the control
+        moved rather than vanishing: a POST must carry a body, and the endpoints that may receive
+        one come from a source's reviewed registry entry, never from a discovered URL.
+        """
         server = start_server(ok_body())
         with (
             pytest.raises(ValueError, match="not permitted"),
@@ -729,8 +741,23 @@ class TestMethodPolicy:
             pass
         assert server.recorded == [], "nothing may reach the network before the method is checked"
 
-    def test_the_allowlist_is_read_only(self) -> None:
-        assert {"GET", "HEAD"} == ALLOWED_METHODS
+    def test_the_allowlist_is_exactly_what_is_needed(self) -> None:
+        assert {"GET", "HEAD", "POST"} == ALLOWED_METHODS
+
+    def test_a_post_must_carry_a_body_and_a_read_must_not(
+        self, transport: HttpxTransport
+    ) -> None:
+        """Both mistakes are silent: an empty form answers "success" with an empty list."""
+        with (
+            pytest.raises(ValueError, match="POST requires a body"),
+            transport.open(target_for(9), timeouts=FAST, method="POST"),
+        ):
+            pass
+        with (
+            pytest.raises(ValueError, match="only sent with POST"),
+            transport.open(target_for(9), timeouts=FAST, method="GET", body=b"x=1"),
+        ):
+            pass
 
 
 class TestHeaderOwnership:

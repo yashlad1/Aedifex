@@ -100,12 +100,26 @@ __all__ = [
     "parse_content_length",
 ]
 
-ALLOWED_METHODS: Final[frozenset[str]] = frozenset({"GET", "HEAD"})
-"""Aedifex acquires documents; it never submits anything.
+ALLOWED_METHODS: Final[frozenset[str]] = frozenset({"GET", "HEAD", "POST"})
+"""What may be sent. An allowlist rather than a convention.
 
-An allowlist rather than a convention, because a crawler that can issue a state-changing request
-is a crawler that can be pointed at someone's admin endpoint. ``POST`` is not "not yet
-implemented" here — it is refused.
+``POST`` was refused outright until an approved source turned out to require it: NHAI publishes its
+tender listing only through a JSON API that takes a form body, and there is no GET equivalent. The
+reason it was refused still holds, though, and is worth restating — a crawler that can issue a
+state-changing request is a crawler that can be pointed at someone's admin endpoint, and discovery
+consumes URLs from *untrusted remote pages*.
+
+So the control was narrowed rather than deleted, and it now lives in two places:
+
+* Here: a ``POST`` must carry a body, and ``GET``/``HEAD`` must not. A bodyless POST is a mistake,
+  and a body on a GET is a caller confusing two requests.
+* In reviewed configuration: a source's registry entry lists the exact paths that may be POSTed
+  (``DiscoveryPolicy.api_post_paths``). Parameter *values* may come from a remote response — an id
+  read from a listing — but the endpoint may not, so a hostile page cannot induce a POST to anywhere
+  a human has not signed off.
+
+That is stricter than it sounds. GET-only made an admin-endpoint POST impossible; this makes it
+impossible without a reviewed change to a YAML file.
 """
 
 DEFAULT_CHUNK_SIZE: Final[int] = 64 * 1024
@@ -450,6 +464,7 @@ class Transport(Protocol):
         method: str = "GET",
         headers: Mapping[str, str] | None = None,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        body: bytes | None = None,
     ) -> AbstractContextManager[RawResponse]:
         """Send one request and return its unread response.
 

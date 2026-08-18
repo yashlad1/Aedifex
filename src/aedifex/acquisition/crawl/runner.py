@@ -34,6 +34,7 @@ the consumer.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -351,16 +352,22 @@ class CrawlRunner:
                 return StopReason.FRONTIER_DRAINED
 
             progressed = False
-            for row in claimed:
+            for position, row in enumerate(claimed):
+                # Re-checked per URL, not once per batch. Checking only at the top of the loop
+                # lets a batch of ten sail past the ceiling: a live dry run asked for max_pages=3
+                # and read eleven, which for a bounded first run against a real portal is the one
+                # thing that must not be approximate.
+                limit_reached = self._limit_reached(job_id, bounds, started)
+                if limit_reached is not None:
+                    self._give_back_all(frontier, claimed[position:])
+                    return limit_reached
                 if bounds.dry_run and is_document_url(row.url, formats):
                     if row.id in inspected:
                         continue
                     inspected.add(row.id)
                 progressed = True
                 if self._cancelled():
-                    with self._sessions() as session:
-                        self._give_back(session, frontier, row)
-                        session.commit()
+                    self._give_back_all(frontier, claimed[position:])
                     return StopReason.CANCELLED
                 self._handle(
                     row=row,
@@ -465,7 +472,7 @@ class CrawlRunner:
         row.last_attempted_at = datetime.now(UTC)
         session.flush()
         try:
-            page = reader.read(row.url, depth=row.depth)
+            page = reader.read(row.url, depth=row.depth, request=strategy.request_for(row.url))
         except (SsrfRejectionError, RedirectRejectedError, FetchFailedError, TransportError) as e:
             # A listing page that cannot be read is an ordinary failure of one URL, retryable like
             # any other: portals go down for an afternoon. It is *not* counted as a failed document,
@@ -628,11 +635,21 @@ class CrawlRunner:
         frontier.settle(session, row)
         _log.info("crawl.robots_refused", url=row.url, reason=reason)
 
-    @staticmethod
-    def _give_back(session: Session, frontier: FrontierQueue, row: DiscoveredUrl) -> None:
-        attached = session.get(DiscoveredUrl, row.id)
-        if attached is not None:
-            frontier.release(session, attached)
+    def _give_back_all(self, frontier: FrontierQueue, rows: Sequence[DiscoveredUrl]) -> None:
+        """Return leases on URLs this run will not get to, so the next one starts on them at once.
+
+        Without this the remainder of a claimed batch stays leased until it expires, and a run
+        stopped by a limit would leave up to a batch of URLs untouchable for the lease duration —
+        which looks exactly like a crashed worker to whatever comes next.
+        """
+        if not rows:
+            return
+        with self._sessions() as session:
+            for row in rows:
+                attached = session.get(DiscoveredUrl, row.id)
+                if attached is not None:
+                    frontier.release(session, attached)
+            session.commit()
 
     def _cancelled(self) -> bool:
         return self._cancellation is not None and self._cancellation.wait(0)

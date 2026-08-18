@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from aedifex.acquisition.crawl.discovery import FetchedPage
+from aedifex.acquisition.crawl.links import FetchedPage, PageRequest
 from aedifex.acquisition.fetch.hosts import SourceHostPolicy
 from aedifex.acquisition.fetch.ratelimit import RateLimits
 from aedifex.acquisition.fetch.redirect_controller import RedirectController
@@ -51,19 +51,27 @@ class PageReader:
         self._timeouts = timeouts if timeouts is not None else TimeoutPolicy()
         self._max_bytes = max_bytes
 
-    def read(self, url: str, *, depth: int = 0) -> FetchedPage:
+    def read(self, url: str, *, depth: int = 0, request: PageRequest | None = None) -> FetchedPage:
         """Fetch ``url`` and return it as text.
+
+        ``request`` comes from the source's discovery strategy, which is the only thing that knows
+        whether this URL is a page to GET or an API call to POST a form to. Defaulting to a plain
+        GET keeps every HTML source unaffected.
 
         Raises whatever the fetch layer raises — ``FetchFailedError``, ``SsrfRejectionError``,
         ``RedirectRejectedError``, ``TransportError``. Deliberately not swallowed: a seed page that
         cannot be read is a crawl that has not started, and the runner decides what that means.
         """
+        spec = request if request is not None else PageRequest()
         budget = TimeoutBudget(policy=self._timeouts, clock=MonotonicClock())
         with self._redirects.fetch(
             url,
             host_policy=self._host_policy,
             limits=self._limits,
             budget=budget,
+            method=spec.method,
+            headers=spec.headers,
+            body=spec.body,
             max_response_bytes=self._max_bytes,
         ) as chain:
             return FetchedPage(

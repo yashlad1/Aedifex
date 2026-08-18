@@ -136,6 +136,10 @@ def _crawl(args: argparse.Namespace, settings: Settings) -> int:
     engine = build_engine(settings)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     store = RawObjectStore(_s3(settings), bucket=settings.storage_bucket)
+    if not args.dry_run:
+        # Idempotent, and an operator starting a crawl should not have to create a bucket by hand.
+        # Skipped for a dry run, which stores nothing and should need no write permission at all.
+        store.ensure_bucket()
     shutdown = _shutdown_signal()
 
     with HttpxTransport(user_agent=settings.user_agent) as transport:

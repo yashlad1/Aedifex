@@ -198,6 +198,7 @@ class ScriptedTransport:
         method: str = "GET",
         headers: Mapping[str, str] | None = None,
         max_response_bytes: int = 1024,
+        body: bytes | None = None,
     ) -> Iterator[RawResponse]:
         index = len(self.requests)
         self.requests.append(

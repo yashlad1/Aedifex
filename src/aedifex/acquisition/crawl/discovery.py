@@ -30,12 +30,18 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
-from enum import StrEnum
 from html.parser import HTMLParser
 from typing import Final, Protocol
 from urllib.parse import urldefrag, urljoin, urlsplit
 
+from aedifex.acquisition.crawl.links import (
+    DiscoveredLink,
+    DiscoveryStrategy,
+    FetchedPage,
+    LinkKind,
+    PageRequest,
+)
+from aedifex.acquisition.crawl.nhai import NhaiTenderDiscovery
 from aedifex.acquisition.fetch.hosts import SourceHostPolicy
 from aedifex.acquisition.registry.models import DiscoveryPolicy, SourceDefinition
 from aedifex.domain.files import FileFormat, format_for_extension
@@ -48,63 +54,11 @@ __all__ = [
     "FetchedPage",
     "HtmlLinkDiscovery",
     "LinkKind",
+    "PageRequest",
     "is_document_url",
     "known_strategies",
     "strategy_for",
 ]
-
-
-class LinkKind(StrEnum):
-    DOCUMENT = "document"
-    """Something to acquire: the extension names a format this source may yield."""
-    PAGE = "page"
-    """Something to read for more links."""
-    IGNORED = "ignored"
-    """Seen and deliberately not queued. Carried rather than dropped, so a run can report it."""
-
-
-@dataclass(frozen=True, slots=True)
-class DiscoveredLink:
-    """One URL a page offered, classified, with where it came from."""
-
-    url: str
-    kind: LinkKind
-    depth: int
-    found_on: str
-    reason: str | None = None
-    """Why it was ignored. ``None`` for links that were queued."""
-
-    @property
-    def is_queueable(self) -> bool:
-        return self.kind in (LinkKind.DOCUMENT, LinkKind.PAGE)
-
-
-@dataclass(frozen=True, slots=True)
-class FetchedPage:
-    """A listing page, already read into memory by the runner.
-
-    ``url`` is the URL that *answered*, not the one requested, so relative links resolve against the
-    right base after a redirect. Getting that backwards produces links to paths that never existed.
-    """
-
-    url: str
-    body: str
-    depth: int = 0
-    media_type: str | None = None
-
-
-class DiscoveryStrategy(Protocol):
-    """What a source must provide, and the only thing it may provide."""
-
-    name: str
-
-    def seeds(self, source: SourceDefinition) -> tuple[str, ...]:
-        """Absolute URLs where a crawl of this source begins."""
-        ...
-
-    def links(self, page: FetchedPage) -> tuple[DiscoveredLink, ...]:
-        """Every URL the page offers, classified. Pure: no I/O."""
-        ...
 
 
 _MAX_LINKS_PER_PAGE: Final[int] = 5_000
@@ -150,6 +104,10 @@ class HtmlLinkDiscovery:
             host_policy=SourceHostPolicy.from_source(source),
             formats=frozenset(source.file_formats),
         )
+
+    def request_for(self, url: str) -> PageRequest:  # noqa: ARG002 - protocol signature
+        """Always a plain GET. An HTML portal is read, never submitted to."""
+        return PageRequest()
 
     def seeds(self, source: SourceDefinition) -> tuple[str, ...]:
         if source.base_url is None:
@@ -266,8 +224,18 @@ def _extract_hrefs(body: str) -> list[str]:
     return parser.hrefs
 
 
-STRATEGIES: Final[Mapping[str, type[HtmlLinkDiscovery]]] = {
+class _BuildsFromSource(Protocol):
+    """A strategy that can be constructed from a registry entry."""
+
+    name: str
+
+    @classmethod
+    def from_source(cls, source: SourceDefinition) -> DiscoveryStrategy: ...
+
+
+STRATEGIES: Final[Mapping[str, _BuildsFromSource]] = {
     HtmlLinkDiscovery.name: HtmlLinkDiscovery,
+    NhaiTenderDiscovery.name: NhaiTenderDiscovery,
 }
 """Every discovery strategy that exists, by the name a registry entry uses in ``crawler``.
 
@@ -292,7 +260,7 @@ def strategy_for(source: SourceDefinition) -> DiscoveryStrategy:
         raise SourceRegistryError(
             f"source {source.id!r} names no crawler, so nothing knows how to discover its documents"
         )
-    implementation = STRATEGIES.get(source.crawler)
+    implementation: _BuildsFromSource | None = STRATEGIES.get(source.crawler)
     if implementation is None:
         available = ", ".join(sorted(STRATEGIES)) or "<none registered>"
         raise SourceRegistryError(

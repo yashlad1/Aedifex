@@ -217,6 +217,34 @@ class DiscoveryPolicy(BaseModel):
         description="Regular expressions that exclude a path entirely. Checked before "
         "follow_patterns, so a deny always wins.",
     )
+    api_post_paths: tuple[str, ...] = Field(
+        default=(),
+        description="Exact paths on this source that may be requested with POST. Empty means none, "
+        "which is the right default: a crawler that can POST anywhere it finds a link can be "
+        "pointed at an admin endpoint. Parameter values may come from a remote response; the "
+        "endpoint may not. Matched exactly, never by prefix.",
+    )
+
+    @field_validator("api_post_paths")
+    @classmethod
+    def _require_absolute_exact_paths(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Absolute, query-free, and unique.
+
+        Query-free because the path is the thing being authorised and the query carries the form
+        body; allowing a query here would make the allowlist look like it constrained parameters
+        when it does not.
+        """
+        for path in value:
+            if not path.startswith("/"):
+                raise ValueError(f"api_post_path {path!r} must start with '/'")
+            if "?" in path or "#" in path:
+                raise ValueError(
+                    f"api_post_path {path!r} must be a bare path; the query string carries the "
+                    f"form body and is not part of what is authorised"
+                )
+        if len(set(value)) != len(value):
+            raise ValueError("api_post_paths entries must be unique")
+        return value
 
     @field_validator("seed_paths")
     @classmethod
