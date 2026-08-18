@@ -1,0 +1,50 @@
+# Semgrep self-test: proof that the scanner actually analysed our code.
+#
+# Why this exists
+# ---------------
+# A clean Semgrep run is only evidence of safety if the engine genuinely parsed and evaluated the
+# target files. Every one of these failures also produces "0 findings" and exit 0, and is
+# indistinguishable from success in the log:
+#
+#   * a target path that no longer resolves, so nothing is scanned
+#   * a ruleset that failed to fetch
+#   * a parse error that Semgrep downgrades to a warning and continues past
+#
+# The third is not hypothetical. Our Dockerfile carried a comment between two line continuations,
+# which BuildKit accepts but Semgrep's Dockerfile parser rejects; it abandoned lines 19-104 and
+# analysed essentially none of the file, while the run still reported success. The `p/dockerfile`
+# ruleset was chosen *because* this project's real mistakes have been in the Dockerfile, so the
+# ruleset most likely to earn its place was the one silently doing nothing.
+#
+# What this rule asserts
+# ----------------------
+# The pattern matches any function definition under src/aedifex/. That is deliberate on two counts:
+#
+#   * It is AST-level, not textual, so a match proves Semgrep parsed real production code rather
+#     than merely opened a file.
+#   * It matches on the order of a hundred sites across most modules, so no single refactor can
+#     break it. An earlier draft matched `os.environ`, which resolved to exactly one incidental
+#     line in config.py — rewriting that comprehension to `os.environ.keys()` would have produced
+#     a red build for a reason with nothing to do with security. A gate that cries wolf teaches
+#     people to ignore it.
+#
+# CI requires a match count above a floor, a scanned-file count above a floor, and an empty error
+# list. Floors sit well below current values so ordinary churn never trips them, while a genuine
+# breakage collapses them to zero. See the `sast` job in .github/workflows/ci.yml.
+#
+# This file is instrumentation, not policy. It reports nothing about code quality and its findings
+# are never fixed.
+
+rules:
+  - id: aedifex-semgrep-selftest
+    languages: [python]
+    severity: INFO
+    message: >
+      Semgrep self-test matched a function definition. The engine parsed and analysed production
+      code, so a zero-finding result from the real rulesets means "clean" rather than "did not run".
+    pattern: |
+      def $FUNC(...):
+          ...
+    paths:
+      include:
+        - src/aedifex/

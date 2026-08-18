@@ -1,7 +1,8 @@
 # Multi-stage build.
 #
-# NOTE: this image has not been built or executed — Docker was unavailable on the authoring
-# machine. CI builds it (.github/workflows/ci.yml) so a broken Dockerfile fails there.
+# This image is built, hardened, and smoke-tested on every CI run (.github/workflows/ci.yml):
+# it must import its own package, refuse placeholder production credentials, run as a non-root
+# user, and serve /health before the build is considered green.
 #
 # Base images are pinned by digest, not by mutable tag, so an upstream retag cannot silently
 # change what we deploy. The digests below were resolved from the Docker Hub registry API for
@@ -12,14 +13,21 @@
 
 FROM python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a AS builder
 
+# UV_PROJECT_ENVIRONMENT installs into a self-contained venv we can copy wholesale into the
+# runtime stage. UV_PYTHON points at the interpreter already in the image so uv never fetches a
+# second one, and UV_PYTHON_DOWNLOADS=never makes that a hard guarantee rather than a preference.
+#
+# These comments sit above the instruction rather than inside it on purpose. BuildKit tolerates
+# a comment between line continuations, but Semgrep's Dockerfile parser does not: it treated the
+# first one as a syntax error and abandoned lines 19-104, so `p/dockerfile` silently analysed
+# nothing while still reporting "0 findings" and exit 0. CI now runs Semgrep with --strict, which
+# turns a partial-parse warning into a build failure, so this cannot regress unnoticed.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    # Install into a self-contained venv we can copy wholesale into the runtime stage.
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    # Use the interpreter already in the image; never fetch a second one.
     UV_PYTHON=/usr/local/bin/python3 \
     UV_PYTHON_DOWNLOADS=never
 

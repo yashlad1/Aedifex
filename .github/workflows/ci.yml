@@ -179,6 +179,138 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  sast:
+    name: Static analysis (Semgrep CE)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
+
+      - name: Install Semgrep
+        # Pinned, and installed as an isolated tool rather than added to uv.lock. Semgrep is a
+        # large dependency tree that has nothing to do with what the application ships, and
+        # putting it in the project's lock would enlarge both the runtime graph and the surface
+        # that pip-audit reports on.
+        run: uv tool install semgrep==1.173.0
+
+      - name: Scan
+        # The mandatory SAST gate. CodeQL would be preferable for taint tracking, but it requires
+        # Advanced Security on a private repository, which this one does not have (see
+        # SECURITY.md). Semgrep CE runs standalone on private code and gates the build, so the
+        # gap is covered by something that actually executes rather than by an aspiration.
+        #
+        # --error makes any finding a non-zero exit, so this blocks rather than reports.
+        #
+        # --strict promotes Semgrep's own warnings to failures, and it is load-bearing rather than
+        # decoration. Semgrep downgrades a parse error to a warning and keeps going, so a file it
+        # cannot read still contributes "0 findings" to a successful run. That is how the
+        # p/dockerfile ruleset came to analyse almost none of the Dockerfile while reporting green.
+        # If Semgrep cannot parse a file we asked it to scan, we do not have coverage of that file,
+        # and the build should say so.
+        env:
+          SEMGREP_SEND_METRICS: "off"
+        run: |
+          semgrep scan \
+            --config=p/python \
+            --config=p/security-audit \
+            --config=p/secrets \
+            --config=p/dockerfile \
+            --config=p/github-actions \
+            --metrics=off \
+            --error \
+            --strict \
+            --exclude=.venv \
+            --exclude=data \
+            .
+
+      - name: Assert the scanner is actually matching
+        # A clean run only means something if the engine analysed the code. A broken target path, a
+        # failed ruleset fetch, or a silent parse error all produce "0 findings" too, and look
+        # identical to success. So the self-test rule must match, and this step verifies that by
+        # counting results rather than by inspecting an exit code.
+        #
+        # Counting matters. The previous version of this step read *any* non-zero exit as "the
+        # self-test matched", because --error turns findings into exit 1. But Semgrep exits 7 on a
+        # malformed or missing config and 3 on a fatal internal error, and both were being read as
+        # success — so a broken selftest.yaml would have reported "matched as expected". The
+        # anti-false-green check had its own false green. Measured: findings exit 1, bad config
+        # exits 7. Requiring exactly 1 is therefore necessary, but the JSON counts below are what
+        # actually prove analysis happened, so both are checked.
+        #
+        # Floors, not exact values: currently 119 matches across 18 of 28 scanned files. Ordinary
+        # churn moves those numbers; a real breakage collapses them to zero.
+        #
+        # Note that `tests/` is absent by design. Semgrep's default ignore list excludes test
+        # directories, so an earlier `src tests` target scanned zero test files while appearing to
+        # cover them. See SECURITY.md for what the gate does and does not reach.
+        env:
+          SEMGREP_SEND_METRICS: "off"
+          MIN_MATCHES: "50"
+          MIN_SCANNED: "20"
+        run: |
+          status=0
+          semgrep scan \
+            --config=.semgrep/selftest.yaml \
+            --metrics=off \
+            --error \
+            --quiet \
+            --json \
+            --output=selftest.json \
+            src || status=$?
+
+          if [ "$status" -ne 1 ]; then
+            echo "::error::Semgrep self-test exited ${status}; expected exactly 1 (findings present)."
+            echo "::error::0 means the scanner matched nothing and the SAST gate above is decorative."
+            echo "::error::Anything else means Semgrep failed to run at all (7 = bad config)."
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import json, os, sys
+
+          report = json.load(open("selftest.json"))
+          matches = report["results"]
+          errors = report["errors"]
+          scanned = report.get("paths", {}).get("scanned", [])
+          files_with_matches = {m["path"] for m in matches}
+
+          min_matches = int(os.environ["MIN_MATCHES"])
+          min_scanned = int(os.environ["MIN_SCANNED"])
+          failed = False
+
+          def fail(message: str) -> None:
+              global failed
+              print(f"::error::{message}")
+              failed = True
+
+          print(
+              f"self-test: {len(matches)} matches in {len(files_with_matches)} files, "
+              f"{len(scanned)} files scanned, {len(errors)} errors"
+          )
+
+          if len(matches) < min_matches:
+              fail(
+                  f"only {len(matches)} self-test matches, expected at least {min_matches}. "
+                  "Semgrep is not analysing src/aedifex/, so a clean scan proves nothing."
+              )
+          if len(scanned) < min_scanned:
+              fail(
+                  f"only {len(scanned)} files scanned, expected at least {min_scanned}. "
+                  "Target selection is broken."
+              )
+          if errors:
+              for error in errors:
+                  fail(f"scanner error ({error.get('type')}): {error.get('message', '')[:300]}")
+              fail("Semgrep reported errors, so coverage is incomplete regardless of findings.")
+
+          sys.exit(1 if failed else 0)
+          PY
+
+          echo "Semgrep self-test verified: the scanner parsed and analysed production code."
+
   container:
     name: Container build, scan, and smoke test
     runs-on: ubuntu-latest

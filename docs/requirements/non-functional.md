@@ -115,7 +115,9 @@ reproduced cannot be defended. See [ADR 0009](../adr/0009-supply-chain-integrity
 | ID | Requirement | Status |
 | --- | --- | --- |
 | NFR-100 | Vulnerable or badly licensed dependencies are blocked at introduction, before merge. | **Partially met** — `dependency-review-action` needs Advanced Security on a private repo and is gated off; `pip-audit --strict` still audits the locked set every run, so vulnerable deps are caught, but licence checking and pre-merge blocking are not. See SECURITY.md |
-| NFR-101 | Our own code is scanned by a data-flow-aware SAST tool, not only pattern rules. | **Not met** — CodeQL requires Advanced Security on a private repo; workflow retained but manual-only. See SECURITY.md |
+| NFR-101 | Our own code is scanned by a dedicated SAST tool, not only lint-level pattern rules. | Implemented — **Semgrep CE** as a blocking CI gate across five rulesets, run with `--strict` so an unparseable file fails the build instead of counting as clean. CodeQL (taint tracking specifically) remains unavailable without Advanced Security; see SECURITY.md |
+| NFR-101a | A security scanner reporting no findings must prove it analysed the code. | Implemented — the self-test rule must match, verified by match count, scanned-file count, and an empty scanner-error list. Found three real defects on its first run, including a Dockerfile that parsed to nothing while the scan reported success ([rule 81e](../../AEDIFEX-RULES.md)) |
+| NFR-101b | Scan coverage boundaries are stated, not assumed. | Implemented — test code is excluded by Semgrep's default ignore list, and that is documented in SECURITY.md rather than implied to be covered |
 | NFR-102 | Container images are scanned for OS and library vulnerabilities. | Implemented and **verified green in CI** — Trivy: reporting on PRs, blocking on the weekly run; SARIF retained as a build artifact |
 | NFR-103 | Third-party build inputs are immutable. | Implemented — base images pinned by digest; GitHub Actions pinned to commit SHAs |
 | NFR-104 | Vulnerabilities disclosed *after* code merged are detected. | Implemented — scheduled weekly security workflow |

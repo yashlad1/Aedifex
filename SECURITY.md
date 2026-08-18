@@ -99,12 +99,70 @@ are recorded here as gaps rather than presented as passing checks.
 
 | Control | Status | What is lost | What still covers it |
 | --- | --- | --- | --- |
-| CodeQL (data-flow SAST) | Not running | Taint tracking from untrusted input to dangerous sink | ruff's bandit rules (patterns only, no data flow) |
+| CodeQL | Not running | Taint tracking specifically — following an attacker-controlled value to a dangerous sink | **Semgrep CE** as the mandatory SAST gate, plus ruff's bandit rules as a first pass |
 | Dependency review | Not running | Blocking a vulnerable or copyleft dependency *at introduction*, pre-merge | `pip-audit --strict` on the locked set every run — catches vulnerable deps, but not licences and not pre-merge |
 | SARIF in code scanning | Not uploading | Findings in the Security tab, with history | Trivy output printed in the log and SARIF retained as a build artifact |
 
 Each is gated so that enabling Advanced Security turns them on via a repository variable
 rather than a workflow change. Nothing is left as a permanently red check.
+
+**The repository will not be made public to obtain free CodeQL.** That would publish
+[docs/ip/](docs/ip/), including the trade-secret register, and trade-secret protection depends on
+actually maintaining confidentiality. The IP direction outranks the convenience.
+
+### Static analysis: Semgrep CE is the gate
+
+| Tool | Role | Blocking |
+| --- | --- | --- |
+| ruff (bandit-derived rules) | Fast first pass on every commit; patterns only | Yes |
+| **Semgrep CE** | Broader code-security analysis, runs standalone on private code | **Yes** |
+| pip-audit | Advisories against the locked dependency set | Yes |
+| gitleaks | Secrets across full git history | Yes |
+| Trivy | Container and filesystem CVEs, secrets, misconfiguration | Weekly run blocks; PR run reports |
+| SBOM (SPDX) | Inventory per image | Produced, not a gate |
+| CodeQL | Taint tracking | Optional capability, off — needs Advanced Security |
+
+Bandit itself is deliberately **not** added: it overlaps almost entirely with the bandit-derived
+`S` rules already enforced by ruff, and a second tool covering the same ground is maintenance
+without coverage.
+
+Semgrep runs five rulesets — `p/python`, `p/security-audit`, `p/secrets`, `p/dockerfile`,
+`p/github-actions` — the last two chosen because the mistakes this project has actually made were
+in a Dockerfile and in workflow permissions, not in application code.
+
+**The scan is self-testing.** A clean Semgrep run is only meaningful if the engine analysed the
+code: a wrong path, a failed ruleset fetch, a directory dropped by a default ignore list, or a parse
+error the tool downgrades to a warning all produce "0 findings" too, and look identical to success.
+So CI additionally runs [`.semgrep/selftest.yaml`](.semgrep/selftest.yaml) and requires it to
+produce results — verified by counting matches, files scanned, and scanner errors in the JSON
+report, not by reading an exit code. Same discipline as `REQUIRE_INTEGRATION_TESTS`: a check that
+cannot fail is not a check.
+
+That instrumentation immediately earned its place. Building it surfaced three defects in the gate it
+was meant to validate, none of which were visible in a green log:
+
+| Defect | Effect | Fix |
+| --- | --- | --- |
+| The Dockerfile carried a comment between two `ENV` line continuations. BuildKit accepts this; Semgrep's Dockerfile parser does not — it abandoned lines 19–104. | `p/dockerfile` analysed essentially none of the Dockerfile, the ruleset chosen *because* our real mistakes are in Dockerfiles. The run still reported 0 findings and exit 0. | Comments moved above the instruction; CI now runs `--strict`, which turns a partial parse into a build failure |
+| `tests/` was passed as a scan target but is excluded by Semgrep's default ignore list. | Zero test files were scanned while the command implied otherwise. | Dead target removed; the exclusion is documented below rather than implied away |
+| The self-test asserted only that the exit code was non-zero. `--error` makes findings exit 1, but a malformed config exits 7 and a fatal error exits 3. | A broken `selftest.yaml` would have been reported as "matched as expected" — the anti-false-green check had its own false green. | Requires exit code exactly 1, then verifies match count, scanned-file count, and an empty error list from the JSON |
+
+Measured after the fix: 256 rules over 91 targets, **parsed lines ~100.0%** (previously ~99.4%, where
+the missing fraction *was* the Dockerfile). The self-test matches 119 function definitions across 18
+of 28 scanned files in `src/aedifex/`; CI enforces floors well below those numbers so ordinary churn
+never trips them while a real breakage collapses them to zero.
+
+**What the gate does not reach.** Test code is outside the scan, because Semgrep's default ignore
+list excludes test directories. That is acceptable — test code does not ship, and fixtures containing
+deliberately fake credentials would generate constant noise from `p/secrets` — but it is a stated
+limitation rather than an assumed one. Covered: `src/`, `apps/`, `scripts/`, `migrations/`, the
+Dockerfile, the workflows, and repository configuration.
+
+**Pinning the tool does not pin the rules.** `semgrep==1.173.0` is pinned, but `p/*` rulesets are
+fetched from the registry at run time and change without notice — the rule count moved 255 → 256
+between two consecutive local runs. A build can therefore start failing with no change to our code.
+That is new coverage, and the response is to fix the finding, never to suppress the rule to restore
+green.
 
 #### Detail: no data-flow SAST
 

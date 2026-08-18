@@ -2458,6 +2458,42 @@ reintroduced the vulnerability the refusal prevented.
 
 ⸻
 
+81e. An Analyser That Did Not Run Reports Zero Findings
+
+"No findings" and "did not look" are the same output. Every tool that reports absence must be made
+to prove presence first.
+
+A scanner reports clean when:
+
+it scanned the wrong path
+its ruleset failed to fetch
+it could not parse the file and continued past the error
+its target directory was silently excluded by a default ignore list
+
+All four exit 0 and print a reassuring summary. None of them examined the code.
+
+So any gate whose passing signal is an absence must carry a companion assertion that the tool
+performed work: a rule that must match, a floor on the number of files scanned, an empty error list.
+Assert the tool's own error channel, not only its verdict.
+
+Percentages are not gates. "Parsed lines: ~99.4%" looked healthy while the Dockerfile — the one file
+whose ruleset was chosen because this project's real mistakes were in Dockerfiles — had failed to
+parse from line 19 to line 104 and was analysed not at all. The missing 0.6% was the entire subject.
+A coverage figure aggregated across a corpus hides the total loss of any file smaller than the
+rounding error.
+
+This rule exists because it was violated three ways in one gate, all found by measuring rather than
+reading: the Dockerfile parsed to nothing, `tests/` was excluded by a default ignore list while
+being passed as an explicit target, and the self-test read *any* non-zero exit as proof of a match —
+so a malformed config, which exits 7, would have been reported as "matched as expected". The
+anti-false-green check had its own false green.
+
+Corollary: the tool's version must be pinned, and it must be recorded that pinning the tool does not
+pin remotely fetched rules. A gate can newly fail with no change to the code, and that must be
+understood as new coverage rather than treated as flakiness to be suppressed.
+
+⸻
+
 Aedifex IP / Patent Readiness Requirements
 
 These requirements apply alongside the engineering constitution above. They are recordkeeping

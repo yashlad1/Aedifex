@@ -30,6 +30,9 @@ data/synthetic/*
 data/labels/*
 !data/**/.gitkeep
 
+# Semgrep self-test report, written by CI and by anyone reproducing the SAST gate locally.
+selftest.json
+
 # Editors / OS
 .idea/
 .vscode/
