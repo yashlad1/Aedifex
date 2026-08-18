@@ -232,7 +232,13 @@ def _compact(message: str) -> str:
 
 @lru_cache(maxsize=1)
 def _cached_registry(directory: Path) -> SourceRegistry:
-    return load_registry(directory)
+    # Validated against the strategies that actually exist. The loader has supported this check
+    # since it was written and had nothing to pass it, so an enabled source could name a crawler
+    # nobody had implemented — a crawl that starts, finds nothing, and reports success. Imported
+    # here rather than at module scope because discovery imports the registry models.
+    from aedifex.acquisition.crawl.discovery import known_strategies
+
+    return load_registry(directory, known_crawlers=known_strategies())
 
 
 def get_registry(settings: Settings | None = None) -> SourceRegistry:

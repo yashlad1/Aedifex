@@ -6,6 +6,7 @@ from aedifex.acquisition.registry.loader import SourceRegistry, get_registry, lo
 from aedifex.acquisition.registry.models import (
     AccessLevel,
     DataUsePolicy,
+    DiscoveryPolicy,
     RateLimitPolicy,
     RetrievalMethod,
     RobotsPolicy,
@@ -18,6 +19,7 @@ from aedifex.acquisition.registry.models import (
 __all__ = [
     "AccessLevel",
     "DataUsePolicy",
+    "DiscoveryPolicy",
     "RateLimitPolicy",
     "RetrievalMethod",
     "RobotsPolicy",

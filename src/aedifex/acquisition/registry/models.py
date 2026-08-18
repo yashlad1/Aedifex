@@ -42,6 +42,7 @@ from aedifex.domain.files import FileFormat
 __all__ = [
     "AccessLevel",
     "DataUsePolicy",
+    "DiscoveryPolicy",
     "RateLimitPolicy",
     "RetrievalMethod",
     "RobotsPolicy",
@@ -179,6 +180,70 @@ class RateLimitPolicy(BaseModel):
         return self
 
 
+class DiscoveryPolicy(BaseModel):
+    """Where a crawl starts, how far it goes, and which paths it may follow.
+
+    Data rather than code, for the same reason as everything else in this file: a crawl that
+    walked further than intended, or into a search endpoint that generates infinite URLs, should be
+    fixable by a reviewed configuration change and visible in one place.
+
+    The bounds are not advisory. ``max_depth`` and ``max_pages`` are what stop a crawler that has
+    found a calendar widget from following it until the portal stops answering.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    seed_paths: tuple[str, ...] = Field(
+        default=("/",),
+        min_length=1,
+        description="Absolute paths on the source's own host where discovery begins.",
+    )
+    max_depth: int = Field(
+        default=2, ge=0, le=10, description="Links from a seed. 0 fetches only the seeds."
+    )
+    max_pages: int = Field(
+        default=200,
+        ge=1,
+        le=100_000,
+        description="Listing pages fetched per run, excluding the documents themselves.",
+    )
+    follow_patterns: tuple[str, ...] = Field(
+        default=(),
+        description="Regular expressions a path must match to be followed as a listing page. "
+        "Empty means any path on a permitted host, which is only safe with a small max_depth.",
+    )
+    deny_patterns: tuple[str, ...] = Field(
+        default=(),
+        description="Regular expressions that exclude a path entirely. Checked before "
+        "follow_patterns, so a deny always wins.",
+    )
+
+    @field_validator("seed_paths")
+    @classmethod
+    def _require_absolute_paths(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for path in value:
+            if not path.startswith("/"):
+                raise ValueError(
+                    f"seed path {path!r} must start with '/'; it is joined onto base_url"
+                )
+        return value
+
+    @field_validator("follow_patterns", "deny_patterns")
+    @classmethod
+    def _require_compilable_patterns(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Compile every pattern at load time.
+
+        A bad regular expression must fail when the registry is validated, not on the first page of
+        a crawl — by which point the run has already made requests and has to be unwound.
+        """
+        for pattern in value:
+            try:
+                re.compile(pattern)
+            except re.error as error:
+                raise ValueError(f"pattern {pattern!r} is not a valid regex: {error}") from error
+        return value
+
+
 class SourceDefinition(BaseModel):
     """A single external data source."""
 
@@ -213,6 +278,7 @@ class SourceDefinition(BaseModel):
         description="Registered crawler implementation name.",
     )
     rate_limit: RateLimitPolicy = RateLimitPolicy()
+    discovery: DiscoveryPolicy = DiscoveryPolicy()
     data_use: DataUsePolicy
     document_types: tuple[DocumentType, ...] = Field(
         min_length=1, description="Document types this source is expected to yield."
