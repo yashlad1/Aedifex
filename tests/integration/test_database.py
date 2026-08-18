@@ -131,7 +131,12 @@ class TestMigrations:
                 "WHERE table_schema = 'public' AND table_name <> 'alembic_version'"
             )
         ).scalars()
-        assert set(rows) == {"crawl_jobs", "documents", "discovered_urls"}
+        assert set(rows) == {
+            "crawl_jobs",
+            "documents",
+            "discovered_urls",
+            "document_retrievals",
+        }
 
     def test_enum_columns_persist_lowercase_values(self, session: Session) -> None:
         """The database must hold 'invoice', not 'INVOICE'; queries depend on that spelling."""

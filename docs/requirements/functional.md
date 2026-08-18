@@ -38,6 +38,12 @@ rather than asserted.
 | FR-023 | The system shall retain every URL at which a document was found, across sources. | Implemented | `test_two_urls_can_share_one_document` |
 | FR-024 | The system shall associate every document with its originating source. | Implemented | `test_storage_keys.py::test_source_is_part_of_the_prefix` |
 | FR-025 | The system shall detect near-duplicate documents that differ only slightly. | Planned | — |
+| FR-026 | The system shall record, for every retrieval: source, requested URL, answering URL, retrieval time, digest, media type, size, storage key, HTTP metadata, document status, and the full attempt history. | Implemented | `document_retrievals` and `record_retrieval`; `test_acquisition_pipeline.py` asserts every one of those on a row produced by a real fetch |
+| FR-027 | A repeated retrieval of known content shall append a retrieval record rather than replace the previous one. | Implemented | `test_a_second_retrieval_appends_a_row_and_reuses_the_document`. A re-fetch is an event, and the frontier's job is to avoid pointless ones — not this table's job to hide them |
+
+FR-026 and FR-027 were added after the code, for the same reason as FR-038 and FR-039: the fields the
+schema already had covered most of a retrieval but not the answering URL, the HTTP metadata beyond a
+status, or an attempt history as opposed to a count.
 
 ## Content validation
 

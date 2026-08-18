@@ -1,6 +1,6 @@
 """ORM models for the acquisition metadata store.
 
-Three tables, and the split between them is the important design decision:
+Four tables, and the split between them is the important design decision:
 
 ``crawl_jobs``
     One row per crawl run of one source. Holds the checkpoint that makes a run resumable.
@@ -12,6 +12,10 @@ Three tables, and the split between them is the important design decision:
 
 ``documents``
     One row per unique *content*, keyed by a deterministic id derived from the SHA-256.
+
+``document_retrievals``
+    Append-only: one row per successful retrieval, holding both URLs, the HTTP metadata, the
+    attempt history, and where the bytes were stored.
 
 Separating the last two is what lets deduplication coexist with provenance. The same PDF is
 routinely published at several URLs, and sometimes across several portals. Collapsing on
@@ -55,6 +59,7 @@ __all__ = [
     "CrawlJobStatus",
     "DiscoveredUrl",
     "Document",
+    "DocumentRetrieval",
 ]
 
 
@@ -209,6 +214,7 @@ class Document(Base):
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
     sightings: Mapped[list[DiscoveredUrl]] = relationship(back_populates="document")
+    retrievals: Mapped[list[DocumentRetrieval]] = relationship(back_populates="document")
 
     __table_args__ = (
         CheckConstraint(f"sha256 {_SHA256_HEX}", name="sha256_is_lower_hex"),
@@ -219,6 +225,82 @@ class Document(Base):
             name="confidence_in_range",
         ),
         Index("ix_documents_type_state", "document_type", "state"),
+    )
+
+
+class DocumentRetrieval(Base):
+    """One successful retrieval of one document, and everything it took to get it.
+
+    Append-only, and a separate table from both of its neighbours for reasons that are easy to get
+    wrong:
+
+    * Not on ``documents``, because a document is content and content has no single retrieval. The
+      same PDF fetched from two portals is one row there and two here.
+    * Not on ``discovered_urls``, because that is the frontier — mutable state, one row per URL,
+      overwritten as a crawl progresses. A retrieval is an event that happened at a moment, and
+      overwriting the record of the last one to describe this one would destroy the provenance this
+      table exists to keep.
+
+    So a re-download appends. That is deliberate: "we fetched this again in March and got the same
+    bytes" is a fact worth having, and it is the frontier's job to avoid pointless re-downloads, not
+    this table's job to hide them.
+
+    ``storage_key`` is recorded here as well as on ``documents``, and the duplication is
+    load-bearing. The raw key includes the source, so the same bytes from two portals have two keys
+    while sharing one ``documents`` row — which can hold only one of them. The key that *this*
+    retrieval wrote is only recoverable here.
+    """
+
+    __tablename__ = "document_retrievals"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="RESTRICT"), index=True
+    )
+    source_id: Mapped[str] = mapped_column(String(64), index=True)
+
+    # Both URLs, because a document retrieved after three redirects has a different provenance story
+    # from one retrieved directly, and only one of the two appears in either version.
+    requested_url: Mapped[str] = mapped_column(Text)
+    final_url: Mapped[str] = mapped_column(Text)
+
+    retrieved_at: Mapped[datetime] = mapped_column(index=True)
+
+    http_status: Mapped[int] = mapped_column(Integer)
+    http_version: Mapped[str] = mapped_column(String(16))
+    # Order- and duplicate-preserving, as a list of [name, value] pairs rather than an object:
+    # Set-Cookie and Via may legitimately repeat, and a mapping would silently collapse them.
+    response_headers: Mapped[list[list[str]]] = mapped_column(JSONB)
+    declared_media_type: Mapped[str | None] = mapped_column(String(128), default=None)
+    declared_content_length: Mapped[int | None] = mapped_column(BigInteger, default=None)
+
+    # The attempt history, one entry per request made. JSONB rather than a child table: it is
+    # written once, read as a whole, and never queried across rows — a table would add a join and a
+    # migration for every field the retry layer learns to record.
+    attempts: Mapped[list[dict[str, object]]] = mapped_column(JSONB, default=list)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=1)
+
+    storage_bucket: Mapped[str] = mapped_column(String(64))
+    storage_key: Mapped[str] = mapped_column(String(512))
+    storage_version_id: Mapped[str | None] = mapped_column(String(128), default=None)
+    # How the upload was confirmed. A plain string with a check constraint rather than an enum
+    # column, because the vocabulary lives in the storage layer and importing that here would pull
+    # boto3 into the database models.
+    storage_verification: Mapped[str] = mapped_column(String(32))
+
+    # Reproducibility: which build produced this record.
+    software_version: Mapped[str] = mapped_column(String(32))
+
+    document: Mapped[Document] = relationship(back_populates="retrievals")
+
+    __table_args__ = (
+        CheckConstraint("http_status BETWEEN 100 AND 599", name="http_status_in_range"),
+        CheckConstraint("attempt_count >= 1", name="at_least_one_attempt"),
+        CheckConstraint(
+            "storage_verification IN ('server_checksum', 'size_and_metadata')",
+            name="verification_is_known",
+        ),
+        Index("ix_document_retrievals_source_retrieved", "source_id", "retrieved_at"),
     )
 
 
