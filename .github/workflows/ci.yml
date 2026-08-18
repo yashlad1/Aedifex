@@ -110,9 +110,21 @@ jobs:
 
   dependency-review:
     name: Dependency review
-    # Catches a newly introduced vulnerable or badly licensed dependency during review,
-    # rather than after merge. Pull requests only, since it diffs against the base ref.
-    if: github.event_name == 'pull_request'
+    # Catches a newly introduced vulnerable or badly licensed dependency during review, rather
+    # than after merge. Pull requests only, since it diffs against the base ref.
+    #
+    # DISABLED, and not because it is unwanted. The action requires the GitHub dependency graph
+    # plus Advanced Security, which a private repository does not get:
+    #
+    #   "Dependency review is not supported on this repository. Please ensure that Dependency
+    #    graph is enabled along with GitHub Advanced Security"
+    #
+    # It therefore failed on every pull request. Gated behind a repository variable so enabling
+    # it later is a setting rather than a workflow change. See SECURITY.md for what this leaves
+    # uncovered: `pip-audit` still audits the locked set on every run, so new *vulnerable*
+    # dependencies are still caught — what is lost is licence checking and blocking at the
+    # moment of introduction.
+    if: github.event_name == 'pull_request' && vars.ENABLE_DEPENDENCY_REVIEW == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -130,6 +142,13 @@ jobs:
   security:
     name: Secret and vulnerability scanning
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # gitleaks lists a pull request's commits via the API to scan only what the PR adds.
+      # Without this the job failed on every PR with 403 'Resource not accessible by
+      # integration' on GET /repos/.../pulls/{n}/commits, while passing on pushes to main —
+      # so main was green and the PR gate was broken.
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
