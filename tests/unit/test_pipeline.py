@@ -13,6 +13,8 @@ an attempt record's JSON shape is written into rows that cannot be migrated afte
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -32,9 +34,19 @@ from aedifex.acquisition.pipeline import (
     _classify,
 )
 from aedifex.acquisition.provenance import _attempt_as_json
-from aedifex.domain.documents import DocumentState
+from aedifex.acquisition.registry import load_registry
+from aedifex.acquisition.registry.models import (
+    AccessLevel,
+    DataUsePolicy,
+    RateLimitPolicy,
+    RetrievalMethod,
+    SourceCategory,
+    SourceDefinition,
+    VerificationStatus,
+)
+from aedifex.domain.documents import DocumentState, DocumentType
 from aedifex.domain.files import FileFormat
-from aedifex.errors import UnsafeContentError
+from aedifex.errors import AcquisitionError, SourceNotCollectableError, UnsafeContentError
 from aedifex.infrastructure.database.models import DiscoveredUrl
 from aedifex.infrastructure.storage.objects import (
     RawObjectStore,
@@ -290,3 +302,199 @@ class TestUuidIsNotInvented:
         )
         assert result.document_id is None
         assert not isinstance(result.document_id, uuid.UUID)
+
+
+def an_approved_source(**overrides: object) -> SourceDefinition:
+    """A source a human has reviewed and enabled. The only kind that may produce traffic.
+
+    Note what it takes to build one: approval, a reviewer, a review date, and a crawler. That is the
+    point — the schema makes an unreviewed source unfetchable, and this factory is the shape of a
+    decision somebody signed for.
+    """
+    fields: dict[str, object] = {
+        "id": "example_portal",
+        "name": "Example Portal",
+        "country": "IN",
+        "category": SourceCategory.GOVERNMENT_PROCUREMENT,
+        "retrieval": RetrievalMethod.HTTP_CRAWL,
+        "base_url": "https://portal.example.test/",
+        "enabled": True,
+        "verification_status": VerificationStatus.APPROVED,
+        "crawler": "example_tenders",
+        "rate_limit": RateLimitPolicy(
+            requests_per_minute=10, max_concurrency=1, min_delay_seconds=3.0
+        ),
+        "data_use": DataUsePolicy(
+            license="Government Open Data Licence - India",
+            allowed_use="Redistribution permitted with attribution.",
+            access=AccessLevel.PUBLIC,
+            reviewed_by="an actual human",
+            reviewed_on=datetime(2026, 8, 1, tzinfo=UTC),
+        ),
+        "document_types": (DocumentType.TENDER_NOTICE,),
+        "file_formats": (FileFormat.PDF,),
+    }
+    fields.update(overrides)
+    return SourceDefinition(**fields)  # type: ignore[arg-type]
+
+
+class TestPolicyComesFromTheRegistry:
+    """The one door from registry data to network policy (FR-074).
+
+    Every value below is asserted to have come from the definition rather than from a default,
+    because the failure this guards against is silent: a policy that looks assembled but carries a
+    library default would crawl a fragile portal at the wrong rate and nothing would complain.
+    """
+
+    def test_every_limit_is_taken_from_the_definition(self) -> None:
+        source = an_approved_source(
+            id="nhai",
+            base_url="https://nhai.gov.in/",
+            rate_limit=RateLimitPolicy(
+                requests_per_minute=6, max_concurrency=1, min_delay_seconds=5.0
+            ),
+            file_formats=(FileFormat.PDF, FileFormat.XLSX),
+        )
+
+        policy = AcquisitionPolicy.from_source(source, max_bytes=8 * 1024 * 1024)
+
+        assert policy.source_id == "nhai"
+        assert policy.host_policy.permits("nhai.gov.in")
+        assert policy.limits.requests_per_minute == 6
+        assert policy.limits.max_concurrency == 1
+        assert policy.limits.min_delay_seconds == 5.0
+        assert policy.download.allowed_formats == frozenset({FileFormat.PDF, FileFormat.XLSX})
+        assert policy.download.max_bytes == 8 * 1024 * 1024
+
+    def test_the_host_allowlist_keeps_its_asymmetry(self) -> None:
+        """Subdomains of the source's own domain, exact matches for anything else.
+
+        Asserted here and not only in ``test_fetch_hosts.py`` because this is where the two
+        allowlists are assembled from one definition, and a swap between them would be invisible:
+        both are frozensets of strings.
+        """
+        source = an_approved_source(
+            base_url="https://nhai.gov.in/", additional_hosts=("library.nhai.org",)
+        )
+        hosts = AcquisitionPolicy.from_source(source).host_policy
+
+        assert hosts.permits("nhai.gov.in")
+        assert hosts.permits("documents.nhai.gov.in")
+        assert hosts.permits("library.nhai.org")
+        # The CDN rule: an exact host does not bring its subdomains with it.
+        assert not hosts.permits("tenants.library.nhai.org")
+        # And the lookalike, which a plain suffix match would have allowed.
+        assert not hosts.permits("evilnhai.gov.in")
+
+    def test_a_format_the_registry_omits_is_not_permitted(self) -> None:
+        """The archive decision, enforced where it takes effect.
+
+        The first production source declares no ``zip``, so ZIP attachments are discovered and
+        refused rather than opened — rule 52 forbids archive expansion until bounded extraction
+        exists. If someone adds ``zip`` to the YAML, this is the test that should stop being true
+        only because the extractor was built.
+        """
+        policy = AcquisitionPolicy.from_source(an_approved_source())
+        assert FileFormat.ZIP not in policy.download.allowed_formats
+
+    def test_the_byte_ceiling_defaults_rather_than_being_unbounded(self) -> None:
+        assert AcquisitionPolicy.from_source(an_approved_source()).download.max_bytes > 0
+
+    def test_timeouts_default_because_the_registry_declares_none(self) -> None:
+        """Our patience is not the source's licence to grant."""
+        assert AcquisitionPolicy.from_source(an_approved_source()).timeouts == TimeoutPolicy()
+
+    def test_an_explicit_timeout_policy_is_honoured(self) -> None:
+        timeouts = TimeoutPolicy(connect_seconds=1.0, read_seconds=2.0, total_seconds=3.0)
+        policy = AcquisitionPolicy.from_source(an_approved_source(), timeouts=timeouts)
+        assert policy.timeouts is timeouts
+
+
+class TestTheReviewGateIsEnforcedAtTheDoor:
+    """No approval, no policy, no traffic — rule 60.
+
+    The schema already refuses to *enable* an unreviewed source. These assert the same rule at the
+    point of use, because a definition that is valid and says ``enabled: false`` is still a
+    definition that must not produce a single request.
+    """
+
+    def test_a_source_nobody_has_reviewed_cannot_be_fetched_from(self) -> None:
+        unreviewed = an_approved_source(
+            enabled=False, verification_status=VerificationStatus.UNVERIFIED, crawler=None
+        )
+        with pytest.raises(SourceNotCollectableError, match="may not be collected from"):
+            AcquisitionPolicy.from_source(unreviewed)
+
+    def test_approval_alone_is_not_permission(self) -> None:
+        """Reviewed and then switched off. Approval records a finding; ``enabled`` is the decision.
+
+        Worth its own test because ``is_collectable`` is an ``and`` of two fields, and a reading
+        that checked only the review status would pass every other test in this class.
+        """
+        approved_but_off = an_approved_source(enabled=False)
+        assert approved_but_off.verification_status is VerificationStatus.APPROVED
+
+        with pytest.raises(SourceNotCollectableError, match="enabled=False"):
+            AcquisitionPolicy.from_source(approved_but_off)
+
+    def test_a_blocked_source_cannot_be_fetched_from(self) -> None:
+        blocked = an_approved_source(
+            enabled=False, verification_status=VerificationStatus.BLOCKED, crawler=None
+        )
+        with pytest.raises(SourceNotCollectableError, match="blocked"):
+            AcquisitionPolicy.from_source(blocked)
+
+    def test_a_manual_upload_source_has_nothing_to_fetch(self) -> None:
+        uploaded = an_approved_source(
+            retrieval=RetrievalMethod.MANUAL_UPLOAD, base_url=None, crawler=None
+        )
+        with pytest.raises(SourceNotCollectableError, match="no target to fetch"):
+            AcquisitionPolicy.from_source(uploaded)
+
+    def test_the_refusal_names_the_source_and_points_at_the_process(self) -> None:
+        """An error that says only "not collectable" sends the reader to the source code."""
+        with pytest.raises(SourceNotCollectableError) as caught:
+            AcquisitionPolicy.from_source(an_approved_source(id="cpwd", enabled=False))
+
+        message = str(caught.value)
+        assert "cpwd" in message
+        assert "DATA_SOURCES.md" in message
+
+    def test_the_refusal_is_not_an_acquisition_error(self) -> None:
+        """Which matters, because the acquirer catches those and records them against a URL.
+
+        If this became an ``AcquisitionError``, "we are not permitted to collect from this portal"
+        would be written into a frontier row as a per-URL failure and the run would carry on to the
+        next URL of the same forbidden source. It has to stop the run instead.
+        """
+        error = SourceNotCollectableError("nope")
+        assert not isinstance(error, AcquisitionError)
+
+
+REGISTRY_DIR = Path(__file__).resolve().parents[2] / "config" / "sources"
+
+
+class TestAgainstTheShippedRegistry:
+    """The same rule, applied to the YAML that actually ships.
+
+    Written as an invariant rather than as a snapshot of today's registry, which is the convention
+    in ``test_registry_data.py`` and the right one: approving a source should not require editing a
+    test. Both branches below are live — every source in the repository is currently unfetchable, so
+    the refusal half runs for real, and the policy half is what will check the first approved source
+    without anyone remembering to come back here.
+    """
+
+    def test_a_policy_exists_for_every_fetchable_source_and_for_no_other(self) -> None:
+        for source in load_registry(REGISTRY_DIR):
+            has_a_target = source.retrieval is not RetrievalMethod.MANUAL_UPLOAD
+            if not (source.is_collectable and has_a_target):
+                with pytest.raises(SourceNotCollectableError):
+                    AcquisitionPolicy.from_source(source)
+                continue
+
+            policy = AcquisitionPolicy.from_source(source)
+            assert source.base_url is not None and source.base_url.host is not None
+            assert policy.source_id == source.id
+            assert policy.host_policy.permits(source.base_url.host)
+            assert policy.download.allowed_formats == frozenset(source.file_formats)
+            assert policy.limits.requests_per_minute == source.rate_limit.requests_per_minute

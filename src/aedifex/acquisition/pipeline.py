@@ -65,8 +65,9 @@ from aedifex.acquisition.fetch.timing import MonotonicClock, TimeoutBudget, Time
 from aedifex.acquisition.fetch.transport import DEFAULT_CHUNK_SIZE, TransportError
 from aedifex.acquisition.fetch.urls import SsrfRejectionError
 from aedifex.acquisition.provenance import RecordedRetrieval, record_retrieval
+from aedifex.acquisition.registry.models import RetrievalMethod, SourceDefinition
 from aedifex.domain.documents import DocumentState, assert_transition_allowed
-from aedifex.errors import UnsafeContentError
+from aedifex.errors import SourceNotCollectableError, UnsafeContentError
 from aedifex.infrastructure.database.models import DiscoveredUrl
 from aedifex.infrastructure.storage.objects import StorageError, StoredObject
 
@@ -109,6 +110,58 @@ class AcquisitionPolicy:
     # from another module and ruff cannot prove that from here — and the day it stops being frozen,
     # a shared default would be one object mutated by every source.
     timeouts: TimeoutPolicy = field(default_factory=TimeoutPolicy)
+
+    @classmethod
+    def from_source(
+        cls,
+        source: SourceDefinition,
+        *,
+        max_bytes: int | None = None,
+        timeouts: TimeoutPolicy | None = None,
+    ) -> AcquisitionPolicy:
+        """Assemble a source's entire fetch policy from its registry entry.
+
+        The four pieces already knew how to build themselves from a definition; nothing assembled
+        them, so every caller wired the four by hand and could mix one source's host allowlist with
+        another's rate limits. This is the one door between registry data and network policy.
+
+        Being the one door makes it the right place to enforce the review gate. A source that is not
+        collectable cannot have a policy built for it at all, so "we never checked whether we are
+        allowed to fetch from this portal" is not a check a caller can forget to make — there is no
+        way to reach the network for that source. The registry schema already refuses to *enable* an
+        unreviewed source (ADR 0006); this is the same rule at the point of use, because a valid
+        definition saying ``enabled: false`` is a definition that must not produce traffic.
+
+        Args:
+            source: The registry definition. Must be enabled and approved.
+            max_bytes: Payload ceiling, normally ``Settings.max_download_bytes``. Passed in rather
+                than read here, so this stays a pure function of the registry and ``config`` keeps
+                its monopoly on reading the environment.
+            timeouts: Timeout budget for one URL. The registry declares no timeouts — they are a
+                property of our patience, not of the source's licence — so this defaults.
+
+        Raises:
+            SourceNotCollectableError: if the source is disabled, unreviewed, or has nothing to
+                fetch. Never caught by the acquirer, because it is not a failure of a URL.
+        """
+        if not source.is_collectable:
+            raise SourceNotCollectableError(
+                f"source {source.id!r} may not be collected from: enabled={source.enabled}, "
+                f"verification_status={source.verification_status.value}. A source's terms must be "
+                f"reviewed and recorded in its registry entry before it can produce any traffic "
+                f"(see DATA_SOURCES.md)"
+            )
+        if source.retrieval is RetrievalMethod.MANUAL_UPLOAD:
+            raise SourceNotCollectableError(
+                f"source {source.id!r} has retrieval={source.retrieval.value} and therefore no "
+                f"target to fetch; documents from it arrive by upload, not by request"
+            )
+        return cls(
+            host_policy=SourceHostPolicy.from_source(source),
+            limits=RateLimits.from_source(source),
+            download=DownloadPolicy.from_source(source, max_bytes=max_bytes),
+            timeouts=timeouts if timeouts is not None else TimeoutPolicy(),
+        )
 
     @property
     def source_id(self) -> str:

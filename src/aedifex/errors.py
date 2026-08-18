@@ -13,6 +13,7 @@ __all__ = [
     "AedifexError",
     "ConfigurationError",
     "InvalidStateTransitionError",
+    "SourceNotCollectableError",
     "SourceRegistryError",
     "UnsafeContentError",
 ]
@@ -28,6 +29,20 @@ class ConfigurationError(AedifexError):
 
 class SourceRegistryError(ConfigurationError):
     """A source-registry definition is invalid or the registry is inconsistent."""
+
+
+class SourceNotCollectableError(ConfigurationError):
+    """A fetch policy was requested for a source that may not be collected from.
+
+    Distinct from :class:`SourceRegistryError`: the definition is perfectly valid, and what it
+    says is *no*. Either nobody has reviewed the source's terms yet, or it is disabled, or it
+    is a manual-upload source with nothing to fetch.
+
+    A configuration error rather than an acquisition one, and deliberately not a subclass of
+    :class:`AcquisitionError`: the acquirer catches those and records them against a URL, which
+    would turn "we are not permitted to collect from this portal" into a per-URL failure row.
+    This should stop a run.
+    """
 
 
 class AcquisitionError(AedifexError):
