@@ -85,6 +85,7 @@ from aedifex.acquisition.fetch.guard import ValidatedTarget
 from aedifex.acquisition.fetch.timing import TimeoutBudgetExhaustedError
 from aedifex.acquisition.fetch.transport import (
     ALLOWED_METHODS,
+    DEFAULT_MAX_RESPONSE_BYTES,
     BudgetExhaustedError,
     ConnectionFailedError,
     ConnectTimeoutError,
@@ -94,10 +95,12 @@ from aedifex.acquisition.fetch.transport import (
     ReadTimeoutError,
     ResponseHeaders,
     ResponseStreamError,
+    ResponseTooLargeError,
     TlsVerificationError,
     TransportError,
     TransportTimeouts,
     UnclassifiedTransportError,
+    parse_content_length,
 )
 
 __all__ = ["HttpxTransport"]
@@ -282,6 +285,7 @@ class HttpxTransport:
         timeouts: TransportTimeouts,
         method: str = "GET",
         headers: Mapping[str, str] | None = None,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
     ) -> Iterator[RawResponse]:
         """Send one request to ``target`` and yield the unread response.
 
@@ -297,6 +301,11 @@ class HttpxTransport:
                 f"transport requires a ValidatedTarget, got {type(target).__name__}. Only "
                 "validate_url() produces one, which is what stops an unvalidated URL reaching a "
                 "socket."
+            )
+        if max_response_bytes <= 0:
+            raise ValueError(
+                f"max_response_bytes must be positive, got {max_response_bytes}; a non-positive "
+                "ceiling would either reject everything or, read as 'unlimited', defeat the control"
             )
         normalized_method = method.upper()
         if normalized_method not in ALLOWED_METHODS:
@@ -336,13 +345,30 @@ class HttpxTransport:
             raise _map_open_error(error, target) from error
 
         try:
+            declared = _declared_length(response, target)
+            if (
+                declared is not None
+                and declared > max_response_bytes
+                and normalized_method != "HEAD"
+            ):
+                # Rejected here, before a single body byte is read: the cheapest possible refusal,
+                # and the only one that costs no bandwidth. Skipped for HEAD, where the header
+                # describes a body that will not be sent — refusing there would break the one
+                # request whose purpose is to discover a resource's size before fetching it.
+                raise ResponseTooLargeError(
+                    f"{target.describe()} declared {declared} bytes, over the "
+                    f"{max_response_bytes} byte limit; refused before reading the body",
+                    limit_bytes=max_response_bytes,
+                    declared=True,
+                )
             yield RawResponse(
                 target=target,
                 status_code=response.status_code,
                 http_version=response.http_version,
                 headers=ResponseHeaders(tuple(response.headers.multi_items())),
+                declared_content_length=declared,
                 stream=lambda chunk_size: _iter_mapped(
-                    response, target, chunk_size, timeouts.deadline
+                    response, target, chunk_size, timeouts.deadline, max_response_bytes
                 ),
                 close=response.close,
             )
@@ -353,11 +379,27 @@ class HttpxTransport:
             response.close()
 
 
+def _declared_length(response: httpx.Response, target: ValidatedTarget) -> int | None:
+    """Parse the declared body length, treating an unparseable header as a framing error.
+
+    A present-but-malformed value must not be read as "absent" (rule 81b). ``ProtocolError`` is the
+    right classification and is also what happens today without this code: h11 validates the header
+    itself and raises ``RemoteProtocolError`` for every malformed form, which maps to the same
+    type. Agreeing with the layer below keeps one condition from having two different outcomes
+    depending on which library version is installed.
+    """
+    try:
+        return parse_content_length(response.headers.get("content-length"))
+    except ValueError as error:
+        raise ProtocolError(f"{target.describe()} sent a {error}") from error
+
+
 def _iter_mapped(
     response: httpx.Response,
     target: ValidatedTarget,
     chunk_size: int,
     deadline: Deadline | None,
+    max_bytes: int,
 ) -> Iterator[bytes]:
     """Iterate the body, converting library exceptions and enforcing the total deadline.
 
@@ -372,8 +414,27 @@ def _iter_mapped(
     Stated precisely because "enforces a 300s total" and "returns no later than 300s" are different
     claims, and only the first is true.
     """
+    received = 0
     try:
         for chunk in response.iter_bytes(chunk_size):
+            received += len(chunk)
+            if received > max_bytes:
+                # The check that actually protects us. A server can omit Content-Length, send a
+                # chunked response, or simply be wrong, so the declared size is a courtesy and
+                # the running total is the control. Raised before the chunk is yielded, so no
+                # caller receives a byte of a response already known to be over the limit.
+                #
+                # Checked before the deadline on purpose. At a boundary where both are blown,
+                # size is the more useful thing to report: it is a permanent property of the
+                # response, while the deadline belongs to this attempt. Both are non-retryable,
+                # so nothing about safety turns on the order — only the quality of the report.
+                raise ResponseTooLargeError(  # noqa: TRY301 - see the TransportError re-raise
+                    f"{target.describe()} exceeded the {max_bytes} byte limit while streaming "
+                    f"(at least {received} bytes received)",
+                    limit_bytes=max_bytes,
+                    declared=False,
+                    observed_bytes=received,
+                )
             if deadline is not None:
                 try:
                     deadline.check()

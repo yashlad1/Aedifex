@@ -110,7 +110,45 @@ The transport receives the budget through a read-only `Deadline` protocol — `r
 the budget. A budget that resets per attempt is the defect the whole timing layer exists to prevent,
 so the layer most tempted to do it is given no means.
 
-### 6. `GET` and `HEAD` only
+### 6. The byte ceiling is enforced twice, and the second time is what counts
+
+`Content-Length` is a courtesy. A server may omit it, send a chunked response, or simply be wrong, so
+the declared size buys a cheap early refusal and nothing more. The running total during streaming is
+the control.
+
+Measured while building this, because two assumptions turned out to be wrong:
+
+- **A server that understates the length cannot smuggle extra bytes.** Declaring 2 and sending 13
+  yields exactly 2 bytes — h11 stops at the declared length. So the invariant holds there through HTTP
+  framing rather than through our counter, and the test asserts the invariant instead of an error we
+  would not receive.
+- **Malformed, negative, and conflicting `Content-Length` headers never reach our parser.** h11
+  validates the header itself and raises for a non-numeric value, a negative value, a leading `+`,
+  hex, scientific notation, non-ASCII digits, and conflicting duplicates. Our parser is defence in
+  depth for a future client or a rewriting proxy, and is tested by calling it directly. It classifies
+  a malformed header as a `ProtocolError`, agreeing with h11, so swapping the client cannot silently
+  change the outcome.
+
+`HEAD` is exempt from the declared-size check. No body is sent, so the invariant cannot be violated,
+and refusing would break the one request whose purpose is to discover a resource's size before
+committing to fetching it.
+
+Oversize is a permanent refusal, not a transport failure: retrying an 80 MB file against a 25 MB
+policy cannot make it valid. It reuses the existing `OVERSIZED_RESPONSE` outcome, already in the
+never-retry set, rather than introducing a second name for one condition.
+
+The limit is per request (`max_response_bytes`), which is what allows a higher layer to apply
+per-source and per-document-type policy — 5 MB for a metadata endpoint, 250 MB for an archive —
+without the transport knowing anything about sources. The default equals the configured
+`max_download_bytes` so a caller who passes nothing is still bounded, and a test asserts the two
+never drift apart.
+
+Where both the ceiling and the deadline are breached at the same chunk boundary, the size is
+reported. It is a permanent property of the response, while the deadline belongs to this attempt, so
+it is the more useful thing to record. Both are non-retryable, so nothing about safety turns on the
+order.
+
+### 7. `GET` and `HEAD` only
 
 An allowlist. Aedifex reads published documents and never submits anything, so a crawler that can
 issue a state-changing request is only a liability. `POST` is refused rather than unimplemented.

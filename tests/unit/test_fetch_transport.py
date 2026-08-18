@@ -30,6 +30,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
@@ -44,6 +45,7 @@ from aedifex.acquisition.fetch.guard import ValidatedTarget
 from aedifex.acquisition.fetch.httpx_transport import (
     HttpxTransport,
     _build_ssl_context,
+    _declared_length,
     _is_tls_failure,
     _map_open_error,
     _map_stream_error,
@@ -65,6 +67,7 @@ from aedifex.acquisition.fetch.timing import (
 )
 from aedifex.acquisition.fetch.transport import (
     ALLOWED_METHODS,
+    DEFAULT_MAX_RESPONSE_BYTES,
     BudgetExhaustedError,
     ConnectionFailedError,
     ConnectTimeoutError,
@@ -74,12 +77,15 @@ from aedifex.acquisition.fetch.transport import (
     ReadTimeoutError,
     ResponseHeaders,
     ResponseStreamError,
+    ResponseTooLargeError,
     TlsVerificationError,
     Transport,
     TransportError,
     TransportTimeouts,
     UnclassifiedTransportError,
+    parse_content_length,
 )
+from aedifex.config import Settings
 
 HOSTNAME = "example.test"
 USER_AGENT = "AedifexBot/0.1 (+mailto:ops@example.org)"
@@ -271,11 +277,35 @@ def start_server(responder: Responder, *, tls: ssl.SSLContext | None = None) -> 
     return RunningServer(server, thread)
 
 
-class RawTcpServer:
-    """Writes fixed bytes and closes, for framing failures a real HTTP server cannot produce."""
+def raw_chunked(total: int, chunk: int = 256) -> bytes:
+    """Build a chunked HTTP response of ``total`` bytes, so there is no Content-Length to check.
 
-    def __init__(self, payload: bytes) -> None:
+    The realistic version of "the server did not tell us how big this is", and the case where the
+    running total is the only protection there is.
+    """
+    parts = [b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"]
+    remaining = total
+    while remaining > 0:
+        size = min(chunk, remaining)
+        parts.append(f"{size:x}\r\n".encode() + b"y" * size + b"\r\n")
+        remaining -= size
+    parts.append(b"0\r\n\r\n")
+    return b"".join(parts)
+
+
+class RawTcpServer:
+    """Writes fixed bytes and closes, for framing failures a real HTTP server cannot produce.
+
+    ``piece`` and ``delay`` turn it into a slow sender, which is how a chunked response can be made
+    to arrive gradually. That combination — no Content-Length *and* slow — is the only way to have
+    the streaming size check and the deadline both in play at once, since a declared length would be
+    refused up front and an understated one is truncated by HTTP framing.
+    """
+
+    def __init__(self, payload: bytes, *, piece: int | None = None, delay: float = 0.0) -> None:
         self._payload = payload
+        self._piece = piece
+        self._delay = delay
         self._socket = socket.socket()
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._socket.bind(("127.0.0.1", 0))
@@ -294,7 +324,12 @@ class RawTcpServer:
             with connection:
                 try:
                     connection.recv(4096)
-                    connection.sendall(self._payload)
+                    if self._piece is None:
+                        connection.sendall(self._payload)
+                    else:
+                        for start in range(0, len(self._payload), self._piece):
+                            connection.sendall(self._payload[start : start + self._piece])
+                            threading.Event().wait(self._delay)
                 except OSError:
                     pass
 
@@ -407,7 +442,14 @@ class TestTargetBoundary:
     def test_open_accepts_no_parameter_that_could_carry_an_unvalidated_url(self) -> None:
         """There is no second door: no ``url=``, ``host=``, or ``address=`` overload."""
         parameters = set(inspect.signature(HttpxTransport.open).parameters)
-        assert parameters == {"self", "target", "timeouts", "method", "headers"}
+        assert parameters == {
+            "self",
+            "target",
+            "timeouts",
+            "method",
+            "headers",
+            "max_response_bytes",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -1016,6 +1058,342 @@ class TestResourceRelease:
         ports = [record.client_port for record in server.recorded]
         assert len(ports) == 2
         assert ports[0] != ports[1], f"connection was reused across requests: {ports}"
+
+
+class TestByteCeiling:
+    """The invariant: no response can make Aedifex hold more than the configured maximum.
+
+    Two checks, and the second is the one that matters. ``Content-Length`` is a courtesy: a server
+    can
+    omit it, send a chunked response, or be wrong. The running total is the control.
+
+    ``CAP`` is deliberately tiny so these run in milliseconds. Nothing here depends on the ceiling
+    being large; a limit is a limit at 1 KiB or 256 MiB.
+    """
+
+    CAP = 1024
+
+    def open_with_cap(
+        self, transport: HttpxTransport, port: int, *, cap: int | None = None, method: str = "GET"
+    ) -> AbstractContextManager[RawResponse]:
+        return transport.open(
+            target_for(port),
+            timeouts=FAST,
+            method=method,
+            max_response_bytes=self.CAP if cap is None else cap,
+        )
+
+    # --- declared size, checked before any body byte is read ---------------------------------
+
+    @pytest.mark.parametrize("size", [1, CAP - 1, CAP])
+    def test_a_declared_size_at_or_under_the_limit_is_allowed(
+        self, transport: HttpxTransport, size: int
+    ) -> None:
+        """The boundary is inclusive: exactly at the limit is within it."""
+        server = start_server(ok_body(b"z" * size))
+        with self.open_with_cap(transport, server.port) as response:
+            assert response.declared_content_length == size
+            assert len(b"".join(response.iter_bytes())) == size
+
+    def test_a_declared_size_over_the_limit_is_refused_before_the_body_is_read(
+        self, transport: HttpxTransport
+    ) -> None:
+        """One byte over, and no body byte is consumed.
+
+        The refusal happens before ``RawResponse`` is ever yielded, which the unreachable flag
+        proves:
+        the caller's block does not run, so nothing could have read a byte even by accident.
+        """
+        server = start_server(ok_body(b"z" * (self.CAP + 1)))
+        entered = False
+
+        with (
+            pytest.raises(ResponseTooLargeError) as caught,
+            self.open_with_cap(transport, server.port),
+        ):
+            entered = True
+
+        assert not entered, "the response was handed to the caller despite being over the limit"
+        assert caught.value.declared is True
+        assert caught.value.limit_bytes == self.CAP
+        assert caught.value.observed_bytes is None, "no body bytes should have been counted"
+
+    def test_a_head_response_is_not_refused_for_a_large_declared_size(
+        self, transport: HttpxTransport
+    ) -> None:
+        """HEAD exists to discover a size, so refusing it would break the one useful probe.
+
+        No body is sent, so the invariant cannot be violated: the transport holds zero bytes either
+        way. The declared length is passed through for the caller to act on.
+        """
+        server = start_server(ok_body(b"z" * (self.CAP * 1000)))
+        with self.open_with_cap(transport, server.port, method="HEAD") as response:
+            assert response.declared_content_length == self.CAP * 1000
+            assert b"".join(response.iter_bytes()) == b""
+
+    # --- actual size, checked while streaming -----------------------------------------------
+
+    def test_an_undeclared_body_at_the_limit_is_allowed(self, transport: HttpxTransport) -> None:
+        """Chunked, so there is no Content-Length at all and only the running total applies."""
+        server = RawTcpServer(raw_chunked(self.CAP))
+        try:
+            with self.open_with_cap(transport, server.port) as response:
+                assert response.declared_content_length is None
+                assert len(b"".join(response.iter_bytes())) == self.CAP
+        finally:
+            server.close()
+
+    def test_an_undeclared_body_over_the_limit_is_refused_while_streaming(
+        self, transport: HttpxTransport
+    ) -> None:
+        """No header to check, so this is caught only by counting what arrives."""
+        server = RawTcpServer(raw_chunked(self.CAP + 1))
+        try:
+            with (
+                pytest.raises(ResponseTooLargeError) as caught,
+                self.open_with_cap(transport, server.port) as response,
+            ):
+                b"".join(response.iter_bytes(64))
+            assert caught.value.declared is False
+            assert caught.value.observed_bytes is not None
+            assert caught.value.observed_bytes > self.CAP
+        finally:
+            server.close()
+
+    def test_a_far_oversized_body_aborts_early_rather_than_being_buffered(
+        self, transport: HttpxTransport
+    ) -> None:
+        """The memory-safety claim, asserted numerically.
+
+        A 200 KiB chunked body against a 1 KiB cap must not be accumulated to find out it is too
+        big.
+        The count at the moment of refusal proves how much was held: at most the limit plus one
+        chunk,
+        not the whole payload.
+        """
+        chunk = 64
+        server = RawTcpServer(raw_chunked(200 * 1024, chunk=chunk))
+        try:
+            with (
+                pytest.raises(ResponseTooLargeError) as caught,
+                self.open_with_cap(transport, server.port) as response,
+            ):
+                b"".join(response.iter_bytes(chunk))
+            observed = caught.value.observed_bytes
+            assert observed is not None
+            assert observed <= self.CAP + chunk, f"held {observed} bytes before refusing"
+        finally:
+            server.close()
+
+    def test_an_understated_content_length_cannot_smuggle_extra_bytes(
+        self, transport: HttpxTransport
+    ) -> None:
+        """Measured behaviour, not the behaviour I first assumed.
+
+        A server declaring 10 bytes and sending 100 KB does *not* trip the streaming cap: h11 stops
+        at
+        the declared length and delivers exactly 10 bytes. So the invariant holds here through HTTP
+        framing rather than through our counter, and the honest assertion is the invariant — we
+        never
+        hold more than the limit — rather than a specific error we would not in fact receive.
+        """
+        server = RawTcpServer(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n" + b"z" * 100_000)
+        try:
+            with self.open_with_cap(transport, server.port) as response:
+                body = b"".join(response.iter_bytes())
+            assert body == b"z" * 10
+            assert len(body) <= self.CAP
+        finally:
+            server.close()
+
+    # --- malformed declarations --------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "raw_header",
+        # Arabic-Indic digits are the point of that entry, not a typo: int() accepts them.
+        ["abc", "-5", "+10", "0x10", "1e3", "١٠", "10.5", "", " ", "10 20", "4, 9"],  # noqa: RUF001
+    )
+    def test_a_malformed_content_length_is_rejected_not_ignored(self, raw_header: str) -> None:
+        """Rule 81b, tested where it can be: by calling the parser.
+
+        Treating an unparseable header as absent would silently downgrade the pre-flight check to
+        "stream it and find out" — the exact behaviour someone bypassing a declared-size limit
+        wants.
+        Non-ASCII digits are included because ``int()`` accepts them and ``\\d`` matches them.
+        """
+        with pytest.raises(ValueError, match="malformed Content-Length"):
+            parse_content_length(raw_header)
+
+    def test_an_absent_content_length_is_not_an_error(self) -> None:
+        """Chunked responses legitimately have none."""
+        assert parse_content_length(None) is None
+
+    @pytest.mark.parametrize(("raw_header", "expected"), [("0", 0), ("10", 10), (" 10 ", 10)])
+    def test_a_well_formed_content_length_parses(self, raw_header: str, expected: int) -> None:
+        assert parse_content_length(raw_header) == expected
+
+    @pytest.mark.parametrize(
+        "header_block",
+        [
+            b"Content-Length: abc",
+            b"Content-Length: -5",
+            b"Content-Length: 0x10",
+            b"Content-Length: 1e3",
+            b"Content-Length: 4\r\nContent-Length: 9",
+        ],
+    )
+    def test_end_to_end_a_malformed_declaration_is_a_protocol_error(
+        self, transport: HttpxTransport, header_block: bytes
+    ) -> None:
+        """What actually happens through the real client, which is not our parser.
+
+        h11 validates this header itself and refuses every malformed form before we see it, so the
+        observable behaviour is a ``ProtocolError``. Our parser agrees with that classification,
+        which
+        is why swapping the client cannot silently change the outcome. Recorded as a test so the
+        claim
+        stays true rather than remaining a note in a docstring.
+        """
+        server = RawTcpServer(b"HTTP/1.1 200 OK\r\n" + header_block + b"\r\n\r\nbody")
+        try:
+            with (
+                pytest.raises(ProtocolError),
+                self.open_with_cap(transport, server.port) as response,
+            ):
+                b"".join(response.iter_bytes())
+        finally:
+            server.close()
+
+    def test_the_malformed_header_conversion_is_a_protocol_error(self) -> None:
+        """Covers the branch h11 makes unreachable over a real socket.
+
+        The response is constructed in-process rather than parsed off the wire, which is the only
+        way to reach this: h11 would have refused the header first. That makes this a test of our
+        conversion — malformed means `ProtocolError`, agreeing with the layer below — rather than a
+        claim about what a server can actually make happen.
+        """
+        response = httpx.Response(200, headers={"content-length": "abc"})
+        with pytest.raises(ProtocolError, match="malformed Content-Length"):
+            _declared_length(response, target_for(443, scheme="https"))
+
+    def test_identical_duplicate_declarations_are_accepted(self, transport: HttpxTransport) -> None:
+        """RFC 9110 permits repeated identical values; only conflicting ones are an error."""
+        server = RawTcpServer(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nContent-Length: 4\r\n\r\nbody"
+        )
+        try:
+            with self.open_with_cap(transport, server.port) as response:
+                assert response.declared_content_length == 4
+                assert b"".join(response.iter_bytes()) == b"body"
+        finally:
+            server.close()
+
+    # --- interaction with the deadline, and with retry policy --------------------------------
+
+    def test_an_oversized_slow_response_reports_the_size_when_size_is_hit_first(
+        self, transport: HttpxTransport
+    ) -> None:
+        """Both limits are in play; the one actually reached first is reported.
+
+        Bytes drip in every 20ms with a 16-byte cap, so roughly 320ms of dripping breaches the size
+        while seconds of budget remain.
+        """
+        server = RawTcpServer(raw_chunked(400, chunk=16), piece=24, delay=0.02)
+        budget = TimeoutBudget(
+            policy=TimeoutPolicy(connect_seconds=1.0, read_seconds=2.0, total_seconds=30.0),
+            clock=MonotonicClock(),
+        )
+        timeouts = TransportTimeouts.from_budget(budget)
+
+        try:
+            with (
+                pytest.raises(ResponseTooLargeError) as caught,
+                transport.open(
+                    target_for(server.port), timeouts=timeouts, max_response_bytes=64
+                ) as response,
+            ):
+                b"".join(response.iter_bytes(16))
+            assert (
+                caught.value.declared is False
+            ), "this must be the streaming check, not the header"
+        finally:
+            server.close()
+
+    def test_an_oversized_slow_response_reports_the_budget_when_time_runs_out_first(
+        self, transport: HttpxTransport
+    ) -> None:
+        """The mirror case: a generous cap, a tight budget, so the deadline is what breaks."""
+        server = RawTcpServer(raw_chunked(4096, chunk=16), piece=24, delay=0.02)
+        budget = TimeoutBudget(
+            policy=TimeoutPolicy(connect_seconds=0.1, read_seconds=0.3, total_seconds=0.5),
+            clock=MonotonicClock(),
+        )
+        timeouts = TransportTimeouts.from_budget(budget)
+
+        try:
+            with (
+                pytest.raises(BudgetExhaustedError),
+                transport.open(
+                    target_for(server.port), timeouts=timeouts, max_response_bytes=1024 * 1024
+                ) as response,
+            ):
+                b"".join(response.iter_bytes(16))
+        finally:
+            server.close()
+
+    def test_neither_limit_is_retryable(self) -> None:
+        """Both are refusals. An 80 MB file does not become a 25 MB file on a second attempt."""
+        for error_type in (ResponseTooLargeError, BudgetExhaustedError):
+            assert error_type.outcome in _NEVER_RETRY
+            decision = RetryPolicy().classify(
+                AttemptResult(
+                    outcome=error_type.outcome,
+                    attempt=1,
+                    status_code=200,
+                    retry_after_seconds=1.0,
+                ),
+                randomness=SystemRandomSource(),
+                remaining_budget_seconds=3600.0,
+            )
+            assert decision.verdict is RetryVerdict.DO_NOT_RETRY, error_type.__name__
+
+    def test_oversize_reuses_the_existing_outcome_rather_than_adding_a_synonym(self) -> None:
+        """One condition, one name. A second name for it would split retry policy's vocabulary."""
+        assert ResponseTooLargeError.outcome is AttemptOutcome.OVERSIZED_RESPONSE
+
+    # --- configuration -----------------------------------------------------------------------
+
+    @pytest.mark.parametrize("cap", [0, -1, -1024])
+    def test_a_non_positive_ceiling_is_refused(self, transport: HttpxTransport, cap: int) -> None:
+        """Zero would either reject everything or, read as 'unlimited', remove the control."""
+        with (
+            pytest.raises(ValueError, match="max_response_bytes must be positive"),
+            self.open_with_cap(transport, 9, cap=cap),
+        ):
+            pass
+
+    def test_the_default_ceiling_matches_the_configured_one(self) -> None:
+        """Two ceilings that drift apart mean nobody knows which one applies."""
+        configured = Settings.model_fields["max_download_bytes"].default
+        assert configured == DEFAULT_MAX_RESPONSE_BYTES
+
+    def test_the_ceiling_still_applies_when_no_deadline_is_given(
+        self, transport: HttpxTransport
+    ) -> None:
+        """The two controls are independent; neither depends on the other being configured."""
+        server = RawTcpServer(raw_chunked(self.CAP + 1))
+        try:
+            with (
+                pytest.raises(ResponseTooLargeError),
+                transport.open(
+                    target_for(server.port),
+                    timeouts=TransportTimeouts(connect_seconds=2.0, read_seconds=2.0),
+                    max_response_bytes=self.CAP,
+                ) as response,
+            ):
+                b"".join(response.iter_bytes(64))
+        finally:
+            server.close()
 
 
 class TestTotalBudget:

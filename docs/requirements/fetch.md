@@ -5,10 +5,10 @@ a number or a decidable condition, so "done" is testable rather than asserted.
 
 Status: **the guard, the pure policy layer, and the transport are implemented** — SSRF validation
 (FR-100–109), timeout budget, retry classification, redirect policy, and the socket-opening boundary
-(FR-170–183).
+(FR-170–185).
 
-Still Planned: the **loops** that act on these policies — retry controller, redirect controller, rate
-limiter, and the streaming size ceiling. That split is deliberate: every decision was pure and
+Still Planned: the **loops** that act on these policies — retry controller, redirect controller, and
+the rate limiter. That split is deliberate: every decision was pure and
 exhaustively tested before anything could open a socket, and the thing that opens sockets owns no
 policy of its own.
 
@@ -60,6 +60,8 @@ The layer that opens sockets, and nothing else. See [ADR 0011](../adr/0011-trans
 | FR-179 | Only `GET` and `HEAD` shall be permitted. | Implemented — allowlist; write methods are refused before anything reaches the network |
 | FR-180 | The environment shall not be able to reroute or re-trust a validated request. | Implemented — an env proxy cannot reroute (explicit `transport=`), and `SSL_CERT_FILE` cannot inject a CA (explicit `SSLContext`). Both mechanisms measured rather than assumed; see ADR 0011 |
 | FR-182 | The transport shall refuse to open a connection when no time remains, and shall enforce the total deadline while reading a body. | Implemented — pre-flight check before any socket (asserted by a server that records zero requests); deadline re-checked between chunks. Bound is the deadline plus at most one read timeout, which is itself clamped to the remaining budget |
+| FR-184 | A `Content-Length` that is present but unparseable shall reject, never be treated as absent. | Implemented — `parse_content_length` accepts ASCII digits only, so non-ASCII digits are refused rather than silently accepted as `int()` would. Reachability recorded honestly: h11 rejects every malformed form first, so end-to-end the outcome is a `ProtocolError` and the parser is covered by direct tests |
+| FR-185 | The byte ceiling shall be selectable per request, so per-source and per-document-type limits are possible. | Implemented — `max_response_bytes` on `open`, defaulting to the configured `max_download_bytes` as a backstop. A test asserts the two defaults stay equal |
 | FR-183 | The transport shall be unable to reset or extend the request budget. | Implemented — it receives a read-only `Deadline` protocol exposing only `remaining_seconds` and `check`, and takes no `TimeoutPolicy`, so it cannot construct a fresh budget either |
 | FR-181 | A connection shall be reusable only when scheme, validated hostname, validated address, and port all match. | **Deferred, and reuse is off until it holds** — `max_keepalive_connections=0`, because httpcore keys its pool by `(scheme, address, port)` and would let two hostnames on one address share a TLS identity. Asserted by observing distinct client source ports across requests |
 
@@ -69,8 +71,8 @@ The layer that opens sockets, and nothing else. See [ADR 0011](../adr/0011-trans
 | --- | --- | --- | --- |
 | FR-120 | Separate connect, read, and total-request timeouts shall be enforced. | connect 10 s, read 30 s, total 300 s (configurable) | Implemented — `TimeoutPolicy` decides, `TransportTimeouts.from_budget` clamps each attempt to what remains, and the transport applies all three. Verified with a stalling server (read) and a drip server (total) |
 | FR-121 | A total-request timeout shall bound the whole exchange including redirects, so slow-drip responses cannot evade a per-read timeout. | — | Implemented **and enforced during streaming** — the deadline is checked at every chunk boundary, so a server sending one byte every 20 ms inside a 300 ms read timeout is stopped by the total. `TimeoutBudget` still does not reset across attempts, now also asserted through the transport across three sequential requests |
-| FR-122 | A response whose declared `Content-Length` exceeds the size cap shall be rejected before the body is read. | — | Planned |
-| FR-123 | Response bodies shall be streamed with the cap enforced during read, never buffered then measured. | default 256 MiB | Planned |
+| FR-122 | A response whose declared `Content-Length` exceeds the size cap shall be rejected before the body is read. | — | Implemented — refused before `RawResponse` is yielded, so the caller's block never runs and no body byte can be read. Skipped for `HEAD`, where no body is sent and refusing would break the one request whose purpose is to discover a size |
+| FR-123 | Response bodies shall be streamed with the cap enforced during read, never buffered then measured. | default 256 MiB | Implemented — the running total is checked at every chunk and the chunk is refused before being yielded. A 200 KiB body against a 1 KiB cap is asserted to abort holding at most limit + one chunk, so the bound is numeric rather than claimed |
 | FR-124 | A request shall be cancellable, and cancellation shall release the connection. | — | Planned |
 
 ## Rate limiting and concurrency

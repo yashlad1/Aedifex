@@ -64,6 +64,7 @@ decided by the error type itself rather than re-derived by whoever catches it (r
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -77,6 +78,7 @@ from aedifex.errors import AcquisitionError
 __all__ = [
     "ALLOWED_METHODS",
     "DEFAULT_CHUNK_SIZE",
+    "DEFAULT_MAX_RESPONSE_BYTES",
     "BudgetExhaustedError",
     "ConnectTimeoutError",
     "ConnectionFailedError",
@@ -86,11 +88,13 @@ __all__ = [
     "ReadTimeoutError",
     "ResponseHeaders",
     "ResponseStreamError",
+    "ResponseTooLargeError",
     "TlsVerificationError",
     "Transport",
     "TransportError",
     "TransportTimeouts",
     "UnclassifiedTransportError",
+    "parse_content_length",
 ]
 
 ALLOWED_METHODS: Final[frozenset[str]] = frozenset({"GET", "HEAD"})
@@ -102,6 +106,29 @@ implemented" here — it is refused.
 """
 
 DEFAULT_CHUNK_SIZE: Final[int] = 64 * 1024
+
+DEFAULT_MAX_RESPONSE_BYTES: Final[int] = 256 * 1024 * 1024
+"""Backstop ceiling, matching ``Settings.max_download_bytes``.
+
+A backstop, not the policy. Different documents warrant very different limits — a metadata
+endpoint has no business returning 5 MB, while an archive legitimately might return 250 MB — so
+callers are expected to pass the limit their source and document type justify. This default exists
+so that a caller who passes nothing is still bounded, never so that the decision can be skipped.
+
+Deliberately equal to the configured default rather than independently chosen; a test asserts they
+stay equal, because two ceilings that drift apart mean nobody knows which one applies.
+"""
+
+_CONTENT_LENGTH_DIGITS: Final[re.Pattern[str]] = re.compile(r"^[0-9]{1,19}$")
+"""ASCII digits only, and not ``\\d``.
+
+``\\d`` matches Unicode decimal digits, and ``int()`` parses them happily: ``int("٤")`` is 4. A
+header carrying Arabic-Indic digits would then be accepted here while any other participant in the
+exchange read it differently, which is the shape of a request-smuggling primitive. The same mistake
+was already made once in this codebase, in ``parse_retry_after``.
+
+The 19-digit bound keeps a pathological header from becoming an arbitrarily large integer.
+"""
 
 
 class TransportError(AcquisitionError):
@@ -168,6 +195,36 @@ class ResponseStreamError(TransportError):
     """The body failed part-way through, or an already-consumed stream was read again."""
 
     outcome: ClassVar[AttemptOutcome] = AttemptOutcome.RESPONSE_STREAM_ERROR
+
+
+class ResponseTooLargeError(TransportError):
+    """The response exceeded the byte ceiling, either as declared or as actually delivered.
+
+    A permanent refusal, not a transport failure. Retrying an 80 MB file against a 25 MB policy
+    cannot make it valid, so this is never retryable — it maps to
+    :attr:`~aedifex.acquisition.fetch.retry.AttemptOutcome.OVERSIZED_RESPONSE`, which already exists
+    and is already in the never-retry set. Introducing a second outcome name for the same condition
+    would split a vocabulary that retry policy depends on being complete.
+
+    Carries the numbers so a log line can state what happened without re-deriving it, and
+    ``declared`` records which of the two checks fired: the header said too much, or the body
+    actually delivered too much.
+    """
+
+    outcome: ClassVar[AttemptOutcome] = AttemptOutcome.OVERSIZED_RESPONSE
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        limit_bytes: int,
+        declared: bool,
+        observed_bytes: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.limit_bytes = limit_bytes
+        self.declared = declared
+        self.observed_bytes = observed_bytes
 
 
 class BudgetExhaustedError(TransportError, TimeoutBudgetExhaustedError):
@@ -293,6 +350,39 @@ class ResponseHeaders:
         return len(self.items)
 
 
+def parse_content_length(raw: str | None) -> int | None:
+    """Parse a ``Content-Length`` header value.
+
+    Returns:
+        The declared length, or ``None`` when the header is absent — which is a legitimate
+        answer for a chunked response, not an error.
+
+    Raises:
+        ValueError: when the header is present but not a plain non-negative ASCII integer.
+
+    A present-but-unparseable header must reject, never be treated as absent (rule 81b). Treating it
+    as absent would be the more forgiving choice and precisely the wrong one: it would silently
+    downgrade the cheap pre-flight check into "stream it and find out", which is what an attacker
+    wanting to bypass a declared-size limit would ask for.
+
+    Note on reachability, measured rather than assumed: ``h11`` validates this header itself and
+    raises ``RemoteProtocolError`` for a non-numeric value, a negative value, a leading ``+``, hex,
+    scientific notation, non-ASCII digits, and conflicting duplicate headers. So through the current
+    client no malformed value reaches this function, and the end-to-end behaviour for all of those
+    is
+    a ``ProtocolError``. This exists as defence in depth for a future client, a proxy that rewrites
+    headers, or a caller passing a header value in directly — and is tested by calling it, since it
+    cannot be provoked through the transport today. Saying so is more useful than implying coverage
+    that the end-to-end tests do not actually provide.
+    """
+    if raw is None:
+        return None
+    value = raw.strip()
+    if not _CONTENT_LENGTH_DIGITS.match(value):
+        raise ValueError(f"malformed Content-Length {raw!r}")
+    return int(value)
+
+
 class RawResponse:
     """A response whose body has not been read.
 
@@ -305,6 +395,7 @@ class RawResponse:
         "_close",
         "_consumed",
         "_stream",
+        "declared_content_length",
         "headers",
         "http_version",
         "status_code",
@@ -320,11 +411,16 @@ class RawResponse:
         headers: ResponseHeaders,
         stream: Callable[[int], Iterator[bytes]],
         close: Callable[[], None],
+        declared_content_length: int | None = None,
     ) -> None:
         self.target = target
         self.status_code = status_code
         self.http_version = http_version
         self.headers = headers
+        self.declared_content_length = declared_content_length
+        """What the server said the body would be, already parsed and validated, or None if it
+        did not say. Kept because a later layer records it as provenance and compares it against
+        what actually arrived."""
         self._stream = stream
         self._close = close
         self._consumed = False
@@ -368,10 +464,15 @@ class Transport(Protocol):
         timeouts: TransportTimeouts,
         method: str = "GET",
         headers: Mapping[str, str] | None = None,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
     ) -> AbstractContextManager[RawResponse]:
         """Send one request and return its unread response.
 
         Returns a context manager because the connection must be released deterministically on
         every path: success, failure, partial consumption of the body, and interruption.
+
+        ``max_response_bytes`` is enforced twice: against ``Content-Length`` before any body byte is
+        read, and against the running total while streaming. The second check is the one that
+        matters, because a server can omit the header, send a chunked response, or simply be wrong.
         """
         ...

@@ -17,6 +17,9 @@ Implemented in [`acquisition/content.py`](src/aedifex/acquisition/content.py) an
 | Threat | Control | Where |
 | --- | --- | --- |
 | Oversized payload exhausting memory or disk | Size cap enforced *while streaming*, not after buffering | `hash_stream` |
+| Oversized response exhausting memory before it can be hashed | Enforced twice at the transport: declared `Content-Length` refused before any body byte is read, and the running total checked at every chunk. Aborts holding at most the limit plus one chunk | `fetch/transport.py`, `fetch/httpx_transport.py` |
+| A server lying about, or omitting, `Content-Length` | The declared size is treated as a courtesy; the running total is the control, so chunked and undeclared bodies are still capped. A *understated* length cannot smuggle extra bytes because HTTP framing truncates at the declared value | `fetch/httpx_transport.py` |
+| Unparseable `Content-Length` treated as absent | Rejected rather than ignored; ASCII digits only, so non-ASCII digits cannot be accepted here while being read differently elsewhere | `parse_content_length` |
 | Empty file corrupting deduplication | Rejected; every empty file shares one digest | `hash_stream` |
 | Content spoofing (a ZIP claiming to be a PDF) | Magic bytes compared against the declared type | `resolve_format` |
 | HTML error or login page served with HTTP 200 for a `.pdf` request | Contradiction between media type and filename is rejected | `resolve_format` |
