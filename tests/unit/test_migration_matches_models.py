@@ -8,6 +8,12 @@ The approach: render the migration chain to PostgreSQL DDL in Alembic's offline 
 the same DDL from ``Base.metadata``, then compare tables, columns, and constraints as
 normalized sets. Ordering differences within a ``CREATE TABLE`` body are irrelevant to the
 resulting schema, so the comparison is order-insensitive.
+
+``ALTER TABLE`` is replayed as well as ``CREATE TABLE``, and it has to be: a migration that adds a
+column to an existing table contributes nothing to a ``CREATE TABLE`` statement, so a comparison
+that read only creates would report a clean match while the schema and the models disagreed about
+every column added after the table was first made. Revisions are therefore applied base to head, in
+order, with each ``ALTER`` mutating the table it names.
 """
 
 from __future__ import annotations
@@ -43,8 +49,10 @@ def _render_migration_ddl() -> str:
     )
 
     with Operations.context(context):
-        # Walk base -> head so multi-revision chains are covered as they are added.
-        for revision in script.walk_revisions(base="base", head="heads"):
+        # walk_revisions yields head first, so it is reversed: an ALTER must be replayed after the
+        # CREATE TABLE it modifies, or the column it adds is applied to a table that does not exist
+        # yet and is silently dropped from the comparison.
+        for revision in reversed(list(script.walk_revisions(base="base", head="heads"))):
             upgrade = revision.module.upgrade
             upgrade()
 
@@ -94,13 +102,56 @@ def _normalize(text: str) -> str:
 
 
 def _parse_tables(ddl: str) -> dict[str, set[str]]:
-    """Extract ``{table_name: {column and constraint definitions}}`` from rendered DDL."""
+    """Extract ``{table_name: {column and constraint definitions}}`` from rendered DDL.
+
+    Two passes: every ``CREATE TABLE``, then every ``ALTER TABLE`` in the order it was emitted. The
+    second pass is what makes this comparison mean anything once a migration modifies an existing
+    table — a column added by ``ALTER`` appears in no ``CREATE TABLE`` statement, so reading only
+    creates would report a clean match while the schema and the models disagreed about it.
+
+    Two passes rather than one interleaved walk because revisions run base to head, so a table is
+    always created before it is altered.
+    """
     tables: dict[str, set[str]] = {}
     for match in re.finditer(
         r"CREATE TABLE (\w+) \((.*?)\n\)", ddl, flags=re.DOTALL | re.IGNORECASE
     ):
         tables[match.group(1)] = set(_split_top_level(match.group(2)))
+
+    for match in re.finditer(r"ALTER TABLE (\w+) ([^;]+);", ddl, flags=re.IGNORECASE):
+        table, action = match.group(1), _normalize(match.group(2))
+        if table in tables:
+            _apply_alter(tables[table], action)
     return tables
+
+
+def _apply_alter(definitions: set[str], action: str) -> None:
+    """Mutate one table's definition set by one ``ALTER TABLE`` action."""
+    add_column = re.match(r"ADD COLUMN (.*)$", action, flags=re.IGNORECASE)
+    if add_column is not None:
+        definitions.add(_normalize(add_column.group(1)))
+        return
+
+    add_constraint = re.match(r"ADD (CONSTRAINT .*)$", action, flags=re.IGNORECASE)
+    if add_constraint is not None:
+        definitions.add(_normalize(add_constraint.group(1)))
+        return
+
+    drop_constraint = re.match(r"DROP CONSTRAINT (\w+)", action, flags=re.IGNORECASE)
+    if drop_constraint is not None:
+        _discard_matching(definitions, rf"CONSTRAINT {drop_constraint.group(1)}\b")
+        return
+
+    drop_column = re.match(r"DROP COLUMN (\w+)", action, flags=re.IGNORECASE)
+    if drop_column is not None:
+        _discard_matching(definitions, rf"{drop_column.group(1)}\b")
+
+
+def _discard_matching(definitions: set[str], pattern: str) -> None:
+    for definition in [
+        item for item in definitions if re.match(pattern, item, flags=re.IGNORECASE)
+    ]:
+        definitions.discard(definition)
 
 
 def _parse_indexes(ddl: str) -> dict[str, set[str]]:

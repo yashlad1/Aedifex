@@ -3,12 +3,14 @@
 Four tables, and the split between them is the important design decision:
 
 ``crawl_jobs``
-    One row per crawl run of one source. Holds the checkpoint that makes a run resumable.
+    One row per crawl run of one source. Holds the checkpoint that makes a run resumable, and the
+    counters that describe what the run did.
 
 ``discovered_urls``
-    The frontier: one row per (source, URL) ever seen. This is where pipeline *state* and
-    retry bookkeeping live. Unique on the URL digest per source, so re-running a crawler
-    re-finds the same rows instead of inserting duplicates.
+    The frontier, and also the durable work queue (ADR 0012): one row per (source, canonical URL)
+    ever seen. This is where pipeline *state*, lease bookkeeping, and retry bookkeeping live. Unique
+    on the URL digest per source, so re-running a crawler re-finds the same rows instead of
+    inserting duplicates.
 
 ``documents``
     One row per unique *content*, keyed by a deterministic id derived from the SHA-256.
@@ -47,6 +49,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy import text as text_clause
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -145,10 +148,29 @@ class CrawlJob(Base):
     started_at: Mapped[datetime] = mapped_column(server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(default=None)
 
+    # The counters carry a server default as well as a Python one, so a hand-written INSERT during
+    # an incident cannot leave a null where a number belongs, and so the migration that added them
+    # could run against a populated table.
     urls_discovered: Mapped[int] = mapped_column(Integer, default=0)
+    urls_skipped: Mapped[int] = mapped_column(Integer, default=0, server_default=text_clause("0"))
+    """Seen and deliberately not fetched: refused by robots.txt, or filtered out by the source."""
     documents_stored: Mapped[int] = mapped_column(Integer, default=0)
     documents_duplicate: Mapped[int] = mapped_column(Integer, default=0)
     documents_failed: Mapped[int] = mapped_column(Integer, default=0)
+    documents_quarantined: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text_clause("0")
+    )
+    bytes_downloaded: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default=text_clause("0")
+    )
+
+    stop_reason: Mapped[str | None] = mapped_column(String(64), default=None)
+    """Why the run ended: the frontier drained, a limit was reached, or shutdown was signalled.
+
+    Distinct from ``error_type``: a run that stops because it hit its document cap succeeded, and a
+    run that stopped for that reason is not the same as one that finished the frontier. Without this
+    a resumed crawl cannot tell "there is nothing left" from "we were told to stop".
+    """
 
     # Opaque, crawler-defined resume point (page number, cursor, last-seen date). Kept as
     # JSONB so adding a new crawler does not require a schema change.
@@ -168,8 +190,9 @@ class CrawlJob(Base):
             name="finished_at_matches_status",
         ),
         CheckConstraint(
-            "urls_discovered >= 0 AND documents_stored >= 0 "
-            "AND documents_duplicate >= 0 AND documents_failed >= 0",
+            "urls_discovered >= 0 AND urls_skipped >= 0 AND documents_stored >= 0 "
+            "AND documents_duplicate >= 0 AND documents_failed >= 0 "
+            "AND documents_quarantined >= 0 AND bytes_downloaded >= 0",
             name="counters_non_negative",
         ),
         Index("ix_crawl_jobs_source_started", "source_id", "started_at"),
@@ -333,6 +356,29 @@ class DiscoveredUrl(Base):
     last_attempted_at: Mapped[datetime | None] = mapped_column(default=None)
     downloaded_at: Mapped[datetime | None] = mapped_column(default=None)
 
+    # --- Queue bookkeeping ---------------------------------------------------
+    # This table is the durable queue as well as the frontier (ADR 0012). A lease rather than a
+    # state change, so the acquirer keeps sole ownership of the document state machine: a claim
+    # says "a worker is looking at this until then", and the state still moves DISCOVERED ->
+    # DOWNLOADING inside the acquisition itself.
+    lease_owner: Mapped[str | None] = mapped_column(String(64), default=None)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(default=None)
+    next_attempt_after: Mapped[datetime | None] = mapped_column(default=None)
+    """Earliest a retry may be claimed. Backoff that survives a restart, unlike a sleep."""
+    dead_lettered_at: Mapped[datetime | None] = mapped_column(default=None)
+    """Set when a URL has exhausted its attempts. Terminal for the queue, not for the document.
+
+    Deliberately a timestamp column rather than a new ``DocumentState``: that enum describes where a
+    *document* is in its lifecycle, and queue exhaustion is a property of delivery. Adding it there
+    would spread queue vocabulary through the document state machine and every exhaustive test over
+    it, for a fact that only the claim query reads.
+    """
+
+    depth: Mapped[int] = mapped_column(Integer, default=0, server_default=text_clause("0"))
+    """Links from the seed. Bounds a crawl and makes traversal order deterministic."""
+    discovered_via: Mapped[str | None] = mapped_column(Text, default=None)
+    """The page or API response this URL was found in. Discovery's own provenance."""
+
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     http_status: Mapped[int | None] = mapped_column(Integer, default=None)
     error_type: Mapped[str | None] = mapped_column(String(128), default=None)
@@ -345,6 +391,11 @@ class DiscoveredUrl(Base):
         UniqueConstraint("source_id", "url_sha256"),
         CheckConstraint(f"url_sha256 {_SHA256_HEX}", name="url_sha256_is_lower_hex"),
         CheckConstraint("attempts >= 0", name="attempts_non_negative"),
+        CheckConstraint("depth >= 0", name="depth_non_negative"),
+        CheckConstraint(
+            "(lease_owner IS NULL) = (lease_expires_at IS NULL)",
+            name="lease_is_whole",
+        ),
         # A URL that reached a content-bearing state must name the content it produced.
         CheckConstraint(
             "document_id IS NOT NULL OR state IN "
@@ -352,4 +403,13 @@ class DiscoveredUrl(Base):
             name="document_required_after_download",
         ),
         Index("ix_discovered_urls_state_source", "state", "source_id"),
+        # The claim query's index. Ordered as the claim orders, so PostgreSQL can walk it rather
+        # than sort a frontier that is expected to reach millions of rows.
+        Index(
+            "ix_discovered_urls_claimable",
+            "source_id",
+            "depth",
+            "discovered_at",
+            postgresql_where=text_clause("dead_lettered_at IS NULL"),
+        ),
     )

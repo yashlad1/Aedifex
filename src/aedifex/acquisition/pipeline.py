@@ -39,7 +39,6 @@ atomically.
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,6 +48,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from aedifex.acquisition.canonical import canonical_url, url_digest
 from aedifex.acquisition.download import DownloadedFile, DownloadPolicy, download
 from aedifex.acquisition.fetch.controller import (
     Cancellation,
@@ -339,22 +339,29 @@ class Acquirer:
     ) -> DiscoveredUrl:
         """Find this URL's frontier row, or create it.
 
-        Keyed on the digest of the URL rather than its text, because procurement portals emit URLs
-        long enough to exceed a btree index limit. Found rather than inserted blindly so that
-        re-running a crawl updates the same row instead of accumulating one per attempt.
+        Keyed on the digest of the URL's **canonical** form, which is the same key the frontier
+        queue uses (:mod:`aedifex.acquisition.canonical`). Both must agree. An earlier version
+        hashed the URL exactly as passed in, so ``/a.pdf`` and ``/a.pdf#page=2`` were two rows and
+        two downloads of one document — content addressing kept the corpus correct, and the wasted
+        request went to a portal we are being polite to.
+
+        Digested rather than indexed directly because procurement portals emit URLs long enough to
+        exceed a btree index limit. Found rather than inserted blindly so that re-running a crawl
+        updates the same row instead of accumulating one per attempt.
         """
-        url_sha256 = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        canonical = canonical_url(url)
+        digest = url_digest(canonical)
         existing = session.execute(
             select(DiscoveredUrl).where(
                 DiscoveredUrl.source_id == source_id,
-                DiscoveredUrl.url_sha256 == url_sha256,
+                DiscoveredUrl.url_sha256 == digest,
             )
         ).scalar_one_or_none()
         if existing is not None:
             if job_id is not None:
                 existing.job_id = job_id
             return existing
-        row = DiscoveredUrl(source_id=source_id, url=url, url_sha256=url_sha256, job_id=job_id)
+        row = DiscoveredUrl(source_id=source_id, url=canonical, url_sha256=digest, job_id=job_id)
         session.add(row)
         session.flush()
         return row
