@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Final
 
 from pydantic import Field, PostgresDsn, SecretStr, field_validator, model_validator
@@ -131,6 +133,14 @@ class Settings(BaseSettings):
             "Ceiling on in-flight outbound requests across all sources combined. Per-source "
             "limits come from each source's registry entry; this bounds the total, so enabling "
             "twenty sources cannot multiply into twenty simultaneous crawls."
+        ),
+    )
+    staging_dir: str = Field(
+        default_factory=lambda: str(Path(tempfile.gettempdir()) / "aedifex-staging"),
+        description=(
+            "Where partial downloads are written before they are hashed and uploaded. Needs room "
+            "for max_download_bytes per concurrent worker, and should be on the same filesystem "
+            "for the whole run so the atomic rename into place stays atomic."
         ),
     )
     user_agent: str = Field(

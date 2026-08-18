@@ -118,6 +118,14 @@ class CrawlLimits:
     max_seconds: float | None = None
     batch_size: int = 10
     """URLs claimed per round trip. Small, because each is committed separately anyway."""
+    dry_run: bool = False
+    """Discover, but download nothing.
+
+    The rehearsal a new source gets before it is trusted with bytes: listing pages are read and
+    the frontier is filled, and every document URL found is deferred instead of fetched. It answers
+    "does discovery work here, and what would we have collected?" — the question to ask of a portal
+    nobody has crawled before, and answering it costs the site only its listing pages.
+    """
 
     def __post_init__(self) -> None:
         if self.batch_size < 1:
@@ -249,7 +257,9 @@ class CrawlRunner:
             job_id = job.id
 
         with bind_job_context(job_id=str(job_id), source_id=source.id):
-            _log.info("crawl.started", worker=self._worker, **_bounds(bounds))
+            _log.info(
+                "crawl.started", worker=self._worker, dry_run=bounds.dry_run, **_bounds(bounds)
+            )
             try:
                 reason = self._crawl(
                     source=source,
@@ -320,6 +330,13 @@ class CrawlRunner:
             timeouts=policy.timeouts,
         )
 
+        # A dry run defers each document it finds rather than fetching it, and a short deferral can
+        # expire inside a long run — so the same URL comes back around and is reported twice. Which
+        # ones have already been inspected is therefore tracked for the duration of the run, and a
+        # batch containing nothing new means the frontier has been walked.
+        inspected: set[uuid.UUID] = set()
+        formats = policy.download.allowed_formats
+
         while True:
             if self._cancelled():
                 return StopReason.CANCELLED
@@ -333,7 +350,13 @@ class CrawlRunner:
             if not claimed:
                 return StopReason.FRONTIER_DRAINED
 
+            progressed = False
             for row in claimed:
+                if bounds.dry_run and is_document_url(row.url, formats):
+                    if row.id in inspected:
+                        continue
+                    inspected.add(row.id)
+                progressed = True
                 if self._cancelled():
                     with self._sessions() as session:
                         self._give_back(session, frontier, row)
@@ -347,7 +370,11 @@ class CrawlRunner:
                     reader=reader,
                     frontier=frontier,
                     job_id=job_id,
+                    dry_run=bounds.dry_run,
                 )
+            if not progressed:
+                # Every URL in this batch was one a dry run had already reported.
+                return StopReason.FRONTIER_DRAINED
 
     def _handle(
         self,
@@ -359,6 +386,7 @@ class CrawlRunner:
         reader: PageReader,
         frontier: FrontierQueue,
         job_id: uuid.UUID,
+        dry_run: bool,
     ) -> None:
         """One URL, in one transaction. Nothing here is allowed to raise for an ordinary failure."""
         url = row.url
@@ -376,6 +404,10 @@ class CrawlRunner:
                 return
 
             if is_document_url(url, policy.download.allowed_formats):
+                if dry_run:
+                    self._would_fetch(session, frontier, attached)
+                    session.commit()
+                    return
                 result = self._acquire(session, attached, policy, job_id)
                 self._count_acquisition(job, result)
                 exhausted = frontier.settle(session, attached)
@@ -569,6 +601,17 @@ class CrawlRunner:
             job.documents_failed += 1
         if result.stored is not None and not result.stored.already_present:
             job.bytes_downloaded += result.stored.size_bytes
+
+    @staticmethod
+    def _would_fetch(session: Session, frontier: FrontierQueue, row: DiscoveredUrl) -> None:
+        """Record a document a real run would have fetched, and touch nothing else.
+
+        Deferred rather than released, or the claim loop would hand it straight back and a dry run
+        would never finish. No attempt is charged and no state moves, so the frontier a dry run
+        leaves behind is exactly what a real run would start from.
+        """
+        frontier.release(session, row, retry_after_seconds=1.0)
+        _log.info("crawl.would_fetch", url=row.url)
 
     @staticmethod
     def _refuse(

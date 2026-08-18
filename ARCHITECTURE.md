@@ -78,10 +78,21 @@ Phase 0 is complete. Implemented and tested:
 | Immutable storage key layout | [infrastructure/storage/keys.py](src/aedifex/infrastructure/storage/keys.py) |
 | Structured logging | [infrastructure/observability/logging.py](src/aedifex/infrastructure/observability/logging.py) |
 | Read-only metadata API | [apps/api/main.py](apps/api/main.py) |
+| HTTP fetch: SSRF guard, retries, redirects, rate limits | [acquisition/fetch/](src/aedifex/acquisition/fetch/) |
+| Downloader, object storage, retrieval provenance | [download.py](src/aedifex/acquisition/download.py), [storage/objects.py](src/aedifex/infrastructure/storage/objects.py), [provenance.py](src/aedifex/acquisition/provenance.py) |
+| robots.txt, frontier queue, discovery, crawl runner | [acquisition/crawl/](src/aedifex/acquisition/crawl/) |
+| Corpus catalog and operational metrics | [catalog.py](src/aedifex/acquisition/catalog.py) |
+| Operator entry point | [apps/crawler/main.py](apps/crawler/main.py) |
 
-Not yet built: crawlers, downloaders, parsing, OCR, classification, synthetic generation,
-the evidence graph, the rules engine, and the risk engine. Directories for those are created
-when their first real code lands, rather than kept as empty scaffolding.
+The acquisition pipeline is complete end to end and has been run: a source definition produces a
+crawl that reads listing pages, fills a durable frontier, downloads documents, verifies them, stores
+them immutably, and records provenance — against local servers we control. **No real portal has been
+crawled**, because no source's terms have been reviewed and the registry refuses to enable one that
+has not (ADR 0006, rule 60).
+
+Not yet built: parsing, OCR, classification, archive expansion, synthetic generation, the evidence
+graph, the rules engine, and the risk engine. Directories for those are created when their first real
+code lands, rather than kept as empty scaffolding.
 
 ## Key decisions and their reasons
 
@@ -114,8 +125,9 @@ recorded its terms of use. Collection ethics are a validation rule, not a conven
 
 Things a reader might expect that are absent on purpose:
 
-- **No Redis or Celery.** There are no asynchronous tasks yet. They arrive in Phase 1 with
-  the download queue that needs them.
+- **No Redis or Celery.** The frontier table is the queue, using `FOR UPDATE SKIP LOCKED` with a
+  lease ([0012](docs/adr/0012-postgresql-frontier-queue.md)). A broker would add a second store that
+  can disagree with the database about what has been done.
 - **No Neo4j.** The evidence graph is shallow and relational; PostgreSQL is sufficient until
   traversal depth actually demands otherwise.
 - **No async SQLAlchemy.** The API does thin metadata queries; heavy work belongs in

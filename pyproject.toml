@@ -111,6 +111,8 @@ ignore = [
 # under test rather than as a bind address.
 "tests/**" = ["S101", "S105", "S106", "S104", "ARG001", "ARG002"]
 "scripts/**" = ["T20"]
+# An operator command line prints; that is its entire interface. Logging goes to the log.
+"apps/crawler/**" = ["T20"]
 "migrations/**" = ["ARG001"]
 
 [tool.ruff.lint.flake8-builtins]

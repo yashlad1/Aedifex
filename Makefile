@@ -7,7 +7,8 @@ VENV := .venv
 
 .DEFAULT_GOAL := help
 .PHONY: help install lock check lint format typecheck test test-integration test-all \
-        validate-registry audit migrate migration downgrade up down logs run-api clean
+        validate-registry audit migrate migration downgrade up down logs run-api clean \
+        sources crawl status
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -85,6 +86,16 @@ migration: ## Autogenerate a migration: make migration m="add findings table"
 
 downgrade: ## Reverse the most recent migration
 	$(VENV)/bin/alembic downgrade -1
+
+sources: ## List registered sources and whether they may be collected from
+	$(PYTHON) -m apps.crawler.main sources
+
+crawl: ## Crawl one source: make crawl s=nhai [dry=1] [max=25]
+	@test -n "$(s)" || (echo 'usage: make crawl s=<source_id> [dry=1] [max=N]' && exit 1)
+	$(PYTHON) -m apps.crawler.main crawl $(s) 		$(if $(dry),--dry-run,) $(if $(max),--max-documents $(max),)
+
+status: ## Show the corpus, the queue depth, and recent crawl runs
+	$(PYTHON) -m apps.crawler.main status
 
 run-api: ## Run the API with reload at http://localhost:8000/docs
 	$(VENV)/bin/uvicorn apps.api.main:app --reload --host 127.0.0.1 --port 8000
