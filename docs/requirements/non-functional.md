@@ -114,7 +114,7 @@ reproduced cannot be defended. See [ADR 0009](../adr/0009-supply-chain-integrity
 
 | ID | Requirement | Status |
 | --- | --- | --- |
-| NFR-100 | Vulnerable or badly licensed dependencies are blocked at introduction, before merge. | Implemented — `dependency-review-action`, fails on high severity and on copyleft licences |
+| NFR-100 | Vulnerable or badly licensed dependencies are blocked at introduction, before merge. | **Partially met** — `dependency-review-action` needs Advanced Security on a private repo and is gated off; `pip-audit --strict` still audits the locked set every run, so vulnerable deps are caught, but licence checking and pre-merge blocking are not. See SECURITY.md |
 | NFR-101 | Our own code is scanned by a data-flow-aware SAST tool, not only pattern rules. | **Not met** — CodeQL requires Advanced Security on a private repo; workflow retained but manual-only. See SECURITY.md |
 | NFR-102 | Container images are scanned for OS and library vulnerabilities. | Implemented and **verified green in CI** — Trivy: reporting on PRs, blocking on the weekly run; SARIF retained as a build artifact |
 | NFR-103 | Third-party build inputs are immutable. | Implemented — base images pinned by digest; GitHub Actions pinned to commit SHAs |

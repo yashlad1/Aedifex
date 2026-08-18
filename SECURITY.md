@@ -92,7 +92,21 @@ No authentication, authorisation, or RBAC. The API is read-only metadata and is 
 to be internet-facing yet. This must be in place before any write endpoint or any deployment
 beyond a private network — tracked for Phase 10.
 
-### Known gap: no data-flow SAST
+### Known gaps: controls that need GitHub Advanced Security
+
+Three authored controls cannot run on a private repository without Advanced Security. They
+are recorded here as gaps rather than presented as passing checks.
+
+| Control | Status | What is lost | What still covers it |
+| --- | --- | --- | --- |
+| CodeQL (data-flow SAST) | Not running | Taint tracking from untrusted input to dangerous sink | ruff's bandit rules (patterns only, no data flow) |
+| Dependency review | Not running | Blocking a vulnerable or copyleft dependency *at introduction*, pre-merge | `pip-audit --strict` on the locked set every run — catches vulnerable deps, but not licences and not pre-merge |
+| SARIF in code scanning | Not uploading | Findings in the Security tab, with history | Trivy output printed in the log and SARIF retained as a build artifact |
+
+Each is gated so that enabling Advanced Security turns them on via a repository variable
+rather than a workflow change. Nothing is left as a permanently red check.
+
+#### Detail: no data-flow SAST
 
 **CodeQL is not running.** It reports through GitHub code scanning, which on a private
 repository requires GitHub Advanced Security. This repository does not have it — the API returns
