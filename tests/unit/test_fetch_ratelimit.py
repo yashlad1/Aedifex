@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import pytest
+from pydantic import AnyHttpUrl
 
 from aedifex.acquisition.fetch.ratelimit import (
     RATE_WINDOW_SECONDS,
@@ -32,7 +33,15 @@ from aedifex.acquisition.fetch.timing import (
     TimeoutBudgetExhaustedError,
     TimeoutPolicy,
 )
-from aedifex.acquisition.registry.models import RateLimitPolicy
+from aedifex.acquisition.registry.models import (
+    DataUsePolicy,
+    RateLimitPolicy,
+    RetrievalMethod,
+    SourceCategory,
+    SourceDefinition,
+)
+from aedifex.domain.documents import DocumentType
+from aedifex.domain.files import FileFormat
 
 
 class FakeClock:
@@ -468,6 +477,31 @@ class TestConfiguration:
         assert limits.requests_per_minute == 5
         assert limits.max_concurrency == 1
         assert limits.min_delay_seconds == 12.0
+
+    def test_limits_can_be_taken_straight_from_a_source_definition(self) -> None:
+        """The path a crawler will actually use: registry entry in, politeness out."""
+        source = SourceDefinition(
+            id="cpwd",
+            name="CPWD",
+            category=SourceCategory.GOVERNMENT_PROCUREMENT,
+            retrieval=RetrievalMethod.HTTP_CRAWL,
+            base_url=AnyHttpUrl("https://cpwd.gov.in/"),
+            data_use=DataUsePolicy(
+                license="unknown (pending review)",
+                allowed_use="Pending review; no collection permitted yet.",
+            ),
+            document_types=(DocumentType.TENDER_NOTICE,),
+            file_formats=(FileFormat.PDF,),
+            rate_limit=RateLimitPolicy(
+                requests_per_minute=6, max_concurrency=1, min_delay_seconds=10.0
+            ),
+        )
+        limits = RateLimits.from_source(source)
+        assert (limits.requests_per_minute, limits.max_concurrency, limits.min_delay_seconds) == (
+            6,
+            1,
+            10.0,
+        )
 
     def test_the_registry_defaults_survive_the_translation(self) -> None:
         """A silent mismatch here would apply limits nobody configured."""

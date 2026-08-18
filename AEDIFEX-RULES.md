@@ -2540,6 +2540,42 @@ and pronounced fourteen genuinely-caught mutations uncaught (rule 81a, in its ow
 
 ⸻
 
+81g. A Failure Must Produce a Verdict
+
+Every operation has exactly three permitted endings:
+
+PASS
+FAIL
+never: hang
+
+An operation that blocks indefinitely has produced no information. It is worse than a failure,
+because a failure is actionable and a hang looks like work in progress until someone runs out of
+patience. In CI it consumes the job's entire time allowance and reports nothing about the code.
+
+So every wait must be bounded by something: a deadline, a timeout, a byte ceiling, an attempt cap, a
+cancellation signal. "It will finish eventually" is not a bound.
+
+This rule exists because it was violated twice in one component, both times inside the *testing* of
+the very controls meant to prevent it. A mutation that removed a semaphore release turned the suite
+into a ten-minute stall with no verdict, twice, and left the source tree mutated on disk while it
+stalled. The fixes were a bounded acquire in the tests and a per-test timeout in the suite.
+
+The same failure is available to almost everything still to be built, and each one needs its bound
+decided when it is written rather than after it hangs:
+
+PDF parsers            a malformed object graph, or a decompression loop
+archive extraction     nested archives, a member that never ends
+OCR                    a page that renders forever
+external APIs          a socket that accepts and then says nothing
+crawlers               a frontier that regenerates itself
+durable workers        a lease that is never released
+LLM calls              a stream that stops mid-token without closing
+
+Corollary: a test suite must be able to fail. A suite that can hang is a suite that can stop
+reporting, which makes every green run afterwards less informative (see 81e and 81f).
+
+⸻
+
 Aedifex IP / Patent Readiness Requirements
 
 These requirements apply alongside the engineering constitution above. They are recordkeeping

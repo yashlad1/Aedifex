@@ -84,7 +84,7 @@ The layer that opens sockets, and nothing else. See [ADR 0011](../adr/0011-trans
 | FR-132 | Concurrent requests shall be bounded globally and per source. | per source from `max_concurrency`; global from `max_global_concurrency` (default 8) | Implemented — verified with real threads: a second request is observed to block while the ceiling is full and to proceed once it frees, per source and globally |
 | FR-133 | There shall be no unbounded concurrency anywhere in the fetch path. | — | Implemented — every acquisition goes through a bounded semaphore, and waiting for one is itself bounded by the request's deadline rather than blocking indefinitely |
 | FR-134 | Connections shall be pooled and reused across requests to one host. | — | **Deliberately not met.** This requirement is in direct tension with the SSRF design and the security decision wins: httpcore keys its pool by `(scheme, address, port)`, so two hostnames behind one address could share a TLS session verified for the first. Reuse stays off until pool identity includes the validated hostname (FR-181, [ADR 0011](../adr/0011-transport-boundary.md)). Recorded as unmet rather than reworded to look satisfied |
-| FR-135 | Rate limiting shall apply to retries and redirect hops, not only to initial requests. | — | Partial — the limiter is designed to be taken once per *attempt* and its docstring says so, but nothing yet enforces that the retry and redirect controllers do it. Closes when those controllers land |
+| FR-135 | Rate limiting shall apply to retries and redirect hops, not only to initial requests. | — | Implemented for retries — the controller takes a slot per *attempt*, asserted by counting acquisitions across a 3-attempt sequence, and releases it before the backoff so a deliberate pause does not hold capacity. Redirect hops close with the redirect controller |
 
 ## Retries
 
@@ -95,9 +95,12 @@ The layer that opens sockets, and nothing else. See [ADR 0011](../adr/0011-trans
 | FR-142 | Non-retryable conditions shall be exactly: HTTP 400, 401, 403, 404, 405, 410, 451, and any content rejected as unsafe. | — | Implemented — `NON_RETRYABLE_STATUSES`; decisions never retried, `TestDecisionsAreNeverRetried` |
 | FR-143 | `Retry-After` shall be honoured when present, as both delay-seconds and HTTP-date, and shall override computed backoff. | — | Implemented — `parse_retry_after` handles both forms; server delay overrides backoff |
 | FR-144 | A `Retry-After` beyond a maximum shall abandon the request rather than sleep. | max 300 s | Implemented — over the 300s cap abandons rather than sleeping |
-| FR-145 | Only idempotent methods shall be retried; the fetcher shall expose only `GET` and `HEAD`. | — | Implemented (policy) — retryable transport outcomes only; method restriction lands with the transport |
+| FR-145 | Only idempotent methods shall be retried; the fetcher shall expose only `GET` and `HEAD`. | — | Implemented — `ALLOWED_METHODS` is an allowlist in the transport, and write methods are refused before anything reaches the network |
 | FR-146 | A retry budget shall bound total retries per crawl run, so a broadly failing source cannot amplify load. | ≤ 20% of attempts | Planned |
 | FR-147 | Jitter shall be full jitter, so parallel workers do not synchronise into bursts. | — | Implemented — full jitter over `[0, ceiling]`, `test_full_jitter_spans_the_whole_interval` |
+| FR-148 | One request's total budget shall span every attempt and every backoff; no attempt shall receive a fresh allowance. | — | Implemented — the controller is handed a budget and never constructs one. Asserted two ways: the same object reaches every attempt, and the per-attempt read timeout tracks the remaining budget down (30 → 29 → 7) rather than staying constant |
+| FR-149 | A backoff shall be interruptible by a shutdown signal. | — | Implemented — an injected `Cancellation` (satisfied structurally by `threading.Event`, asserted at import) turns a pending backoff into `FetchCancelledError` rather than finishing the wait |
+| FR-150a | The per-attempt history shall be retained, on success and on failure. | — | Implemented — `AttemptRecord` per attempt with outcome, status, error type, duration, and the delay that followed; carried on `FetchResult` and on `FetchFailedError`. Not yet persisted — that is the downloader's job |
 
 ## Politeness
 
