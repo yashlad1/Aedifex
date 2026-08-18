@@ -57,7 +57,11 @@ jobs:
         run: uv run mypy
 
       - name: Unit tests
-        run: uv run pytest tests/unit -q --cov --cov-report=term-missing
+        # No -q: pyproject's addopts already sets it, and a second one suppresses the summary
+        # line. Without it the log recorded a coverage table but never how many tests ran, so a
+        # file that silently stopped being collected would leave this green with nothing to
+        # notice it by (rule 81f: execution coverage is a separate claim from finding coverage).
+        run: uv run pytest tests/unit --cov --cov-report=term-missing
 
       - name: Validate source registry
         run: uv run python -m scripts.validate_registry
@@ -106,7 +110,7 @@ jobs:
           uv run alembic upgrade head
 
       - name: Integration tests
-        run: uv run pytest tests/integration -q -m integration
+        run: uv run pytest tests/integration -m integration
 
   dependency-review:
     name: Dependency review
