@@ -3,9 +3,13 @@
 Derived from [the threat model](../security/threat-model-http-fetch.md). Every requirement states
 a number or a decidable condition, so "done" is testable rather than asserted.
 
-Status: **FR-100–109 Implemented** (the SSRF guard, `src/aedifex/acquisition/fetch/`), with
-226 tests at 96% coverage of the package. Everything else remains Planned — the HTTP client
-is the next slice. This file was written before any of the code, deliberately.
+Status: **the guard and the pure policy layer are implemented** — SSRF validation (FR-100–109),
+timeout budget, retry classification, and redirect policy. 428 tests at 97% coverage of the
+package, with no new dependency.
+
+Still Planned: the **transport** and the loops that act on these policies. That split is
+deliberate — every decision is pure and exhaustively tested before anything can open a socket.
+This file was written before any of the code.
 
 ## SSRF and destination validation
 
@@ -27,18 +31,19 @@ is the next slice. This file was written before any of the code, deliberately.
 | ID | Requirement | Status |
 | --- | --- | --- |
 | FR-110 | Automatic redirect following shall be disabled in the underlying client; redirects shall be followed only by our own loop. | Planned |
-| FR-111 | Every redirect hop shall re-enter validation from FR-100 step 1, including the hostname allowlist. | Planned |
-| FR-112 | Redirect chains shall be limited to 5 hops; exceeding the limit shall fail the request. | Planned |
-| FR-113 | A redirect loop shall be detected and shall fail rather than exhaust the hop budget silently. | Planned |
+| FR-111 | Every redirect hop shall re-enter validation from FR-100 step 1, including the hostname allowlist. | Implemented (policy) — `RedirectPolicy.evaluate` returns a URL and states that re-validation is required; it never grants permission. The loop lands with the transport |
+| FR-112 | Redirect chains shall be limited to 5 hops; exceeding the limit shall fail the request. | Implemented (policy) — `TestHopLimit`, default 5 |
+| FR-113 | A redirect loop shall be detected and shall fail rather than exhaust the hop budget silently. | Implemented (policy) — `TestLoopDetection`, detected explicitly rather than by exhausting the hop cap |
 | FR-114 | On a cross-host redirect, request headers shall be rebuilt rather than carried over. | Planned |
 | FR-115 | The full redirect chain shall be recorded, so the requested URL and the answering URL are both retained as provenance. | Planned |
+| FR-116 | A redirect that downgrades transport (`https` → `http`) shall be rejected unless the source has explicitly accepted an insecure channel. | Implemented — `TestTransportDowngrade`; permission comes from the registry's `allow_insecure_transport`, never from an HTTP library default |
 
 ## Timeouts and resource limits
 
 | ID | Requirement | Target | Status |
 | --- | --- | --- | --- |
-| FR-120 | Separate connect, read, and total-request timeouts shall be enforced. | connect 10 s, read 30 s, total 300 s (configurable) | Planned |
-| FR-121 | A total-request timeout shall bound the whole exchange including redirects, so slow-drip responses cannot evade a per-read timeout. | — | Planned |
+| FR-120 | Separate connect, read, and total-request timeouts shall be enforced. | connect 10 s, read 30 s, total 300 s (configurable) | Implemented (policy) — `TimeoutPolicy`; applied by the transport |
+| FR-121 | A total-request timeout shall bound the whole exchange including redirects, so slow-drip responses cannot evade a per-read timeout. | — | Implemented — `TimeoutBudget` does not reset across attempts; `test_the_budget_does_not_reset_across_attempts` |
 | FR-122 | A response whose declared `Content-Length` exceeds the size cap shall be rejected before the body is read. | — | Planned |
 | FR-123 | Response bodies shall be streamed with the cap enforced during read, never buffered then measured. | default 256 MiB | Planned |
 | FR-124 | A request shall be cancellable, and cancellation shall release the connection. | — | Planned |
@@ -58,14 +63,14 @@ is the next slice. This file was written before any of the code, deliberately.
 
 | ID | Requirement | Target | Status |
 | --- | --- | --- | --- |
-| FR-140 | Transient failures shall be retried with exponential backoff and full jitter. | base 1 s, factor 2, cap 60 s, **max 5 attempts** | Planned |
-| FR-141 | Retryable conditions shall be exactly: connection errors, timeouts, and HTTP 408, 425, 429, 500, 502, 503, 504. | — | Planned |
-| FR-142 | Non-retryable conditions shall be exactly: HTTP 400, 401, 403, 404, 405, 410, 451, and any content rejected as unsafe. | — | Planned |
-| FR-143 | `Retry-After` shall be honoured when present, as both delay-seconds and HTTP-date, and shall override computed backoff. | — | Planned |
-| FR-144 | A `Retry-After` beyond a maximum shall abandon the request rather than sleep. | max 300 s | Planned |
-| FR-145 | Only idempotent methods shall be retried; the fetcher shall expose only `GET` and `HEAD`. | — | Planned |
+| FR-140 | Transient failures shall be retried with exponential backoff and full jitter. | base 1 s, factor 2, cap 60 s, **max 5 attempts** | Implemented — `BackoffPolicy`, base 1s, factor 2, cap 60s, max 5 attempts |
+| FR-141 | Retryable conditions shall be exactly: connection errors, timeouts, and HTTP 408, 425, 429, 500, 502, 503, 504. | — | Implemented — `RETRYABLE_STATUSES`, asserted status-by-status |
+| FR-142 | Non-retryable conditions shall be exactly: HTTP 400, 401, 403, 404, 405, 410, 451, and any content rejected as unsafe. | — | Implemented — `NON_RETRYABLE_STATUSES`; decisions never retried, `TestDecisionsAreNeverRetried` |
+| FR-143 | `Retry-After` shall be honoured when present, as both delay-seconds and HTTP-date, and shall override computed backoff. | — | Implemented — `parse_retry_after` handles both forms; server delay overrides backoff |
+| FR-144 | A `Retry-After` beyond a maximum shall abandon the request rather than sleep. | max 300 s | Implemented — over the 300s cap abandons rather than sleeping |
+| FR-145 | Only idempotent methods shall be retried; the fetcher shall expose only `GET` and `HEAD`. | — | Implemented (policy) — retryable transport outcomes only; method restriction lands with the transport |
 | FR-146 | A retry budget shall bound total retries per crawl run, so a broadly failing source cannot amplify load. | ≤ 20% of attempts | Planned |
-| FR-147 | Jitter shall be full jitter, so parallel workers do not synchronise into bursts. | — | Planned |
+| FR-147 | Jitter shall be full jitter, so parallel workers do not synchronise into bursts. | — | Implemented — full jitter over `[0, ceiling]`, `test_full_jitter_spans_the_whole_interval` |
 
 ## Politeness
 
@@ -94,6 +99,8 @@ is the next slice. This file was written before any of the code, deliberately.
 | NFR-112 | Transport behaviour shall be tested against a controlled local HTTP server, not mocks. | — | Planned |
 | NFR-113 | DNS rebinding shall be tested with a resolver returning a public address then a private one. | — | Implemented — `RecordingResolver` scripts successive answers; the second is never consulted |
 | NFR-114 | Fetch failures shall never lose the reason: every rejection carries a typed error. | — | Implemented — `SsrfRejectionError` carries a `RejectionReason` |
+| NFR-115 | Retry and timeout policy shall be testable without sleeping or reading real time. | — | Implemented — `Clock`, `Sleeper`, and `RandomSource` are injected; no test sleeps |
+| NFR-116 | A parsing failure inside the fetch boundary shall reject, never silently omit. | — | Implemented — an unparseable DNS answer rejects the whole resolution (constitution rule 81b) |
 
 
 ## Implementation notes for FR-100–109
@@ -127,3 +134,35 @@ to influence and no reason to randomise.
 **`additional_hosts` (new registry field) are exact-match only**, while the source's own
 `base_url` host permits subdomains. Authorising a shared CDN or object-storage domain by suffix
 would authorise every other tenant on it.
+
+
+## Implementation notes for the policy layer
+
+**The timeout budget does not reset across attempts.** A per-attempt timeout bounds an attempt, not
+an operation: five retries at a 30s read timeout, with backoff, is a 150s operation that every
+individual timeout considered acceptable. Attempt timeouts are clamped to what remains, and a
+backoff delay that would not fit converts the retry into an abandonment rather than a sleep that
+ends with no time left to act.
+
+**Retryable statuses are enumerated, not derived from status class.** Treating all 5xx alike is the
+common shortcut and it is wrong: 501 means the server will never implement this. An unfamiliar
+status fails closed. 500 *is* retried, deliberately — portals return it for transient overload and
+these are idempotent GETs — with the risk bounded by the attempt cap and rate limiting rather than
+by refusing to retry.
+
+**A `Retry-After` above the cap abandons rather than clamping.** Clamping down and sleeping would
+hold a worker and a connection slot for the full cap while ignoring what the server actually asked.
+Duplicate headers take the first value, so a server cannot lengthen its own hold by appending.
+
+**`Retry-After` accepts ASCII digits only.** Python's `\d` matches Unicode decimal digits and
+`float()` accepts them, so an Arabic-Indic digit five parsed as a 5-second delay. Found by an
+adversarial test case, not by review.
+
+**Redirect policy grants no permission.** It returns a resolved URL and says re-validation is
+required. Validating the first hop confers nothing on later hops, because the remote server chooses
+the second destination.
+
+**`https` → `http` is refused by default.** Permission reuses the registry's
+`allow_insecure_transport`, so a source either accepts a tamperable channel or does not — rather
+than accepting it for its entry point and implicitly for redirects too. `http` → `https` is always
+allowed; an upgrade needs no permission.
