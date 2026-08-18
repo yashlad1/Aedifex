@@ -47,7 +47,7 @@ engine described above does not exist yet, and nothing here fabricates it.
 | CI: secret scanning (gitleaks, full history) + dependency audit | ✅ Green on GitHub Actions |
 | CI: container build, guards, smoke test, Trivy, SBOM | ✅ Green on GitHub Actions |
 | Dependabot | ✅ Running — opened its first PRs immediately |
-| CI: static analysis (Semgrep CE, blocking + self-tested) | ⚠️ Executed locally — 256 rules, 91 targets, 0 findings, 100% parsed; self-test and all its failure modes verified. **First CI run pending** |
+| CI: static analysis (Semgrep CE, blocking + self-tested) | ✅ Green on GitHub Actions — 255 rules, 90 targets, 0 findings, 100% parsed; self-test verified 119 matches across 18 files, 0 scanner errors |
 | **CodeQL taint tracking** | ❌ **Known gap** — needs Advanced Security on a private repo; Semgrep CE covers SAST meanwhile. See [SECURITY.md](SECURITY.md) |
 | Crawlers, downloaders | ❌ Phase 1 |
 | OCR, parsing, classification | ❌ Phase 4 |

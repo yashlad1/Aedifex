@@ -147,10 +147,11 @@ was meant to validate, none of which were visible in a green log:
 | `tests/` was passed as a scan target but is excluded by Semgrep's default ignore list. | Zero test files were scanned while the command implied otherwise. | Dead target removed; the exclusion is documented below rather than implied away |
 | The self-test asserted only that the exit code was non-zero. `--error` makes findings exit 1, but a malformed config exits 7 and a fatal error exits 3. | A broken `selftest.yaml` would have been reported as "matched as expected" — the anti-false-green check had its own false green. | Requires exit code exactly 1, then verifies match count, scanned-file count, and an empty error list from the JSON |
 
-Measured after the fix: 256 rules over 91 targets, **parsed lines ~100.0%** (previously ~99.4%, where
-the missing fraction *was* the Dockerfile). The self-test matches 119 function definitions across 18
-of 28 scanned files in `src/aedifex/`; CI enforces floors well below those numbers so ordinary churn
-never trips them while a real breakage collapses them to zero.
+Measured after the fix, in CI: 255 rules over 90 targets, 0 findings, **parsed lines ~100.0%**
+(previously ~99.4%, where the missing fraction *was* the Dockerfile). The self-test reported 119
+function definitions across 18 of 28 scanned files in `src/aedifex/` with 0 scanner errors, matching
+the local run exactly. CI enforces floors well below those numbers, so ordinary churn never trips
+them while a real breakage collapses them to zero.
 
 **What the gate does not reach.** Test code is outside the scan, because Semgrep's default ignore
 list excludes test directories. That is acceptable — test code does not ship, and fixtures containing
