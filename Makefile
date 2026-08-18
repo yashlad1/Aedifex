@@ -41,12 +41,15 @@ typecheck: ## Run mypy in strict mode
 	$(VENV)/bin/mypy
 
 test: ## Run unit tests (no database needed)
-	$(PYTHON) -m pytest tests/unit -q
+	# No -q here: pyproject's addopts already sets it, and a second -q suppresses the summary
+	# line, so CI logs recorded coverage but never how many tests ran. A silently uncollected
+	# file would have left the suite green with fewer tests and nothing to see (rule 81f).
+	$(PYTHON) -m pytest tests/unit
 
 test-integration: ## Run integration tests (requires PostgreSQL)
 	# REQUIRE_INTEGRATION_TESTS turns an unexpected skip into a failure, so "it passed" cannot
 	# mean "it never ran". Drop the variable to allow skipping when no database is available.
-	REQUIRE_INTEGRATION_TESTS=1 $(PYTHON) -m pytest tests/integration -q -m integration
+	REQUIRE_INTEGRATION_TESTS=1 $(PYTHON) -m pytest tests/integration -m integration
 
 test-all: ## Run the whole suite
 	$(PYTHON) -m pytest -q
