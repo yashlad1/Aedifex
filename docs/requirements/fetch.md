@@ -3,14 +3,16 @@
 Derived from [the threat model](../security/threat-model-http-fetch.md). Every requirement states
 a number or a decidable condition, so "done" is testable rather than asserted.
 
-Status: **the guard, the pure policy layer, and the transport are implemented** — SSRF validation
-(FR-100–109), timeout budget, retry classification, redirect policy, and the socket-opening boundary
-(FR-170–185).
+Status: **the guard, the pure policy layer, the transport, and both loops are implemented** — SSRF
+validation (FR-100–109), timeout budget, retry classification, redirect policy, the socket-opening
+boundary (FR-170–185), the retry controller, and the redirect controller.
 
-Still Planned: the **loops** that act on these policies — the retry controller and the redirect
-controller. That split is deliberate: every decision was pure and
-exhaustively tested before anything could open a socket, and the thing that opens sockets owns no
-policy of its own.
+The order was deliberate: every decision was pure and exhaustively tested before anything could open
+a socket, and the thing that opens sockets owns no policy of its own. The loops came last and add no
+rules — they sequence the decisions that were already made and tested elsewhere.
+
+Still Planned: the adversarial integration suite (NFR-111), which exercises these paths against a
+local server rather than a scripted transport.
 
 This file was written before any of the code, and the requirements above were not edited to match
 what was built.
@@ -35,12 +37,12 @@ what was built.
 | ID | Requirement | Status |
 | --- | --- | --- |
 | FR-110 | Automatic redirect following shall be disabled in the underlying client; redirects shall be followed only by our own loop. | Implemented — `follow_redirects=False`; `TestRedirectsAreNotFollowed` asserts each of 301/302/303/307/308 is returned as a response and that the server received exactly one request |
-| FR-111 | Every redirect hop shall re-enter validation from FR-100 step 1, including the hostname allowlist. | Implemented (policy) — `RedirectPolicy.evaluate` returns a URL and states that re-validation is required; it never grants permission. The loop lands with the transport |
-| FR-112 | Redirect chains shall be limited to 5 hops; exceeding the limit shall fail the request. | Implemented (policy) — `TestHopLimit`, default 5 |
-| FR-113 | A redirect loop shall be detected and shall fail rather than exhaust the hop budget silently. | Implemented (policy) — `TestLoopDetection`, detected explicitly rather than by exhausting the hop cap |
-| FR-114 | On a cross-host redirect, request headers shall be rebuilt rather than carried over. | Planned |
-| FR-115 | The full redirect chain shall be recorded, so the requested URL and the answering URL are both retained as provenance. | Planned |
-| FR-116 | A redirect that downgrades transport (`https` → `http`) shall be rejected unless the source has explicitly accepted an insecure channel. | Implemented — `TestTransportDowngrade`; permission comes from the registry's `allow_insecure_transport`, never from an HTTP library default |
+| FR-111 | Every redirect hop shall re-enter validation from FR-100 step 1, including the hostname allowlist. | Implemented — `RedirectController` calls `validate_url` for every hop **including the first**, so there is one validation path rather than two. Proven by a recording transport and a recording resolver: a redirect to a permitted hostname resolving to `169.254.169.254`, loopback, RFC1918, CGNAT, `::1`, or a mixed answer is refused *after* the lookup and the transport is never asked for it. Off-allowlist and lookalike hosts (`evilcpwd.test`) are refused *before* the lookup |
+| FR-112 | Redirect chains shall be limited to 5 hops; exceeding the limit shall fail the request. | Implemented — enforced by the loop, not only decided by the policy: the transport is asked for exactly 6 requests at the default cap and exactly 3 at a cap of 2 |
+| FR-113 | A redirect loop shall be detected and shall fail rather than exhaust the hop budget silently. | Implemented — two checks, both rejecting. The policy compares the resolved `Location` against the chain; the controller also compares the **canonical** URL validation produced, which catches a cycle disguised by an explicit default port or a change of host casing that the string comparison lets through |
+| FR-114 | On a cross-host redirect, request headers shall be rebuilt rather than carried over. | Implemented — dropped on a host change and kept when only the port or the casing differs. The host is taken with `urlsplit`, so the userinfo in `https://cpwd.test@evil.test/` cannot pose as the recipient; anything unparseable counts as a crossing. Once dropped they stay dropped for the rest of the chain |
+| FR-115 | The full redirect chain shall be recorded, so the requested URL and the answering URL are both retained as provenance. | Implemented — `ChainResult` keeps the caller's URL verbatim, the canonical URL that answered, and a `RedirectHop` per request carrying its status, its raw unresolved `Location`, and its attempt records. A rejection carries the chain up to the refusal, so "refused at hop 3" and "refused immediately" are distinguishable |
+| FR-116 | A redirect that downgrades transport (`https` → `http`) shall be rejected unless the source has explicitly accepted an insecure channel. | Implemented — refused by default and followed when the source set `allow_insecure_transport`, asserted through the loop as well as in the policy. `http` → `https` needs no permission. Permission comes from the registry, never from an HTTP library default |
 
 ## Transport
 
@@ -84,7 +86,7 @@ The layer that opens sockets, and nothing else. See [ADR 0011](../adr/0011-trans
 | FR-132 | Concurrent requests shall be bounded globally and per source. | per source from `max_concurrency`; global from `max_global_concurrency` (default 8) | Implemented — verified with real threads: a second request is observed to block while the ceiling is full and to proceed once it frees, per source and globally |
 | FR-133 | There shall be no unbounded concurrency anywhere in the fetch path. | — | Implemented — every acquisition goes through a bounded semaphore, and waiting for one is itself bounded by the request's deadline rather than blocking indefinitely |
 | FR-134 | Connections shall be pooled and reused across requests to one host. | — | **Deliberately not met.** This requirement is in direct tension with the SSRF design and the security decision wins: httpcore keys its pool by `(scheme, address, port)`, so two hostnames behind one address could share a TLS session verified for the first. Reuse stays off until pool identity includes the validated hostname (FR-181, [ADR 0011](../adr/0011-transport-boundary.md)). Recorded as unmet rather than reworded to look satisfied |
-| FR-135 | Rate limiting shall apply to retries and redirect hops, not only to initial requests. | — | Implemented for retries — the controller takes a slot per *attempt*, asserted by counting acquisitions across a 3-attempt sequence, and releases it before the backoff so a deliberate pause does not hold capacity. Redirect hops close with the redirect controller |
+| FR-135 | Rate limiting shall apply to retries and redirect hops, not only to initial requests. | — | Implemented — a slot per *attempt* and a slot per *hop*, asserted by counting acquisitions across a 3-attempt sequence and across a 3-hop chain. The slot is released before the backoff and before the next hop, so a deliberate pause does not hold capacity; a 3-hop chain completes under a per-source concurrency limit of 1, which it could not if a hop held its slot |
 
 ## Retries
 
