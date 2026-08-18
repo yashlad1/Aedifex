@@ -2397,6 +2397,67 @@ assert it is *rejected*, not that it is absent from the output.
 
 ⸻
 
+81c. Verification Gates Run Before Reporting
+
+Ordering inside a CI job is a correctness property, not a matter of taste.
+
+BUILD
+  ↓
+VERIFY
+  ↓
+SECURITY GATES
+  ↓
+SMOKE TEST
+  ↓
+ARTIFACT VALIDATION
+  ↓
+ONLY THEN
+SARIF upload / SBOM publication / reports
+
+Reporting is observational. It must never be positioned where its failure can prevent a
+verification step from running.
+
+This rule exists because it was violated. The container job uploaded a Trivy SARIF before running
+its gates, the upload failed (code scanning is unavailable on this plan), and the SBOM, the
+importability guard, the production-hardening guard, and the smoke test were all **skipped** — while
+the image itself had built successfully. A genuine regression could have passed through, and the
+job would have looked like a scanning problem.
+
+If a reporting step fails, the build may report that failure. It must not gate the checks that
+establish the artifact is correct and safe.
+
+Corollary: a job that is green only on one branch is not a gate. The pull-request path and the
+default-branch path must both be exercised, because they carry different permissions and different
+event payloads. `main` was green for days while every pull request failed two jobs, because pushes
+never exercised the API call that pull requests require.
+
+⸻
+
+81d. Retry Never Changes a Security Classification
+
+An outcome that a security control has refused must never become retryable because a higher layer
+saw an exception rather than a decision.
+
+Never retryable, regardless of status code, headers, or what a controller believes:
+
+SSRF rejection
+TLS verification failure
+invalid redirect target
+oversized response
+malformed authority
+content rejected as unsafe
+cancellation
+
+A retry is for a condition that may plausibly differ next time. A refusal is a conclusion, and
+repeating it only reaches the same conclusion more loudly — while giving a hostile server a way to
+convert a single refusal into a loop.
+
+Practically: classification lives in one pure policy, the controller consumes its verdict, and the
+controller has no path to override it. A controller that can reinterpret a refusal as transient has
+reintroduced the vulnerability the refusal prevented.
+
+⸻
+
 Aedifex IP / Patent Readiness Requirements
 
 These requirements apply alongside the engineering constitution above. They are recordkeeping

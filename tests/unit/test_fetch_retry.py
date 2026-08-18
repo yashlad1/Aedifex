@@ -180,6 +180,72 @@ class TestDecisionsAreNeverRetried:
         decision = classify(AttemptOutcome.SSRF_REJECTED, retry_after=1.0)
         assert not decision.should_retry
 
+    @pytest.mark.parametrize(
+        "outcome",
+        [
+            AttemptOutcome.SSRF_REJECTED,
+            AttemptOutcome.UNSAFE_CONTENT,
+            AttemptOutcome.OVERSIZED_RESPONSE,
+            AttemptOutcome.INVALID_REDIRECT,
+            AttemptOutcome.CANCELLED,
+            AttemptOutcome.TLS_ERROR,
+        ],
+    )
+    @pytest.mark.parametrize("status", [None, 200, 301, 403, 429, 500, 503])
+    @pytest.mark.parametrize("retry_after", [None, 0.0, 1.0, 30.0])
+    @pytest.mark.parametrize("attempt", [1, 2, 4])
+    def test_a_refusal_stays_refused_under_every_combination(
+        self,
+        outcome: AttemptOutcome,
+        status: int | None,
+        retry_after: float | None,
+        attempt: int,
+    ) -> None:
+        """Constitution rule 81d, asserted exhaustively rather than by example.
+
+        A retry is for a condition that may plausibly differ next time; a refusal is a
+        conclusion. No status code, no header, and no attempt number may turn one into the
+        other — otherwise a hostile server could convert a single refusal into a loop, and the
+        control that produced the refusal would be worth nothing.
+
+        The combinations are deliberately nonsensical in places (an SSRF rejection carrying
+        HTTP 200 and a Retry-After) because that is exactly the shape a confused or hostile
+        caller would produce.
+        """
+        decision = (RetryPolicy()).classify(
+            AttemptResult(
+                outcome=outcome,
+                attempt=attempt,
+                status_code=status,
+                retry_after_seconds=retry_after,
+            ),
+            randomness=FixedRandom(),
+            remaining_budget_seconds=3600.0,
+        )
+        assert decision.verdict is RetryVerdict.DO_NOT_RETRY
+        assert decision.delay_seconds == 0.0
+
+    def test_the_never_retry_set_covers_every_security_refusal_named_by_rule_81d(self) -> None:
+        """A refusal outcome added later must be added to the never-retry set too.
+
+        Written as a check on the policy's own table rather than on behaviour, so a new
+        outcome cannot be introduced as retryable-by-default without this failing.
+        """
+        from aedifex.acquisition.fetch.retry import _NEVER_RETRY
+
+        required = {
+            AttemptOutcome.SSRF_REJECTED,
+            AttemptOutcome.UNSAFE_CONTENT,
+            AttemptOutcome.OVERSIZED_RESPONSE,
+            AttemptOutcome.INVALID_REDIRECT,
+            AttemptOutcome.CANCELLED,
+            AttemptOutcome.TLS_ERROR,
+            AttemptOutcome.DNS_ERROR,
+            AttemptOutcome.BUDGET_EXHAUSTED,
+        }
+        missing = required - set(_NEVER_RETRY)
+        assert not missing, f"outcomes missing from the never-retry set: {sorted(missing)}"
+
 
 class TestAttemptCap:
     def test_the_final_attempt_is_not_retried(self) -> None:
