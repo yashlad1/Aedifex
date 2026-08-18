@@ -128,6 +128,8 @@ sources:
       material here: they are the reference data against which BOQ line items and material
       grades can be checked.
 
+  # See notes: reviewed technically on 2026-08-18 and still disabled. The tender search is
+  # CAPTCHA-gated and the public API is POST-only, which the frozen fetch layer cannot send.
   - id: nhai
     name: National Highways Authority of India (NHAI)
     description: >
@@ -161,5 +163,35 @@ sources:
       - inspection_report
     file_formats: [pdf, xlsx, zip]
     notes: >
-      Highway projects are a good fit for the material-certificate and inspection-record
-      rules, since bitumen, aggregate, and steel grades are specified explicitly.
+      TECHNICAL REVIEW 2026-08-18. Left unverified deliberately: the owner approved this source
+      before these findings existed, and two of them change what approval would mean. Recorded here
+      so the decision is made with them rather than around them.
+
+      (1) robots.txt returns HTTP 404 — there is no robots.txt, so nothing is disallowed and
+      politeness rests entirely on the rate limits above.
+
+      (2) The site is an Angular single-page app over Drupal. The HTML shell contains no content and
+      six hrefs, all assets, so HTML link discovery finds zero documents. There is no sitemap.xml.
+      The terms of use, privacy policy, copyright policy and disclaimer exist only as client-side
+      routes: the server answers 404 for /terms-conditions and the rest, so they are readable in a
+      browser and by no HTTP client. A terms review here cannot be automated, by anybody.
+
+      (3) The app calls a JSON API at https://nhai.gov.in/nhai/api. Tender data comes from
+      `tenderlist`, and it is a POST with a multipart form body — not a GET. The frozen fetch
+      subsystem has no request-body support, so collecting from this source requires extending it.
+      That is a missing feature rather than a defect, so it is a decision about the freeze and not a
+      bug fix.
+
+      (4) The filtered `tenderlist` call sends `captcha_page` and `verification` parameters, as do
+      `news` and `press-release`. The filtered tender search is therefore CAPTCHA-gated, and
+      DATA_SOURCES.md forbids bypassing a CAPTCHA regardless of review outcome — that path is
+      permanently out of scope, not pending. One variant does not send them: the home-page tab call,
+      which posts only `language` and `totalrecord=10`. That path appears genuinely public, and it
+      returns the ten most recent tenders — a thin corpus, and the only part of this source that
+      could ever be collected.
+
+      Circulars live on library.nhai.org, a separate host that would need an additional_hosts entry
+      and its own review; it has not been examined.
+
+      Highway projects remain a good fit for the material-certificate and inspection-record rules,
+      since bitumen, aggregate, and steel grades are specified explicitly.
