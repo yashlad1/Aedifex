@@ -72,7 +72,11 @@ from typing import ClassVar, Final, Protocol, runtime_checkable
 
 from aedifex.acquisition.fetch.guard import ValidatedTarget
 from aedifex.acquisition.fetch.retry import AttemptOutcome
-from aedifex.acquisition.fetch.timing import TimeoutBudget, TimeoutBudgetExhaustedError
+from aedifex.acquisition.fetch.timing import (
+    Deadline,
+    TimeoutBudget,
+    TimeoutBudgetExhaustedError,
+)
 from aedifex.errors import AcquisitionError
 
 __all__ = [
@@ -82,7 +86,6 @@ __all__ = [
     "BudgetExhaustedError",
     "ConnectTimeoutError",
     "ConnectionFailedError",
-    "Deadline",
     "ProtocolError",
     "RawResponse",
     "ReadTimeoutError",
@@ -254,24 +257,6 @@ class UnclassifiedTransportError(TransportError):
     """
 
     outcome: ClassVar[AttemptOutcome] = AttemptOutcome.TRANSPORT_UNCLASSIFIED
-
-
-@runtime_checkable
-class Deadline(Protocol):
-    """The read-only face of a time budget, as the transport sees it.
-
-    Narrow on purpose. The transport must be able to ask "is there time left?" without being able
-    to extend, reset, or restart anything — resetting a budget across attempts is the exact bug
-    :class:`~aedifex.acquisition.fetch.timing.TimeoutBudget` exists to prevent, so the socket layer
-    is handed no method that could do it.
-    """
-
-    @property
-    def remaining_seconds(self) -> float: ...
-
-    def check(self) -> None:
-        """Raise if no time remains."""
-        ...
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,8 +7,8 @@ Status: **the guard, the pure policy layer, and the transport are implemented** 
 (FR-100–109), timeout budget, retry classification, redirect policy, and the socket-opening boundary
 (FR-170–185).
 
-Still Planned: the **loops** that act on these policies — retry controller, redirect controller, and
-the rate limiter. That split is deliberate: every decision was pure and
+Still Planned: the **loops** that act on these policies — the retry controller and the redirect
+controller. That split is deliberate: every decision was pure and
 exhaustively tested before anything could open a socket, and the thing that opens sockets owns no
 policy of its own.
 
@@ -79,12 +79,12 @@ The layer that opens sockets, and nothing else. See [ADR 0011](../adr/0011-trans
 
 | ID | Requirement | Target | Status |
 | --- | --- | --- | --- |
-| FR-130 | Requests shall be rate-limited per source using that source's registry `rate_limit`. | — | Planned |
-| FR-131 | A minimum delay between consecutive requests to one source shall be enforced. | from `min_delay_seconds` | Planned |
-| FR-132 | Concurrent requests shall be bounded globally and per source. | per source from `max_concurrency` | Planned |
-| FR-133 | There shall be no unbounded concurrency anywhere in the fetch path. | — | Planned |
-| FR-134 | Connections shall be pooled and reused across requests to one host. | — | Planned |
-| FR-135 | Rate limiting shall apply to retries and redirect hops, not only to initial requests. | — | Planned |
+| FR-130 | Requests shall be rate-limited per source using that source's registry `rate_limit`. | — | Implemented — `RateLimits.from_source` reads the source's own entry; a test asserts the registry defaults survive the translation unchanged |
+| FR-131 | A minimum delay between consecutive requests to one source shall be enforced. | from `min_delay_seconds` | Implemented — plus a **rolling** 60-second window for `requests_per_minute`, deliberately not a fixed minute: a fixed one permits a double-rate burst across its boundary. The longer of the two waits wins |
+| FR-132 | Concurrent requests shall be bounded globally and per source. | per source from `max_concurrency`; global from `max_global_concurrency` (default 8) | Implemented — verified with real threads: a second request is observed to block while the ceiling is full and to proceed once it frees, per source and globally |
+| FR-133 | There shall be no unbounded concurrency anywhere in the fetch path. | — | Implemented — every acquisition goes through a bounded semaphore, and waiting for one is itself bounded by the request's deadline rather than blocking indefinitely |
+| FR-134 | Connections shall be pooled and reused across requests to one host. | — | **Deliberately not met.** This requirement is in direct tension with the SSRF design and the security decision wins: httpcore keys its pool by `(scheme, address, port)`, so two hostnames behind one address could share a TLS session verified for the first. Reuse stays off until pool identity includes the validated hostname (FR-181, [ADR 0011](../adr/0011-transport-boundary.md)). Recorded as unmet rather than reworded to look satisfied |
+| FR-135 | Rate limiting shall apply to retries and redirect hops, not only to initial requests. | — | Partial — the limiter is designed to be taken once per *attempt* and its docstring says so, but nothing yet enforces that the retry and redirect controllers do it. Closes when those controllers land |
 
 ## Retries
 

@@ -19,13 +19,14 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Final, Protocol
+from typing import Final, Protocol, runtime_checkable
 
 from aedifex.errors import AcquisitionError
 
 __all__ = [
     "MAX_SERVER_REQUESTED_DELAY_SECONDS",
     "Clock",
+    "Deadline",
     "MonotonicClock",
     "RandomSource",
     "Sleeper",
@@ -123,6 +124,24 @@ class TimeoutPolicy:
                 f"total_seconds={self.total_seconds} is smaller than one attempt "
                 f"(connect {self.connect_seconds} + read {self.read_seconds})"
             )
+
+
+@runtime_checkable
+class Deadline(Protocol):
+    """The read-only face of a time budget, as the transport sees it.
+
+    Narrow on purpose. The transport must be able to ask "is there time left?" without being able
+    to extend, reset, or restart anything — resetting a budget across attempts is the exact bug
+    :class:`~aedifex.acquisition.fetch.timing.TimeoutBudget` exists to prevent, so the socket layer
+    is handed no method that could do it.
+    """
+
+    @property
+    def remaining_seconds(self) -> float: ...
+
+    def check(self) -> None:
+        """Raise if no time remains."""
+        ...
 
 
 @dataclass(slots=True)

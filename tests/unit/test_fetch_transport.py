@@ -59,6 +59,7 @@ from aedifex.acquisition.fetch.retry import (
     RetryVerdict,
 )
 from aedifex.acquisition.fetch.timing import (
+    Deadline,
     MonotonicClock,
     SystemRandomSource,
     TimeoutBudget,
@@ -71,7 +72,6 @@ from aedifex.acquisition.fetch.transport import (
     BudgetExhaustedError,
     ConnectionFailedError,
     ConnectTimeoutError,
-    Deadline,
     ProtocolError,
     RawResponse,
     ReadTimeoutError,

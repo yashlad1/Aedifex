@@ -123,6 +123,16 @@ class Settings(BaseSettings):
     # These are hard ceilings applied to untrusted remote content (see SECURITY.md).
     max_download_bytes: int = Field(default=256 * 1024 * 1024, ge=1024, le=2 * 1024**30)
     request_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
+    max_global_concurrency: int = Field(
+        default=8,
+        ge=1,
+        le=64,
+        description=(
+            "Ceiling on in-flight outbound requests across all sources combined. Per-source "
+            "limits come from each source's registry entry; this bounds the total, so enabling "
+            "twenty sources cannot multiply into twenty simultaneous crawls."
+        ),
+    )
     user_agent: str = Field(
         default="AedifexBot/0.1 (+https://example.invalid/bot; contact: ops@example.invalid)",
         min_length=10,

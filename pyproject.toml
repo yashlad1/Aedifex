@@ -46,6 +46,11 @@ dev = [
     # Issues a throwaway CA and server certificates so the TLS path is tested with a real
     # handshake. Mocking TLS would leave the security-critical half of the transport unverified.
     "trustme>=1.2,<2",
+    # Turns a hung test into a failed test. The fetch layer is full of semaphores, deadlines, and
+    # sockets, and a bug that loses a slot blocks forever rather than failing — which in CI means
+    # a job that runs until the platform kills it and reports nothing useful. Twice during the
+    # rate limiter this cost ten minutes and produced no verdict.
+    "pytest-timeout>=2.3,<3",
 ]
 
 [build-system]
@@ -131,7 +136,10 @@ warn_required_dynamic_aliases = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers --strict-config"
+# timeout is generous on purpose: it exists to catch a hang, not to police slow tests. The whole
+# unit suite runs in about four seconds, so 60s per test only ever fires on something genuinely
+# stuck (rule 81f — a gate that hangs reports nothing).
+addopts = "-q --strict-markers --strict-config --timeout=60"
 markers = [
     "integration: requires live infrastructure (PostgreSQL, object storage)",
     "e2e: full pipeline test across multiple subsystems",

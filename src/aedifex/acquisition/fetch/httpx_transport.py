@@ -82,14 +82,13 @@ import certifi
 import httpx
 
 from aedifex.acquisition.fetch.guard import ValidatedTarget
-from aedifex.acquisition.fetch.timing import TimeoutBudgetExhaustedError
+from aedifex.acquisition.fetch.timing import Deadline, TimeoutBudgetExhaustedError
 from aedifex.acquisition.fetch.transport import (
     ALLOWED_METHODS,
     DEFAULT_MAX_RESPONSE_BYTES,
     BudgetExhaustedError,
     ConnectionFailedError,
     ConnectTimeoutError,
-    Deadline,
     ProtocolError,
     RawResponse,
     ReadTimeoutError,

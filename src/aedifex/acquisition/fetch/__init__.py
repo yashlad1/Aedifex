@@ -66,6 +66,7 @@ from aedifex.acquisition.fetch.retry import (
 from aedifex.acquisition.fetch.timing import (
     MAX_SERVER_REQUESTED_DELAY_SECONDS,
     Clock,
+    Deadline,
     MonotonicClock,
     RandomSource,
     Sleeper,
@@ -82,7 +83,6 @@ from aedifex.acquisition.fetch.transport import (
     BudgetExhaustedError,
     ConnectionFailedError,
     ConnectTimeoutError,
-    Deadline,
     ProtocolError,
     RawResponse,
     ReadTimeoutError,
