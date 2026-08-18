@@ -48,6 +48,7 @@ __all__ = [
     "FetchedPage",
     "HtmlLinkDiscovery",
     "LinkKind",
+    "is_document_url",
     "known_strategies",
     "strategy_for",
 ]
@@ -202,6 +203,17 @@ class HtmlLinkDiscovery:
         if self._follow and not any(pattern.search(path) for pattern in self._follow):
             return ignored("path matches no follow pattern")
         return DiscoveredLink(url=url, kind=LinkKind.PAGE, depth=page.depth + 1, found_on=page.url)
+
+
+def is_document_url(url: str, formats: frozenset[FileFormat]) -> bool:
+    """Whether a queued URL is a document to acquire rather than a page to read for links.
+
+    The frontier stores no kind column, and deliberately: the answer is derivable from the URL and
+    the source's permitted formats, so it stays correct across a restart without a migration and
+    without a run holding page URLs in memory where an interruption would lose them.
+    """
+    file_format = _format_of(urlsplit(url).path or "/")
+    return file_format is not None and file_format in formats
 
 
 def _format_of(path: str) -> FileFormat | None:
