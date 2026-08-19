@@ -231,6 +231,21 @@ class Settings(BaseSettings):
             raise ValueError("invalid production configuration: " + "; ".join(problems))
         return self
 
+    def user_agent_names_a_real_contact(self) -> bool:
+        """Whether the User-Agent offers a contact a site operator could actually reach.
+
+        The field validator already requires the *shape* of a contact — an address or a URL — and
+        the default satisfies it with ``example.invalid``, which is worse than nothing: an operator
+        who tries to reach us about crawler traffic gets a bounce. Production configuration rejects
+        that outright; every other environment keeps the placeholder so local runs work.
+
+        So the check has to happen where it matters, at the point where a real portal is about to be
+        contacted, and the crawler asks this before any non-dry run. DATA_SOURCES.md lists crawling
+        without a reachable contact under "Hard limits", and until this existed the only thing
+        enforcing it was remembering to.
+        """
+        return not _contains_placeholder_token(self.user_agent)
+
     def safe_database_url(self) -> str:
         """Return the database DSN with every password masked, for logging."""
         url = str(self.database_url)

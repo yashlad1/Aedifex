@@ -17,14 +17,15 @@ import uuid
 from collections.abc import Iterator
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import boto3
 import pytest
 from alembic import command
 from alembic.config import Config
 from botocore.config import Config as BotoConfig
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, NullPool, create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -48,14 +49,77 @@ def _require_or_skip(message: str) -> None:
     pytest.skip(message)
 
 
+_TEST_DATABASE_SUFFIX: Final[str] = "_test"
+
+
+def _for_tests(settings: Settings) -> Settings:
+    """Redirect the configured database to a dedicated one for tests, creating it if absent.
+
+    These fixtures ``TRUNCATE`` tables, and until this existed they truncated whatever
+    ``AEDIFEX_DATABASE_URL`` pointed at — which is the same database a real crawl writes to. That is
+    not hypothetical: a test run silently deleted the provenance for documents acquired earlier in a
+    session, leaving their objects orphaned in the bucket. Content addressing meant nothing was
+    corrupted, and the corpus was still gone.
+
+    So the test database is derived rather than configured. Nothing an operator forgets to set can
+    point a truncating fixture at real data, and CI needs no new variable.
+    """
+    url = make_url(str(settings.database_url))
+    name = url.database or "aedifex"
+    if name.endswith(_TEST_DATABASE_SUFFIX):
+        return settings
+    return settings.model_copy(
+        update={
+            "database_url": url.set(database=f"{name}{_TEST_DATABASE_SUFFIX}").render_as_string(
+                hide_password=False
+            )
+        }
+    )
+
+
+def _create_database_if_absent(settings: Settings) -> None:
+    """Create the test database, connecting to ``postgres`` to do it.
+
+    ``CREATE DATABASE`` cannot run inside a transaction, hence the autocommit isolation level.
+    """
+    url = make_url(str(settings.database_url))
+    target = url.database
+    maintenance = create_engine(
+        url.set(database="postgres"), isolation_level="AUTOCOMMIT", poolclass=NullPool
+    )
+    try:
+        with maintenance.connect() as connection:
+            exists = connection.execute(
+                text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": target}
+            ).scalar_one_or_none()
+            if exists is None:
+                connection.execute(text(f'CREATE DATABASE "{target}"'))
+    finally:
+        maintenance.dispose()
+
+
+def _refuse_to_truncate_real_data(engine: Engine) -> None:
+    """Assert the database about to be emptied is a test one. The last line of defence."""
+    name = engine.url.database or ""
+    if not name.endswith(_TEST_DATABASE_SUFFIX):
+        raise AssertionError(
+            f"refusing to truncate {name!r}: these fixtures empty tables, and a database whose "
+            f"name does not end in {_TEST_DATABASE_SUFFIX!r} may hold an acquired corpus"
+        )
+
+
 @pytest.fixture(scope="module")
 def settings() -> Settings:
-    return Settings(environment=Environment.TEST)
+    return _for_tests(Settings(environment=Environment.TEST))
 
 
 @pytest.fixture(scope="module")
 def engine(settings: Settings) -> Iterator[Engine]:
     """A database migrated to ``head``."""
+    try:
+        _create_database_if_absent(settings)
+    except (OperationalError, DBAPIError) as error:
+        _require_or_skip(f"PostgreSQL is not reachable: {type(error).__name__}")
     candidate = build_engine(settings)
     try:
         with candidate.connect() as connection:
@@ -74,6 +138,7 @@ def engine(settings: Settings) -> Iterator[Engine]:
 @pytest.fixture
 def session(engine: Engine) -> Iterator[Session]:
     """A session whose tables are emptied afterwards, so tests cannot see each other's rows."""
+    _refuse_to_truncate_real_data(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as active:
         yield active

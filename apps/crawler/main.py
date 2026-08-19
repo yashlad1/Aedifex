@@ -48,7 +48,7 @@ from aedifex.acquisition.fetch.resolver import SystemResolver
 from aedifex.acquisition.pipeline import Acquirer
 from aedifex.acquisition.registry import get_registry
 from aedifex.config import Settings, get_settings
-from aedifex.errors import AedifexError
+from aedifex.errors import AedifexError, ConfigurationError
 from aedifex.infrastructure.database.session import build_engine
 from aedifex.infrastructure.observability.logging import configure_logging, get_logger
 from aedifex.infrastructure.storage.objects import RawObjectStore
@@ -125,6 +125,16 @@ def _sources() -> int:
 
 def _crawl(args: argparse.Namespace, settings: Settings) -> int:
     source = get_registry(settings).get(args.source_id)
+    if not args.dry_run and not settings.user_agent_names_a_real_contact():
+        # A fake contact is worse than an anonymous one: a site operator who tries to reach us about
+        # our traffic gets a bounce. Refused here rather than in Settings, because the default
+        # placeholder has to keep working for tests and local runs — what must not happen is sending
+        # it to a real portal.
+        raise ConfigurationError(
+            f"user_agent {settings.user_agent!r} carries a placeholder contact address. A crawl of "
+            f"a real source must offer a contact a site operator can reach (see DATA_SOURCES.md). "
+            f"Set AEDIFEX_USER_AGENT, or use --dry-run."
+        )
     limits = CrawlLimits(
         max_documents=args.max_documents,
         max_pages=args.max_pages,

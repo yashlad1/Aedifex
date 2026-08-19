@@ -32,6 +32,11 @@ from aedifex.domain.files import FileFormat
 from aedifex.infrastructure.database.models import CrawlJob, CrawlJobStatus, DiscoveredUrl, Document
 from aedifex.infrastructure.database.session import build_engine
 from aedifex.infrastructure.storage.keys import raw_key
+from tests.integration.conftest import (
+    _create_database_if_absent,
+    _for_tests,
+    _refuse_to_truncate_real_data,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -44,7 +49,13 @@ def digest_of(payload: bytes) -> str:
 
 @pytest.fixture(scope="module")
 def settings() -> Settings:
-    return Settings(environment=Environment.TEST)
+    """The dedicated test database, never whatever ``AEDIFEX_DATABASE_URL`` happens to point at.
+
+    This module downgrades to ``base`` and truncates every table, which is the most destructive
+    thing in the suite. It shares the redirection in ``conftest.py`` rather than repeating it, so
+    there is one rule about which database tests may destroy.
+    """
+    return _for_tests(Settings(environment=Environment.TEST))
 
 
 @pytest.fixture(scope="module")
@@ -58,7 +69,15 @@ def engine(settings: Settings) -> Iterator[Engine]:
     The variable is deliberately not prefixed ``AEDIFEX_``: unrecognised variables with that
     prefix are rejected by :class:`~aedifex.config.Settings` as configuration typos.
     """
+    try:
+        _create_database_if_absent(settings)
+    except (OperationalError, DBAPIError) as error:
+        message = f"PostgreSQL is not reachable: {type(error).__name__}"
+        if os.environ.get("REQUIRE_INTEGRATION_TESTS") == "1":
+            pytest.fail(f"{message}. REQUIRE_INTEGRATION_TESTS=1 forbids skipping.")
+        pytest.skip(message)
     candidate = build_engine(settings)
+    _refuse_to_truncate_real_data(candidate)
     try:
         with candidate.connect() as connection:
             connection.execute(text("SELECT 1"))

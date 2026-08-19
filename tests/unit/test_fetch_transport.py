@@ -744,9 +744,7 @@ class TestMethodPolicy:
     def test_the_allowlist_is_exactly_what_is_needed(self) -> None:
         assert {"GET", "HEAD", "POST"} == ALLOWED_METHODS
 
-    def test_a_post_must_carry_a_body_and_a_read_must_not(
-        self, transport: HttpxTransport
-    ) -> None:
+    def test_a_post_must_carry_a_body_and_a_read_must_not(self, transport: HttpxTransport) -> None:
         """Both mistakes are silent: an empty form answers "success" with an empty list."""
         with (
             pytest.raises(ValueError, match="POST requires a body"),
