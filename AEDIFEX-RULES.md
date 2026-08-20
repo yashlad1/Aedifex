@@ -528,7 +528,54 @@ prefer (B) unless a significant correctness or security risk remains unresolved.
 
 This rule overrides Rules 19–30 and Rules 80–81 whenever they would otherwise encourage
 verification beyond what is proportionate to the current implementation risk.
-⸻
+
+18b. Complete the Vertical Slice Before Broad Verification
+
+During active implementation, prioritize completing the planned architectural slice.
+
+Do not interrupt implementation to expand tests, documentation, ADRs, CI workflows, or verification
+unless:
+
+- a correctness defect blocks further work,
+- a security issue blocks further work,
+- or the implementation cannot safely continue.
+
+Prefer:
+
+implement
+↓
+
+implement
+↓
+
+implement
+↓
+
+focused self-check
+
+↓
+
+complete slice
+
+↓
+
+single documentation pass
+
+↓
+
+single verification pass
+
+↓
+
+commit
+
+rather than repeatedly switching between implementation and verification.
+
+This rule overrides workflow preferences but does not weaken required security or correctness
+requirements.
+
+
+----
 
 19. Tests Are Part of the Feature
 
@@ -546,6 +593,8 @@ failure-path
 tests.
 
 Not every feature needs every category, but the categories must be considered.
+
+--- 
 
 19a. Testing Is Risk-Based, Not Exhaustive
 
@@ -587,6 +636,8 @@ Once the externally meaningful invariant is adequately protected, stop testing a
 implementation.
 
 Testing must never become the critical path unless the subsystem's risk justifies it.
+
+--- 
 
 19b. No Test Expansion During Feature Sprint Without Need
 
