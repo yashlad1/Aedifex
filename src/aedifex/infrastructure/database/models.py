@@ -56,6 +56,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from aedifex.domain.documents import DocumentCategory, DocumentState, DocumentType
+from aedifex.domain.evidence import DocumentRole, FactKind, RelationshipType
 from aedifex.domain.files import FileFormat
 
 __all__ = [
@@ -109,6 +110,9 @@ _DOCUMENT_TYPE = _enum_column(DocumentType, length=48)
 _DOCUMENT_CATEGORY = _enum_column(DocumentCategory, length=32)
 _FILE_FORMAT = _enum_column(FileFormat, length=16)
 _CRAWL_JOB_STATUS = _enum_column(CrawlJobStatus, length=16)
+_FACT_KIND = _enum_column(FactKind, length=24)
+_DOCUMENT_ROLE = _enum_column(DocumentRole, length=32)
+_RELATIONSHIP_TYPE = _enum_column(RelationshipType, length=24)
 
 _SHA256_HEX = "~ '^[0-9a-f]{64}$'"
 
@@ -242,6 +246,7 @@ class Document(Base):
     retrievals: Mapped[list[DocumentRetrieval]] = relationship(back_populates="document")
     facts: Mapped[list[ExtractedFact]] = relationship(back_populates="document")
     findings: Mapped[list[Finding]] = relationship(back_populates="document")
+    memberships: Mapped[list[ProjectDocument]] = relationship(back_populates="document")
 
     __table_args__ = (
         CheckConstraint(f"sha256 {_SHA256_HEX}", name="sha256_is_lower_hex"),
@@ -445,6 +450,15 @@ class ExtractedFact(Base):
     fact_type: Mapped[str] = mapped_column(String(64))
     """What the value is: ``estimated_cost``, ``bid_security``, ``nit_number``."""
 
+    kind: Mapped[FactKind] = mapped_column(
+        _FACT_KIND, default=FactKind.TEXT, server_default=text_clause("'text'"), index=True
+    )
+    """What kind of value it holds, independent of which field produced it (the shared fact model).
+
+    This is what lets one comparison serve every money fact rather than being rewritten per document
+    type: a cross-document rule selects on ``kind``, not on ``fact_type``.
+    """
+
     literal: Mapped[str] = mapped_column(String(512))
     """The text exactly as the document rendered it, so a parse can be argued with."""
 
@@ -496,8 +510,15 @@ class Finding(Base):
     __tablename__ = "findings"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+
+    # Exactly one of these is set. A single-document rule scopes its finding to that document; a
+    # cross-document rule scopes it to the project, because the conclusion belongs to neither
+    # document alone — "these two documents disagree" is not a fact about one of them.
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True, default=None
+    )
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, default=None
     )
 
     rule_id: Mapped[str] = mapped_column(String(64))
@@ -514,14 +535,35 @@ class Finding(Base):
 
     evaluated_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    document: Mapped[Document] = relationship(back_populates="findings")
+    document: Mapped[Document | None] = relationship(back_populates="findings")
+    project: Mapped[Project | None] = relationship(back_populates="findings")
     evidence: Mapped[list[FindingEvidence]] = relationship(
         back_populates="finding", cascade="all, delete-orphan"
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "document_id", "rule_id", "rule_version", name="one_finding_per_rule_version"
+        # Two partial uniques rather than one over both columns: a NULL never equals a NULL in
+        # PostgreSQL, so a plain UNIQUE(document_id, rule_id, rule_version) would permit unlimited
+        # duplicate project findings.
+        Index(
+            "uq_findings_document_rule",
+            "document_id",
+            "rule_id",
+            "rule_version",
+            unique=True,
+            postgresql_where=text_clause("document_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_findings_project_rule",
+            "project_id",
+            "rule_id",
+            "rule_version",
+            unique=True,
+            postgresql_where=text_clause("project_id IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "(document_id IS NULL) <> (project_id IS NULL)",
+            name="finding_scoped_to_exactly_one_subject",
         ),
         CheckConstraint("outcome IN ('pass', 'fail', 'inconclusive')", name="outcome_is_known"),
     )
@@ -549,3 +591,110 @@ class FindingEvidence(Base):
 
     finding: Mapped[Finding] = relationship(back_populates="evidence")
     fact: Mapped[ExtractedFact] = relationship()
+
+
+class Project(Base):
+    """A construction project: the boundary within which documents are compared.
+
+    The aggregation boundary the SRS asks for. A project is identified by an ``external_ref`` taken
+    from the documents themselves — for NHAI tenders, the tender number — so membership is
+    established by evidence rather than asserted. Two documents belong to one project because both
+    state the same identifier, and the fact that says so is stored with a page and a span.
+
+    Scoped deliberately: rules compare facts *within* a project and never across. Two projects that
+    happen to quote the same amount have nothing to say about each other, and a comparison that
+    crossed the boundary would manufacture findings out of coincidence.
+    """
+
+    __tablename__ = "projects"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[str] = mapped_column(String(64), index=True)
+    external_ref: Mapped[str] = mapped_column(String(256))
+    """The identifier the documents themselves use, e.g. a tender number. Never invented."""
+
+    name: Mapped[str | None] = mapped_column(Text, default=None)
+    established_by: Mapped[str] = mapped_column(String(128))
+    """How membership was determined, e.g. ``shared_fact:nit_number``. Never ``inferred``."""
+
+    first_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+    memberships: Mapped[list[ProjectDocument]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    relationships: Mapped[list[DocumentRelationship]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    findings: Mapped[list[Finding]] = relationship(back_populates="project")
+
+    __table_args__ = (
+        UniqueConstraint("source_id", "external_ref", name="one_project_per_source_reference"),
+    )
+
+
+class ProjectDocument(Base):
+    """One document's membership of one project, and the part it plays in it.
+
+    ``role`` defaults to ``unclassified`` and stays there unless something can establish it. A role
+    guessed from a filename or a page count would put an unsourced claim underneath every
+    relationship built on it.
+    """
+
+    __tablename__ = "project_documents"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
+    )
+    role: Mapped[DocumentRole] = mapped_column(_DOCUMENT_ROLE, default=DocumentRole.UNCLASSIFIED)
+    established_by: Mapped[str] = mapped_column(String(128))
+    linked_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    project: Mapped[Project] = relationship(back_populates="memberships")
+    document: Mapped[Document] = relationship(back_populates="memberships")
+
+
+class DocumentRelationship(Base):
+    """An explicit, stored relationship between two documents in one project.
+
+    First-class rather than derived on read, because a relationship is a claim about the world and
+    a claim needs provenance: ``established_by`` records what justified it. Nothing here is inferred
+    by a model — the only relationship currently derivable is ``same_tender``, from two documents
+    stating an identical identifier, which is exact string equality.
+
+    Symmetric relationships are stored once, in a canonical direction (lower document id first), so
+    that "A relates to B" and "B relates to A" cannot disagree.
+    """
+
+    __tablename__ = "document_relationships"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    from_document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE")
+    )
+    to_document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE")
+    )
+    relationship_type: Mapped[RelationshipType] = mapped_column(_RELATIONSHIP_TYPE)
+    established_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    project: Mapped[Project] = relationship(back_populates="relationships")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "from_document_id",
+            "to_document_id",
+            "relationship_type",
+            name="one_relationship_per_pair_and_type",
+        ),
+        CheckConstraint(
+            "from_document_id <> to_document_id", name="relationship_joins_two_documents"
+        ),
+    )

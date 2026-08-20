@@ -54,8 +54,15 @@ from aedifex.acquisition.registry import get_registry
 from aedifex.acquisition.registry.models import SourceDefinition
 from aedifex.config import Settings, get_settings
 from aedifex.errors import AedifexError, ConfigurationError
-from aedifex.extraction.runner import DEFAULT_MAX_PAGES, AnalysisOutcome, analyse_document
-from aedifex.infrastructure.database.models import Document, ExtractedFact
+from aedifex.extraction.projects import reconcile_projects
+from aedifex.extraction.runner import (
+    DEFAULT_MAX_PAGES,
+    AnalysisOutcome,
+    ProjectAnalysis,
+    analyse_document,
+    analyse_project,
+)
+from aedifex.infrastructure.database.models import Document, ExtractedFact, Project
 from aedifex.infrastructure.database.session import build_engine
 from aedifex.infrastructure.observability.logging import configure_logging, get_logger
 from aedifex.infrastructure.storage.objects import RawObjectStore
@@ -119,6 +126,14 @@ def _parser() -> argparse.ArgumentParser:
     target.add_argument("document_id", nargs="?", help="A document UUID from the catalog")
     target.add_argument(
         "--all", action="store_true", help="Analyse every acquired document, oldest first"
+    )
+    target.add_argument(
+        "--project", metavar="PROJECT_ID", help="Evaluate cross-document rules for one project"
+    )
+    target.add_argument(
+        "--all-projects",
+        action="store_true",
+        help="Reconcile projects from extracted identifiers, then evaluate every one",
     )
     analyse.add_argument("--max-pages", type=int, default=DEFAULT_MAX_PAGES)
     analyse.add_argument(
@@ -245,6 +260,10 @@ def _analyse(args: argparse.Namespace, settings: Settings) -> int:
     """
     engine = build_engine(settings)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
+
+    if args.project or args.all_projects:
+        return _analyse_projects(args, sessions)
+
     store = RawObjectStore(_s3(settings), bucket=settings.storage_bucket)
 
     with sessions() as session:
@@ -280,6 +299,94 @@ def _analyse(args: argparse.Namespace, settings: Settings) -> int:
             _print_analysis(session, outcome)
 
     return 1 if failures else 0
+
+
+def _analyse_projects(args: argparse.Namespace, sessions: sessionmaker[Session]) -> int:
+    """Evaluate cross-document rules, reconciling project membership first.
+
+    Reconciliation runs before evaluation for ``--all-projects``: a project that does not exist yet
+    cannot be evaluated, and membership derives from facts analysis has already stored. It is
+    idempotent, so doing it every time costs nothing and removes a step an operator can forget.
+    """
+    with sessions() as session:
+        if args.all_projects:
+            outcome = reconcile_projects(session)
+            session.commit()
+            print(f"RECONCILED\n  {outcome.describe()}\n")
+            project_ids = list(
+                session.execute(select(Project.id).order_by(Project.external_ref)).scalars()
+            )
+        else:
+            project_ids = [uuid.UUID(args.project)]
+
+        if not project_ids:
+            print("no projects; run `analyse --all` first so documents yield identifier facts")
+            return 0
+
+        failures = 0
+        for index, project_id in enumerate(project_ids):
+            if index:
+                print()
+            try:
+                analysis = analyse_project(session, project_id)
+                session.commit()
+            except AedifexError as error:
+                session.rollback()
+                failures += 1
+                print(f"{project_id}  ERROR  {error}")
+                continue
+            _print_project(session, analysis)
+
+    return 1 if failures else 0
+
+
+def _print_project(session: Session, analysis: ProjectAnalysis) -> None:
+    """Print a project's evidence chain: documents, relationships, compared facts, findings."""
+    project = analysis.project
+    print(f"PROJECT  {project.external_ref}")
+    print(f"  id {project.id}   source {project.source_id}")
+    print(f"  membership established by {project.established_by}")
+
+    print("\nDOCUMENTS")
+    for document in analysis.documents:
+        print(
+            f"  {(document.original_filename or str(document.id)):38} "
+            f"{document.size_bytes:>9} bytes  {document.id}"
+        )
+
+    print("\nRELATIONSHIPS")
+    if not analysis.relationships:
+        print("  (none: a project of one document has no pairs to relate)")
+    for link in analysis.relationships:
+        print(
+            f"  {analysis.filename(link.from_document_id)} "
+            f"--{link.relationship_type.value}--> {analysis.filename(link.to_document_id)}"
+        )
+        print(f"  {'':4}established by {link.established_by}")
+
+    print("\nFACTS")
+    for fact in sorted(analysis.facts, key=lambda f: (f.fact_type, str(f.document_id))):
+        value = f"{fact.numeric_value:,}" if fact.numeric_value is not None else fact.literal
+        print(
+            f"  {fact.fact_type:32} {value:>18}  [{fact.kind.value}]  "
+            f"{analysis.filename(fact.document_id)} p{fact.page}"
+        )
+
+    print("\nFINDINGS")
+    for finding in analysis.findings:
+        print(f"  {finding.rule_id} (v{finding.rule_version})")
+        print(f"    observed  {finding.observed}")
+        print(f"    expected  {finding.expected}")
+        print(f"    result    {finding.outcome.upper()}")
+        print(f"    {finding.summary}")
+        for citation in sorted(finding.evidence, key=lambda e: e.role):
+            cited = session.get(ExtractedFact, citation.fact_id)
+            if cited is None:
+                continue
+            print(
+                f"    evidence  {citation.role:26} {analysis.filename(cited.document_id)} "
+                f"p{cited.page}: {cited.snippet[:90]}"
+            )
 
 
 def _print_analysis(session: Session, outcome: AnalysisOutcome) -> None:

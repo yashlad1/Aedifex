@@ -65,3 +65,51 @@ the prescribed-share extractor's rejection of the 15%/5%/10% distractors; idempo
 (verified by running it twice and counting rows). The money parser, the two extraction defects found
 while building, and the ratio arithmetic are the parts that warrant tests first, because they are where
 a silent wrong number could reach a finding.
+
+---
+
+# Addendum — cross-document milestone (2026-08-20)
+
+## What the corpus can and cannot exercise
+
+**One project exists**, `NHAI/RO-CHD/2026-2027/BWN/21`, holding `NIT_1382.pdf` and `RFP_806.pdf`.
+Its two documents **agree** on both comparable facts, so running the pipeline exercises only the
+`PASS` path. The `FAIL` path — the reason the rule exists — is covered by
+`tests/unit/test_cross_document_agreement.py` rather than by real data, because no document in the
+corpus disagrees with another.
+
+The second tender (`.../JAL/22`) would have formed a second project, and is the one whose bid document
+states a 1% bid-security rate its own notice does not. Both of its documents are among the five
+objects orphaned by the earlier truncation incident, so neither is catalogued and neither can be
+grouped.
+
+## Not built
+
+- **Derived facts are not first-class.** A computed difference lives in a finding's `detail`, not in
+  a table, so two rules cannot share one derived value. This is the next architectural step named in
+  the recommendation and is deliberately deferred: the milestone's deliverables did not include it,
+  and inventing the table before a second rule needs it would be guessing at its shape.
+- **Roles are unassigned.** Every `project_documents.role` is `unclassified`. Page count and filename
+  would both distinguish a notice from a bid document, and both are heuristics that would put an
+  unsourced claim under every relationship built on them.
+- **Only `same_tender` is derivable.** The rest of `RelationshipType` is declared vocabulary. Nothing
+  in the corpus establishes `amends`, `supersedes`, `measures` or `claims_against`.
+- **No entity layer.** Facts attach to documents and documents to projects. There is no `Contract`,
+  `BOQItem`, or `Invoice` object, so a rule cannot yet say "this claim line exceeds its BOQ item".
+- **Projects never span sources.** Deliberate: two authorities can issue the same reference number
+  and they are not the same tender.
+
+## Defect found by execution
+
+The generated `downgrade` for migration `31ee35a5a943` failed with `NotNullViolation` as soon as one
+project-scoped finding existed, because restoring `findings.document_id NOT NULL` cannot succeed when
+a cross-document finding is present. The migration now deletes project-scoped findings first. That is
+sound because findings are derived and reproducible by re-running the analysis — no raw artifact,
+provenance row, or extracted fact is touched — but it is data loss in a downgrade and is called out in
+the migration itself.
+
+## Testing debt
+
+Verified by execution only: project reconciliation and its idempotency (two runs, `0 projects, 0
+memberships, 0 relationships created`), all five project API endpoints, and the CLI output. Covered by
+test: the four outcome paths of the agreement rule, including disagreement.

@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final
 
+from aedifex.domain.evidence import FactKind
 from aedifex.extraction.pdftext import DocumentText, PageText
 from aedifex.extraction.quantities import Amount, find_amounts
 
@@ -113,6 +114,12 @@ class ExtractedField:
     currency: str | None
     evidence: Evidence
     method: str
+    kind: FactKind = FactKind.TEXT
+    """What kind of value this is, independent of the field name (the shared fact model).
+
+    A cross-document rule selects on this rather than on ``name``, which is what lets one comparison
+    serve every money fact instead of being rewritten per document type.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +161,7 @@ def _amount_field(
         literal=amount.literal,
         value=amount.rupees,
         currency=CURRENCY_INR,
+        kind=FactKind.MONEY,
         evidence=Evidence(
             page=page.number,
             start=amount.start,
@@ -175,6 +183,7 @@ def _find_nit_number(pages: tuple[tuple[PageText, str], ...]) -> ExtractedField 
             literal=value,
             value=None,
             currency=None,
+            kind=FactKind.IDENTIFIER,
             evidence=Evidence(
                 page=page.number,
                 start=match.start("value"),
@@ -244,6 +253,7 @@ def _find_prescribed_share(
             percent = Decimal(match.group("percent"))
             return ExtractedField(
                 name=FIELD_PRESCRIBED_BID_SECURITY_SHARE,
+                kind=FactKind.PERCENTAGE,
                 literal=f"{match.group('percent')}% of estimated cost",
                 # Stored as a fraction, the same form the rule compares against.
                 value=percent / Decimal(100),

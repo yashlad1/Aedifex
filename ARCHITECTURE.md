@@ -88,6 +88,9 @@ Phase 0 is complete. Implemented and tested:
 | Facts, findings, evidence links | [extraction/store.py](src/aedifex/extraction/store.py), `extracted_facts` / `findings` / `finding_evidence` |
 | Deterministic rules and registry | [verification/](src/aedifex/verification/) |
 | Analysis pipeline | [extraction/runner.py](src/aedifex/extraction/runner.py) |
+| Shared fact model, relationship vocabulary | [domain/evidence.py](src/aedifex/domain/evidence.py) |
+| Projects, membership, document relationships | [extraction/projects.py](src/aedifex/extraction/projects.py), `projects` / `project_documents` / `document_relationships` |
+| Cross-document rules | [verification/cross_document.py](src/aedifex/verification/cross_document.py) |
 
 The pipeline is complete end to end and has been run against a real portal. NHAI's terms were
 reviewed and recorded (ADR 0006, rule 60), its tender API was reverse-engineered from the portal's own
@@ -103,9 +106,22 @@ is extracted as a fact with its own page and span, supplied to the rule as an in
 can be sourced the rule measures the ratio and returns `INCONCLUSIVE` rather than inventing a
 threshold to judge against.
 
+Documents are no longer reasoned about in isolation. Two documents belong to one **project** when
+both state the same tender identifier — exact string equality on an extracted fact, so the grouping
+is evidence rather than inference — and their relationship is stored as a row carrying what
+established it. A cross-document rule then compares facts across them and produces a finding scoped
+to the project, because "these two documents disagree" is not a fact about either one. Verified on
+two real NHAI documents of one tender: two files, one stored relationship, one finding whose evidence
+cites a page in each.
+
+A disagreement is **reported, never resolved**. The rule has no basis for deciding which document is
+right, so it states both values, cites both spans, and stops. And a project with nothing stated twice
+returns `INCONCLUSIVE`: nothing compared is not a pass.
+
 Not yet built: OCR (one acquired document is image-only), classification, archive expansion, synthetic
-generation, entities and relationships, the evidence graph, and the risk engine. Directories for those
-are created when their first real code lands, rather than kept as empty scaffolding.
+generation, derived facts as first-class rows, the entity layer above projects (Contract, BOQItem,
+Invoice), and the risk engine. Directories for those are created when their first real code lands,
+rather than kept as empty scaffolding.
 
 ## Key decisions and their reasons
 

@@ -29,14 +29,21 @@ from sqlalchemy.orm import Session
 from aedifex.domain.documents import DocumentState, assert_transition_allowed
 from aedifex.errors import ExtractionError
 from aedifex.extraction.pdftext import extract_text
-from aedifex.extraction.store import persist_facts, persist_finding
+from aedifex.extraction.store import persist_facts, persist_finding, persist_project_finding
 from aedifex.extraction.tender_notice import TenderNotice, extract_tender_notice
-from aedifex.infrastructure.database.models import Document, ExtractedFact, Finding
+from aedifex.infrastructure.database.models import (
+    Document,
+    DocumentRelationship,
+    ExtractedFact,
+    Finding,
+    Project,
+)
 from aedifex.infrastructure.observability.logging import get_logger
 from aedifex.infrastructure.storage.objects import RawObjectStore
 from aedifex.verification import evaluate_all
+from aedifex.verification.cross_document import evaluate_fact_agreement, load_project_facts
 
-__all__ = ["AnalysisOutcome", "analyse_document"]
+__all__ = ["AnalysisOutcome", "ProjectAnalysis", "analyse_document", "analyse_project"]
 
 _log = get_logger(__name__)
 
@@ -160,3 +167,60 @@ def _advance(document: Document, target: DocumentState) -> None:
         current = DocumentState.VALIDATED
     assert_transition_allowed(current, target)
     document.state = target
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectAnalysis:
+    """What evaluating one project's cross-document rules produced."""
+
+    project: Project
+    documents: tuple[Document, ...]
+    facts: tuple[ExtractedFact, ...]
+    relationships: tuple[DocumentRelationship, ...]
+    findings: tuple[Finding, ...]
+
+    def filename(self, document_id: uuid.UUID) -> str:
+        for document in self.documents:
+            if document.id == document_id:
+                return document.original_filename or str(document_id)
+        return str(document_id)
+
+
+def analyse_project(session: Session, project_id: uuid.UUID) -> ProjectAnalysis:
+    """Run the cross-document rules over one project's already-extracted facts.
+
+    Reads facts rather than documents: extraction has happened, and re-parsing PDFs to compare two
+    numbers would make the comparison depend on the extractor running twice identically rather than
+    on the stored evidence. Everything this rule cites is already persisted, which is what makes the
+    finding reproducible from the database alone.
+
+    Raises:
+        ExtractionError: if the project does not exist.
+    """
+    project_facts = load_project_facts(session, project_id)
+    if project_facts is None:
+        raise ExtractionError(f"unknown project {project_id}")
+
+    result = evaluate_fact_agreement(project_facts)
+    finding = persist_project_finding(session, project_id, result)
+    session.flush()
+
+    _log.info(
+        "project_analysis.finished",
+        project_id=str(project_id),
+        external_ref=project_facts.project.external_ref,
+        documents=len(project_facts.documents),
+        facts=len(project_facts.facts),
+        relationships=len(project_facts.relationships),
+        outcome=result.outcome.value,
+    )
+
+    return ProjectAnalysis(
+        project=project_facts.project,
+        documents=tuple(
+            project_facts.documents[key] for key in sorted(project_facts.documents, key=str)
+        ),
+        facts=project_facts.facts,
+        relationships=project_facts.relationships,
+        findings=(finding,),
+    )

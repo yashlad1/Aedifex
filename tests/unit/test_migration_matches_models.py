@@ -145,6 +145,20 @@ def _apply_alter(definitions: set[str], action: str) -> None:
     drop_column = re.match(r"DROP COLUMN (\w+)", action, flags=re.IGNORECASE)
     if drop_column is not None:
         _discard_matching(definitions, rf"{drop_column.group(1)}\b")
+        return
+
+    # ALTER COLUMN ... DROP/SET NOT NULL. The column keeps its type and only its nullability
+    # changes, so the existing definition is rewritten rather than replaced -- the type is not
+    # restated in this form of the statement and cannot be recovered from it.
+    nullability = re.match(r"ALTER COLUMN (\w+) (DROP|SET) NOT NULL", action, flags=re.IGNORECASE)
+    if nullability is not None:
+        column, direction = nullability.group(1), nullability.group(2).upper()
+        for definition in [
+            item for item in definitions if re.match(rf"{column}\b", item, flags=re.IGNORECASE)
+        ]:
+            definitions.discard(definition)
+            without = re.sub(r"\s+NOT NULL$", "", definition, flags=re.IGNORECASE)
+            definitions.add(without if direction == "DROP" else f"{without} NOT NULL")
 
 
 def _discard_matching(definitions: set[str], pattern: str) -> None:

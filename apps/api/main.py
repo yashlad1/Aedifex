@@ -19,7 +19,7 @@ from typing import Annotated, Final
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from aedifex import __version__
 from aedifex.acquisition.catalog import (
@@ -35,7 +35,13 @@ from aedifex.acquisition.catalog import (
 from aedifex.acquisition.registry import SourceDefinition, SourceRegistry, get_registry
 from aedifex.config import Settings, get_settings
 from aedifex.errors import SourceRegistryError
-from aedifex.infrastructure.database.models import ExtractedFact, Finding
+from aedifex.infrastructure.database.models import (
+    DocumentRelationship,
+    ExtractedFact,
+    Finding,
+    Project,
+    ProjectDocument,
+)
 from aedifex.infrastructure.database.session import session_scope
 from aedifex.infrastructure.observability.logging import (
     bind_job_context,
@@ -445,6 +451,75 @@ class FindingListResponse(BaseModel):
     findings: list[FindingResponse]
 
 
+class ProjectResponse(BaseModel):
+    """One project: the boundary within which documents are compared."""
+
+    model_config = ConfigDict(frozen=True)
+
+    project_id: str
+    source_id: str
+    external_ref: str
+    name: str | None
+    established_by: str
+    document_count: int
+    first_seen_at: str
+
+    @classmethod
+    def from_row(cls, row: Project, document_count: int) -> ProjectResponse:
+        return cls(
+            project_id=str(row.id),
+            source_id=row.source_id,
+            external_ref=row.external_ref,
+            name=row.name,
+            established_by=row.established_by,
+            document_count=document_count,
+            first_seen_at=row.first_seen_at.isoformat(),
+        )
+
+
+class RelationshipResponse(BaseModel):
+    """One stored relationship between two documents, and what justified it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    relationship_id: str
+    project_id: str
+    from_document_id: str
+    to_document_id: str
+    relationship_type: str
+    is_symmetric: bool
+    established_by: str
+    created_at: str
+
+    @classmethod
+    def from_row(cls, row: DocumentRelationship) -> RelationshipResponse:
+        return cls(
+            relationship_id=str(row.id),
+            project_id=str(row.project_id),
+            from_document_id=str(row.from_document_id),
+            to_document_id=str(row.to_document_id),
+            relationship_type=row.relationship_type.value,
+            # Exposed so a client knows whether the absence of the reverse row means anything.
+            is_symmetric=row.relationship_type.is_symmetric,
+            established_by=row.established_by,
+            created_at=row.created_at.isoformat(),
+        )
+
+
+class ProjectListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    returned: int
+    projects: list[ProjectResponse]
+
+
+class RelationshipListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    returned: int
+    relationships: list[RelationshipResponse]
+
+
 def settings_dependency() -> Settings:
     return get_settings()
 
@@ -688,6 +763,143 @@ def create_app() -> FastAPI:
             }
             payload = [FindingResponse.from_row(row, facts) for row in rows]
         return FindingListResponse(returned=len(payload), findings=payload)
+
+    @app.get(f"{API_PREFIX}/projects", response_model=ProjectListResponse, tags=["projects"])
+    def list_projects(source_id: str | None = None, limit: int = 50) -> ProjectListResponse:
+        """Projects, newest identifier first."""
+        with session_scope() as session:
+            query = select(Project).order_by(Project.external_ref).limit(limit)
+            if source_id is not None:
+                query = query.where(Project.source_id == source_id)
+            rows = list(session.execute(query).scalars())
+            counts: dict[uuid.UUID, int] = {}
+            for project_id, count in session.execute(
+                select(ProjectDocument.project_id, func.count()).group_by(
+                    ProjectDocument.project_id
+                )
+            ).all():
+                counts[project_id] = count
+            payload = [ProjectResponse.from_row(row, counts.get(row.id, 0)) for row in rows]
+        return ProjectListResponse(returned=len(payload), projects=payload)
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}",
+        response_model=ProjectResponse,
+        tags=["projects"],
+        responses={404: {"description": "No such project"}},
+    )
+    def get_project(project_id: uuid.UUID) -> ProjectResponse:
+        with session_scope() as session:
+            row = session.get(Project, project_id)
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown project {project_id}"
+                )
+            count = session.execute(
+                select(func.count())
+                .select_from(ProjectDocument)
+                .where(ProjectDocument.project_id == project_id)
+            ).scalar_one()
+            return ProjectResponse.from_row(row, count)
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/documents",
+        response_model=DocumentListResponse,
+        tags=["projects"],
+    )
+    def get_project_documents(project_id: uuid.UUID) -> DocumentListResponse:
+        """The documents belonging to one project, described as the corpus describes them."""
+        with session_scope() as session:
+            document_ids = list(
+                session.execute(
+                    select(ProjectDocument.document_id).where(
+                        ProjectDocument.project_id == project_id
+                    )
+                ).scalars()
+            )
+            entries = [
+                entry
+                for entry in (catalog_entry(session, document_id) for document_id in document_ids)
+                if entry is not None
+            ]
+        return DocumentListResponse(
+            # For a project, "total" is its membership rather than the whole corpus: a client asking
+            # what this project holds should not be told how many documents exist elsewhere.
+            total_in_corpus=len(document_ids),
+            returned=len(entries),
+            documents=[DocumentResponse.from_entry(entry) for entry in entries],
+        )
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/facts",
+        response_model=FactListResponse,
+        tags=["projects"],
+    )
+    def get_project_facts(project_id: uuid.UUID) -> FactListResponse:
+        """Every fact from every document of one project — the input to its cross-document rules."""
+        with session_scope() as session:
+            member = (
+                select(ProjectDocument.document_id)
+                .where(ProjectDocument.project_id == project_id)
+                .scalar_subquery()
+            )
+            rows = list(
+                session.execute(
+                    select(ExtractedFact)
+                    .where(ExtractedFact.document_id.in_(member))
+                    .order_by(ExtractedFact.fact_type, ExtractedFact.document_id)
+                ).scalars()
+            )
+        return FactListResponse(
+            returned=len(rows), facts=[FactResponse.from_row(row) for row in rows]
+        )
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/findings",
+        response_model=FindingListResponse,
+        tags=["projects"],
+    )
+    def get_project_findings(project_id: uuid.UUID) -> FindingListResponse:
+        """Cross-document findings for one project, each citing facts from several documents."""
+        with session_scope() as session:
+            rows = list(
+                session.execute(
+                    select(Finding)
+                    .where(Finding.project_id == project_id)
+                    .order_by(Finding.rule_id, Finding.rule_version)
+                ).scalars()
+            )
+            member = (
+                select(ProjectDocument.document_id)
+                .where(ProjectDocument.project_id == project_id)
+                .scalar_subquery()
+            )
+            facts = {
+                row.id: row
+                for row in session.execute(
+                    select(ExtractedFact).where(ExtractedFact.document_id.in_(member))
+                ).scalars()
+            }
+            payload = [FindingResponse.from_row(row, facts) for row in rows]
+        return FindingListResponse(returned=len(payload), findings=payload)
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/relationships",
+        response_model=RelationshipListResponse,
+        tags=["projects"],
+    )
+    def get_project_relationships(project_id: uuid.UUID) -> RelationshipListResponse:
+        """How the project's documents relate to one another, and what established each link."""
+        with session_scope() as session:
+            rows = list(
+                session.execute(
+                    select(DocumentRelationship)
+                    .where(DocumentRelationship.project_id == project_id)
+                    .order_by(DocumentRelationship.created_at)
+                ).scalars()
+            )
+            payload = [RelationshipResponse.from_row(row) for row in rows]
+        return RelationshipListResponse(returned=len(payload), relationships=payload)
 
     @app.get(f"{API_PREFIX}/corpus", response_model=CorpusSummaryResponse, tags=["corpus"])
     def get_corpus_summary() -> CorpusSummaryResponse:
