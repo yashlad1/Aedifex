@@ -240,9 +240,10 @@ class Settings(BaseSettings):
         that outright; every other environment keeps the placeholder so local runs work.
 
         So the check has to happen where it matters, at the point where a real portal is about to be
-        contacted, and the crawler asks this before any non-dry run. DATA_SOURCES.md lists crawling
-        without a reachable contact under "Hard limits", and until this existed the only thing
-        enforcing it was remembering to.
+        contacted: the crawler asks this before crawling any source that is not loopback, including
+        a ``--dry-run``, which still requests robots.txt and listing pages. DATA_SOURCES.md lists
+        crawling without a reachable contact under "Hard limits", and until this existed the only
+        thing enforcing it was remembering to.
         """
         return not _contains_placeholder_token(self.user_agent)
 

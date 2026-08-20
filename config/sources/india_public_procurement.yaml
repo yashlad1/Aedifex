@@ -148,6 +148,17 @@ sources:
       max_concurrency: 1
       min_delay_seconds: 3.0
       max_documents_per_run: 300
+    # Measured, not guessed: the first live run lost NIQ_PIU_Chhapra.pdf (1.11 MB) to a read
+    # timeout after this portal took 31 seconds to answer, one second past the 30-second default.
+    # read_seconds is the one that mattered. It bounds each individual socket read rather than the
+    # request as a whole, and the recorded error was "read timed out streaming body" — so this
+    # portal stalls partway through a transfer, not only before answering. 120 gives roughly four
+    # times the worst observed. total_seconds bounds the whole operation including retries and
+    # redirects, so a pathologically slow URL still cannot stall a run indefinitely.
+    timeouts:
+      connect_seconds: 15.0
+      read_seconds: 120.0
+      total_seconds: 600.0
     discovery:
       # The listing endpoint, with its form fields carried as a query string: the frontier stores
       # URLs, so an API call has to be expressible as one to survive a restart.

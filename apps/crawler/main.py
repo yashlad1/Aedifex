@@ -25,6 +25,7 @@ import argparse
 import signal
 import sys
 import threading
+from ipaddress import ip_address
 from pathlib import Path
 from types import FrameType
 from typing import TYPE_CHECKING
@@ -47,6 +48,7 @@ from aedifex.acquisition.fetch.redirect_controller import RedirectController
 from aedifex.acquisition.fetch.resolver import SystemResolver
 from aedifex.acquisition.pipeline import Acquirer
 from aedifex.acquisition.registry import get_registry
+from aedifex.acquisition.registry.models import SourceDefinition
 from aedifex.config import Settings, get_settings
 from aedifex.errors import AedifexError, ConfigurationError
 from aedifex.infrastructure.database.session import build_engine
@@ -123,17 +125,44 @@ def _sources() -> int:
     return 0
 
 
+def _is_remote(source: SourceDefinition) -> bool:
+    """Whether crawling this source puts packets on a network someone else operates.
+
+    Loopback is the only exemption, because the one legitimate placeholder-contact crawl is against
+    a portal we are running ourselves. Anything else — including a source that merely looks
+    internal — is somebody's server, and it gets a real contact address.
+    """
+    if source.base_url is None:
+        return False
+    host = (source.base_url.host or "").lower()
+    if host in {"localhost", "localhost."}:
+        return False
+    try:
+        return not ip_address(host).is_loopback
+    except ValueError:
+        # A name, not a literal. It could resolve to loopback, but deciding that here would mean
+        # trusting DNS to tell us whether a safety rule applies.
+        return True
+
+
 def _crawl(args: argparse.Namespace, settings: Settings) -> int:
     source = get_registry(settings).get(args.source_id)
-    if not args.dry_run and not settings.user_agent_names_a_real_contact():
+    if _is_remote(source) and not settings.user_agent_names_a_real_contact():
         # A fake contact is worse than an anonymous one: a site operator who tries to reach us about
         # our traffic gets a bounce. Refused here rather than in Settings, because the default
         # placeholder has to keep working for tests and local runs — what must not happen is sending
         # it to a real portal.
+        #
+        # This used to exempt --dry-run, which was wrong. A dry run skips *document* downloads; it
+        # still fetches robots.txt and every listing page, so the operator still sees the traffic
+        # and still reads the contact. DATA_SOURCES.md lists crawling without a reachable contact
+        # under hard limits that hold regardless of review outcome, and a rehearsal against a real
+        # portal is still a crawl of it. The exemption is the host, not the mode.
         raise ConfigurationError(
-            f"user_agent {settings.user_agent!r} carries a placeholder contact address. A crawl of "
-            f"a real source must offer a contact a site operator can reach (see DATA_SOURCES.md). "
-            f"Set AEDIFEX_USER_AGENT, or use --dry-run."
+            f"user_agent {settings.user_agent!r} carries a placeholder contact address, and "
+            f"{source.id!r} is a real remote source. A crawl of one — including a --dry-run, which "
+            f"still requests robots.txt and listing pages — must offer a contact a site operator "
+            f"can reach (see DATA_SOURCES.md). Set AEDIFEX_USER_AGENT."
         )
     limits = CrawlLimits(
         max_documents=args.max_documents,

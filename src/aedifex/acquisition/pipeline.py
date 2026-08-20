@@ -94,6 +94,22 @@ had.
 """
 
 
+def _timeouts_for(source: SourceDefinition) -> TimeoutPolicy:
+    """Translate a source's declared timeouts into the fetch layer's policy object.
+
+    A translation rather than a shared type, because the two serve different masters: the registry
+    model is reviewed configuration that has to survive a YAML round-trip, and
+    :class:`~aedifex.acquisition.fetch.timing.TimeoutPolicy` is a frozen dataclass the socket layer
+    holds. Keeping them separate is what lets the fetch layer stay ignorant of the registry.
+    """
+    declared = source.timeouts
+    return TimeoutPolicy(
+        connect_seconds=declared.connect_seconds,
+        read_seconds=declared.read_seconds,
+        total_seconds=declared.total_seconds,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class AcquisitionPolicy:
     """Everything a source's configuration decides about one acquisition.
@@ -137,8 +153,11 @@ class AcquisitionPolicy:
             max_bytes: Payload ceiling, normally ``Settings.max_download_bytes``. Passed in rather
                 than read here, so this stays a pure function of the registry and ``config`` keeps
                 its monopoly on reading the environment.
-            timeouts: Timeout budget for one URL. The registry declares no timeouts — they are a
-                property of our patience, not of the source's licence — so this defaults.
+            timeouts: Timeout budget for one URL. Defaults to the source's own declared timeouts,
+                because slowness is a property of the portal: the first live crawl lost a document
+                to a read timeout on a source that answers in 31 seconds. Pass a value only to
+                override a source's declaration, which is a caller's business and not the
+                registry's.
 
         Raises:
             SourceNotCollectableError: if the source is disabled, unreviewed, or has nothing to
@@ -160,7 +179,7 @@ class AcquisitionPolicy:
             host_policy=SourceHostPolicy.from_source(source),
             limits=RateLimits.from_source(source),
             download=DownloadPolicy.from_source(source, max_bytes=max_bytes),
-            timeouts=timeouts if timeouts is not None else TimeoutPolicy(),
+            timeouts=timeouts if timeouts is not None else _timeouts_for(source),
         )
 
     @property

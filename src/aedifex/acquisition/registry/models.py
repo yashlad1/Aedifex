@@ -49,6 +49,7 @@ __all__ = [
     "SourceCategory",
     "SourceDefinition",
     "SourceFile",
+    "SourceTimeouts",
     "VerificationStatus",
 ]
 
@@ -180,6 +181,59 @@ class RateLimitPolicy(BaseModel):
         return self
 
 
+class SourceTimeouts(BaseModel):
+    """How long this source is allowed to take before a request is abandoned.
+
+    These live in the registry because slowness is a property of the portal, not of us. The
+    original design put them nowhere and let every caller take the global default, on the reasoning
+    that patience is ours to spend rather than something a source dictates. The first live crawl
+    disproved it: NHAI answered a 1.11 MB tender PDF in 31 seconds, the default read timeout is 30,
+    and the document was recorded as a failure by a margin of one second. A portal that is simply
+    slow is not a portal that is broken, and the distinction has to be expressible somewhere.
+
+    Bounded above like every other limit here, for the opposite reason to the rate limits: those
+    ceilings protect the remote site, these protect us. An unbounded read timeout is how a crawl
+    stops being a crawl and becomes a process holding a socket open until someone notices.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    connect_seconds: float = Field(
+        default=10.0,
+        gt=0.0,
+        le=60.0,
+        description="Ceiling on establishing the connection, DNS excluded.",
+    )
+    read_seconds: float = Field(
+        default=30.0,
+        gt=0.0,
+        le=300.0,
+        description="Ceiling on any single read from the socket, which for a slow portal is "
+        "usually time-to-first-byte rather than the transfer itself.",
+    )
+    total_seconds: float = Field(
+        default=300.0,
+        gt=0.0,
+        le=1800.0,
+        description="Ceiling on the entire operation: every attempt, every backoff, every "
+        "redirect hop. The only value that bounds what a caller actually waits for.",
+    )
+
+    @model_validator(mode="after")
+    def _check_budget_permits_one_attempt(self) -> Self:
+        # The same invariant the fetch layer's TimeoutPolicy enforces, checked here so a
+        # contradictory registry entry fails when the file loads rather than at the first fetch.
+        # Duplicated deliberately: the fetch layer must keep its own guard, because it accepts
+        # policies this schema never saw.
+        if self.total_seconds < self.connect_seconds + self.read_seconds:
+            raise ValueError(
+                f"total_seconds={self.total_seconds} is smaller than one attempt "
+                f"(connect {self.connect_seconds} + read {self.read_seconds}), so the budget "
+                f"would never permit a complete request"
+            )
+        return self
+
+
 class DiscoveryPolicy(BaseModel):
     """Where a crawl starts, how far it goes, and which paths it may follow.
 
@@ -307,6 +361,7 @@ class SourceDefinition(BaseModel):
     )
     rate_limit: RateLimitPolicy = RateLimitPolicy()
     discovery: DiscoveryPolicy = DiscoveryPolicy()
+    timeouts: SourceTimeouts = SourceTimeouts()
     data_use: DataUsePolicy
     document_types: tuple[DocumentType, ...] = Field(
         min_length=1, description="Document types this source is expected to yield."
