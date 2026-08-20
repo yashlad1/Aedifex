@@ -20,6 +20,30 @@ Make the feature correct, testable, secure, observable, reproducible, maintainab
 
 ⸻
 
+0. Read the SRS Before Anything Else
+
+At the start of every session, and before writing or changing any code, read SRS.md.
+
+It defines what Aedifex is for: evidence is the product, the pipeline every component must fit into,
+the personas any feature must serve, and the twelve guiding principles. Every other document
+describes how one part works. Where a design decision and the SRS disagree, the SRS wins and the
+design is wrong.
+
+This rule is numbered zero because it precedes the others in time, not because it outranks the
+security rules. Rules 1 onward tell you how to build correctly; the SRS tells you whether the thing
+is worth building at all.
+
+Do not skip it for a task that looks small. A one-line change to an extraction rule can quietly
+break "every extracted value must be traceable", and by the time that is noticed there is a corpus of
+findings nobody can defend. If a request appears to conflict with the SRS, say so in a sentence and
+proceed with the request — the owner may be deliberately overriding it — but do not resolve the
+conflict silently.
+
+CLAUDE.md carries the same instruction and is loaded automatically at session start, so this is
+enforced in two places on purpose: one that is read by habit, one that is read by the tooling.
+
+⸻
+
 1. Core Development Rule
 
 For every change, evaluate:

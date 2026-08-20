@@ -158,6 +158,9 @@ tests/{unit,integration}
 
 | Document | Contents |
 | --- | --- |
+| **[SRS.md](SRS.md)** | **Read first.** Vision, mission, the evidence pipeline, personas, guiding principles |
+| [CLAUDE.md](CLAUDE.md) | Orientation for an agent or a new contributor: what to read, and in what order |
+| [AEDIFEX-RULES.md](AEDIFEX-RULES.md) | The engineering constitution |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System boundaries, data flow, module rules |
 | [DATA_MODEL.md](DATA_MODEL.md) | Tables, keys, and why the frontier is separate from content |
 | [DATA_SOURCES.md](DATA_SOURCES.md) | Every source, its legal status, and the review process |
@@ -167,6 +170,7 @@ tests/{unit,integration}
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Workflow, definition of done |
 | [docs/requirements/](docs/requirements/) | FR-xxx / NFR-xxx requirements |
 | [docs/adr/](docs/adr/) | Decision records |
+| [docs/plans/](docs/plans/) | Implementation plans, newest first |
 
 ## Licence and ethics
 
