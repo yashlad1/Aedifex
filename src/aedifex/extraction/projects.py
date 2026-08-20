@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import select, union_all
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Subquery
 
 from aedifex.domain.evidence import RelationshipType
 from aedifex.extraction.spreadsheet import FIELD_PROJECT_REFERENCE
@@ -110,18 +111,10 @@ def reconcile_projects(session: Session, *, source_id: str | None = None) -> Rec
             the same reference number and they are not the same tender.
     """
     # A document's source comes from a retrieval or from an upload, and both are real provenance --
-    # one for a document that was fetched, one for a document that was handed to us. Unioned rather
-    # than joined to either, so neither path is privileged and neither is invisible.
-    origins = union_all(
-        select(
-            DocumentRetrieval.document_id.label("document_id"),
-            DocumentRetrieval.source_id.label("source_id"),
-        ),
-        select(
-            DocumentUpload.document_id.label("document_id"),
-            DocumentUpload.source_id.label("source_id"),
-        ),
-    ).subquery()
+    # one for a document that was fetched, one for a document that was handed to us. Shared with
+    # _documents_without_project_key so the two cannot drift apart, which is how one of them came to
+    # see only half the corpus.
+    origins = _document_origins()
 
     query = (
         select(ExtractedFact, origins.c.source_id)
@@ -250,25 +243,51 @@ def _link_documents(
     return created
 
 
+def _document_origins() -> Subquery:
+    """Every document's source, whichever way the document arrived.
+
+    A retrieval and an upload are different provenance and the same origin fact: *this document came
+    from that source*. Unioned rather than joined to either, so neither acquisition path is
+    privileged and neither is invisible. Aedifex acquires evidence; crawling is one way in, not the
+    definition of the pipeline, and anything downstream of acquisition that can tell the difference
+    is a leak.
+    """
+    return union_all(
+        select(
+            DocumentRetrieval.document_id.label("document_id"),
+            DocumentRetrieval.source_id.label("source_id"),
+        ),
+        select(
+            DocumentUpload.document_id.label("document_id"),
+            DocumentUpload.source_id.label("source_id"),
+        ),
+    ).subquery()
+
+
 def _documents_without_project_key(session: Session, *, source_id: str | None) -> int:
     """How many analysed documents could not be placed. Reported, never hidden.
 
     A document with no identifier fact is not a failure — a corrigendum may simply not repeat the
     tender number — but it is invisible to every cross-document rule, and a pipeline that did not
-    say
-    so would look like it had considered everything.
+    say so would look like it had considered everything.
+
+    Filters through :func:`_document_origins` rather than through retrievals alone. Joining only
+    retrievals made every *uploaded* document vanish from this count whenever a source filter was
+    applied, so the one number whose job is to report what was overlooked would itself have
+    overlooked an entire acquisition path — and reported zero while doing it.
     """
     analysed = select(ExtractedFact.document_id).distinct().subquery()
     query = select(Document.id).join(analysed, analysed.c.document_id == Document.id)
     if source_id is not None:
-        query = query.join(DocumentRetrieval, DocumentRetrieval.document_id == Document.id).where(
-            DocumentRetrieval.source_id == source_id
+        origins = _document_origins()
+        query = query.join(origins, origins.c.document_id == Document.id).where(
+            origins.c.source_id == source_id
         )
-    placed = select(ProjectDocument.document_id).distinct().subquery()
+    placed = set(session.execute(select(ProjectDocument.document_id).distinct()).scalars())
     return len(
         [
             document_id
             for document_id in session.execute(query).scalars()
-            if document_id not in set(session.execute(select(placed.c.document_id)).scalars())
+            if document_id not in placed
         ]
     )

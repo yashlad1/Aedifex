@@ -78,6 +78,21 @@ Never, regardless of review outcome:
 
 ## Candidate sources
 
+Grouped below by geography for historical reasons. The axis that actually matters is **reference data
+versus project data** — shared across many projects, or specific to one — and it cuts across every
+group here:
+
+- **Reference data:** tender notices, BOQs, standard specifications, Schedule of Rates, material
+  specifications, government circulars, contract clauses, procurement rules. Every source in the
+  India and International tables below is this. Public portals are good at it.
+- **Project data:** contract agreement, Measurement Book, RA Bill / IPC, variation orders, site
+  instructions, inspection reports, payment certificates, test reports, daily logs. Only the
+  post-award table reaches this, and only `industry_samples` reaches it reliably.
+
+Public versus private is the wrong distinction to plan around: a customer export and a portal
+download enter the same immutable pipeline and differ only in provenance. What differs is whether a
+document informs many projects or records one.
+
 ### India
 
 | Source | What it offers | Why it is interesting | Concerns |

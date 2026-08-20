@@ -15,6 +15,58 @@ That single fact drives every structural decision below:
 
 > **LLMs interpret evidence. Deterministic code verifies evidence.**
 
+## Aedifex acquires evidence; crawling is one way in
+
+Not a crawler. An **evidence acquisition platform**, and acquisition is the broader word on purpose.
+A document may arrive from a public procurement portal, a manual upload, a customer export, an email,
+an ERP system, cloud storage or an API. **Every path converges into the same immutable pipeline**, and
+the pipeline begins only once a document has been acquired.
+
+Origin affects **provenance** and nothing else. A retrieval records a URL, an HTTP status and a
+fetched-at time; an upload records a path, an uploader and an uploaded-at time. Downstream — text,
+facts, calculation, rules, findings, the API — must not be able to tell the difference, because a
+measurement is a measurement whether it was crawled or handed over.
+
+That holds today, with the boundary in two places worth naming. `StorableFile` is a Protocol rather
+than the acquisition layer's download type, so storing an uploaded file needs no fabricated HTTP
+fields — the widening also removed the storage layer's dependency on the acquisition layer. And
+`_document_origins` in [extraction/projects.py](src/aedifex/extraction/projects.py) unions retrievals
+and uploads so neither path is privileged. That helper exists because the second query in the same
+file once joined retrievals alone: filtered to an uploaded document's own source it saw zero of five,
+so the one number whose job is to report what was overlooked had itself overlooked an entire
+acquisition path.
+
+Two streams are expected to meet in one evidence graph. Public crawlers supply **procurement context
+and reference data**; customer-provided post-award records supply the **operational evidence** that
+payment verification needs. Strengthening acquisition interfaces and business-object modelling is
+therefore worth more than adding public crawlers.
+
+## Reference data and project data
+
+The useful axis is not public versus private. It is **shared across many projects** versus **specific
+to one**.
+
+| | Examples | Why it matters |
+| --- | --- | --- |
+| **Reference data** | Tender notices, BOQs, standard specifications, Schedule of Rates, material specifications, government circulars, contract clauses, procurement rules | Context, standards and baseline expectations. One document informs many projects |
+| **Project data** | Contract agreement, Measurement Book, RA Bill / IPC, variation orders, site instructions, inspection reports, payment certificates, test reports, daily logs | The record of what happened on one job. This is what payment verification consumes |
+
+**The current model holds project data and structurally cannot hold reference data**, and the reason
+is worth stating precisely because it is not a bug. A document joins a project through an identifier
+it states about *itself* — a tender number, a contract reference — and rules compare facts only
+within one project, so that two projects quoting identical figures have nothing to say about each
+other. That strict scoping is exactly what makes cross-document comparison safe.
+
+Reference data has no such identifier by nature. A Schedule of Rates belongs to no tender and must be
+comparable against *many* projects' bills. Under the present rules it would land in
+`documents_without_project_key` and be invisible to every rule. `project_documents` is a join table,
+so the schema already permits one document in many projects; what does not yet exist is any way to
+place a document that names no project, or to scope a rule across projects deliberately rather than
+accidentally.
+
+This is the crux of the business-object modelling work, and it is deliberately unresolved: one real
+Schedule of Rates and one real measurement book would settle it, and no amount of reasoning will.
+
 ## Layers
 
 ```

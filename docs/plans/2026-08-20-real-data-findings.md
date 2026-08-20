@@ -179,6 +179,55 @@ unit differs from another by case alone; an equivalence table is a different cla
 from a single portal's spelling habits is the per-portal special case principle 10 names. A second
 real document can answer it.
 
+### B9. An uploaded document was invisible to the count that reports what was overlooked
+
+Aedifex acquires evidence; crawling is one path in. Downstream of acquisition, origin must affect
+provenance and nothing else — so a place where it affects behaviour is a defect by definition, and
+there was one.
+
+`_documents_without_project_key` joined `document_retrievals` alone when filtering by source. An
+uploaded document has no retrieval row, so under its own source filter the query saw **0 of 5**:
+
+| query shape | rows seen for `source_id='synthetic_projects'` |
+| --- | --- |
+| joined retrievals only | **0** |
+| union of retrievals and uploads | **5** |
+
+The reported count happened to be correct — all five are placed, so zero unplaced either way — which
+is why nothing caught it. Had an uploaded document been unplaced, the one number whose job is to say
+what the pipeline overlooked would have reported zero while hiding it.
+
+The same file's main query already unioned both origins and carried a comment saying neither path may
+be privileged. The two had simply drifted. Both now share `_document_origins`, so they cannot drift
+again.
+
+**Classified BLOCKER** rather than NEXT, despite producing no wrong finding today, because the
+invariant it breaks is the one the acquisition model rests on: every path converges into the same
+pipeline, and nothing after acquisition can tell them apart.
+
+### N7. Reference data has nowhere to live
+
+Not a defect — a consequence, and the crux of the business-object work.
+
+A document joins a project through an identifier it states about *itself*, and rules compare facts
+only within one project. That strict scoping is exactly what makes cross-document comparison safe:
+two projects quoting identical figures have nothing to say about each other.
+
+Reference data — a Schedule of Rates, a standard specification, a government circular — has no such
+identifier by nature and must be comparable against *many* projects' bills. Under the present rules
+it lands in `documents_without_project_key` and is invisible to every rule. `project_documents` is a
+join table, so the schema already permits one document in many projects; what is missing is any way
+to place a document that names no project, or to scope a rule across projects deliberately rather
+than by accident.
+
+**The corpus contains no reference data at all** to test this against. All nine documents are project
+data: seven tender documents for specific procurements and five synthetic project records. The two
+currently unplaced documents are not an instance of this — they are tender notices whose NIT number
+was not extracted, which is an extraction gap, not a reference-data one.
+
+Deliberately unresolved. One real Schedule of Rates and one real measurement book would settle the
+design; reasoning will not.
+
 ### N6. Five real objects sit in immutable storage with no provenance at all
 
 Nine NHAI PDFs are in the raw tier; four have a document row. The other five have **no document row,

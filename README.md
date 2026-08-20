@@ -1,9 +1,15 @@
 # Aedifex
 
-**What exists today: a production-grade acquisition platform for public construction documents.**
-It safely collects, verifies, stores, and catalogues real documents — tenders, BOQs, schedules of
-rates, specifications, contracts, procurement notices, drawings, technical documents — with complete
-provenance for every byte.
+**Aedifex is an evidence acquisition platform for construction, not a crawler.** Crawling is one way
+a document arrives; a manual upload, a customer export, an email, an ERP system, cloud storage or an
+API are others, and **every path converges into the same immutable pipeline.** Origin affects
+provenance and nothing after it: a measurement is a measurement whether it was fetched or handed
+over.
+
+What exists today runs end to end. A document is acquired with provenance for every byte, stored
+content-addressed and immutable, read into facts that each cite a page span or a spreadsheet cell,
+turned into derived facts that record their own inputs, judged by deterministic rules, and published
+as findings over a CLI and an API — with every finding walkable back to the bytes it came from.
 
 ## The product hypothesis is UNVALIDATED
 
@@ -14,10 +20,15 @@ it is **not yet a validated one**. Customer discovery is running in parallel
 change once 15–30 interviews reveal which document-heavy workflows are actually painful and
 commercially valuable.
 
-So the pipeline is deliberately built **not to know** which product will consume the corpus. It
-assumes construction documents are worth collecting with verifiable provenance; it assumes nothing
-about what will be done with them. Concretely, that means no invoice-shaped schema, no
-payment-specific extraction, no document type privileged over another, and no rules engine.
+The pipeline was deliberately built **not to know** which product would consume the corpus, and that
+restraint has since been spent deliberately rather than abandoned: a rule registry, payment
+reconciliation over work items, and document-type-aware extraction all now exist, each added because
+a real document demanded it. What still does not exist is an invoice-shaped schema, a rules DSL, or
+any document type privileged over another.
+
+Architecture is now **frozen pending real-corpus evidence.** The gating need is real post-award
+project data — a Measurement Book, an IPC, a variation order — because no public procurement portal
+publishes them. See [docs/plans/2026-08-20-development-priorities.md](docs/plans/2026-08-20-development-priorities.md).
 
 If discovery points somewhere else — contract obligation tracking, tender intelligence, rate
 benchmarking, specification compliance — the acquisition layer should need no rewrite. That property
@@ -35,11 +46,29 @@ extracted fact points back to an exact page and location in a source document.
 This holds whatever the product turns out to be, which is why it is stated as a principle rather
 than as a feature.
 
-## Current status: Phase 0 complete, acquisition pipeline in progress
+## Reference data and project data
 
-The engineering foundation, the source registry, and reproducibility/supply-chain controls are
-done. The **current product is the data acquisition platform**. No auditor, evidence graph, rules
-engine, agent, or synthetic generator exists, and nothing here fabricates one.
+The useful axis is not public versus private. It is whether a document is **shared across many
+projects** or **specific to one**.
+
+**Reference data** — tender notices, BOQs, standard specifications, Schedule of Rates, material
+specifications, government circulars, contract clauses, procurement rules — gives context, standards
+and baseline expectations. Public portals are good at it, and it is all the corpus currently holds.
+
+**Project data** — contract agreement, Measurement Book, RA Bill / IPC, variation orders, site
+instructions, inspection reports, payment certificates, test reports, daily logs — is the record of
+one job, and it is what payment verification actually consumes. It comes from customers, not
+portals.
+
+Both streams are meant to meet in one evidence graph. Reference data has nowhere to live in the
+current model, which scopes every rule to a single project; that is the crux of the business-object
+work and is deliberately unresolved until a real Schedule of Rates exists to settle it.
+
+## Current status: the pipeline runs end to end on real data
+
+The engineering foundation, the source registry, and reproducibility/supply-chain controls are done,
+and so is the vertical slice: real NHAI documents reach evidence-backed findings. No agent framework,
+graph database, OCR engine or rules DSL exists, and nothing here fabricates one.
 
 | Area | State |
 | --- | --- |
