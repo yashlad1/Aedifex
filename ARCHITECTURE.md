@@ -95,6 +95,8 @@ Phase 0 is complete. Implemented and tested:
 | Knowledge registry | [knowledge/registry.py](src/aedifex/knowledge/registry.py), `GET /v1/knowledge` |
 | Local-file ingestion, upload provenance | [extraction/ingest.py](src/aedifex/extraction/ingest.py), `document_uploads` |
 | Construction spreadsheet reader | [extraction/spreadsheet.py](src/aedifex/extraction/spreadsheet.py) |
+| Priced bill of quantities reader (PDF) | [extraction/pdf_boq.py](src/aedifex/extraction/pdf_boq.py) |
+| Bill total reconciliation rule | [verification/bill_total.py](src/aedifex/verification/bill_total.py) |
 | Work items, deterministic item linkage | [extraction/work_items.py](src/aedifex/extraction/work_items.py), `work_items` |
 | Payment reconciliation rules | [verification/reconciliation.py](src/aedifex/verification/reconciliation.py) |
 | Document version state, supersession | [extraction/supersede.py](src/aedifex/extraction/supersede.py), `documents.version_state` |
@@ -106,6 +108,20 @@ JS bundle, and a bounded crawl acquired real tender documents into immutable sto
 Those documents then went the rest of the way: bounded text extraction, field extraction with page
 spans, facts and findings in PostgreSQL, a deterministic rule, and a result readable over CLI and API
 whose evidence points back at the page it came from.
+
+Running that path over real data, rather than over fixtures, is what has found every defect worth
+finding. The clearest example: the corpus's one real priced bill of quantities reported line items
+summing 1.3% above the total the document states for itself. The gap was entirely ours — a credit row
+written in accounting parentheses that the reader could not see, and two items priced through
+sub-items that it refused. Both are now read, and the bill reconciles to ₹0.00 across 37 rows.
+
+The general lesson is worth more than the fix. **The checks that detect a defective document are the
+same checks that detect a defective extraction**, and there is no way to tell which you are looking
+at from the number alone. So arithmetic self-consistency is checked twice over — within each row by
+[extraction/pdf_boq.py](src/aedifex/extraction/pdf_boq.py), and across the whole bill by
+[verification/bill_total.py](src/aedifex/verification/bill_total.py) — and the cross-bill check
+returns REVIEW rather than FAIL, because asserting that a real tender contains an arithmetic error is
+a claim this project usually cannot support.
 
 One property of that path is worth stating because it was nearly got wrong. A rule's threshold is
 **evidence, not configuration**. The first notice read implied a 2% bid security; hardcoding it would

@@ -23,6 +23,7 @@ from decimal import Decimal, DivisionByZero, InvalidOperation
 from typing import Final
 
 from aedifex.domain.evidence import FactKind
+from aedifex.extraction.pdf_boq import FIELD_LINE_AMOUNT
 from aedifex.extraction.spreadsheet import (
     FIELD_CLAIMED_RATE,
     FIELD_CONTRACT_RATE,
@@ -35,12 +36,14 @@ from aedifex.infrastructure.database.models import ExtractedFact
 __all__ = [
     "CALCULATIONS",
     "DERIVED_BID_SECURITY_SHARE",
+    "DERIVED_BILL_ITEMS_TOTAL",
     "DERIVED_QUANTITY_VARIANCE",
     "DERIVED_RATE_VARIANCE",
     "DERIVED_REMAINING_CONTRACT_QUANTITY",
     "DERIVED_UNSUPPORTED_AMOUNT",
     "Calculated",
     "compute_bid_security_share",
+    "compute_bill_items_total",
     "compute_for_document",
     "compute_for_work_item",
     "compute_quantity_variance",
@@ -52,6 +55,13 @@ __all__ = [
 PRODUCED_BY: Final[str] = "aedifex.calculation.engine"
 
 DERIVED_BID_SECURITY_SHARE: Final[str] = "bid_security_share"
+
+# What a priced bill of quantities adds up to. A derived fact rather than a number a rule computes
+# in passing, because the point of it is the audit trail: one row per line item in
+# ``derived_fact_inputs``, so "the bill sums to 8.46 crore" can be unfolded into the 37 pages-and-
+# rows it was added from. A rule that summed the facts itself would reach the same figure and be
+# able to prove nothing about it.
+DERIVED_BILL_ITEMS_TOTAL: Final[str] = "bill_items_total"
 
 # Payment reconciliation. Each answers "what can be calculated?" and none answers "is this
 # acceptable?" -- a positive quantity_variance is a number, not an accusation.
@@ -124,6 +134,44 @@ def compute_bid_security_share(
             "estimated_cost": facts["estimated_cost"],
             "bid_security": facts["bid_security"],
         },
+    )
+
+
+def compute_bill_items_total(facts: list[ExtractedFact]) -> Calculated | None:
+    """The sum of a bill of quantities' line amounts, with every line recorded as an input.
+
+    Takes the whole fact list rather than one-per-type, because a bill is the one thing in this
+    corpus that states the same kind of fact dozens of times over. Only the newest extractor version
+    is summed: mixing two extractions of the same bill would produce a total belonging to neither.
+
+    Returns ``None`` when the document has no line amounts, which is almost every document.
+    """
+    amounts = [
+        fact
+        for fact in facts
+        if fact.fact_type == FIELD_LINE_AMOUNT and fact.numeric_value is not None
+    ]
+    if not amounts:
+        return None
+
+    newest = max(fact.extractor_version for fact in amounts)
+    rows = sorted(
+        (fact for fact in amounts if fact.extractor_version == newest),
+        key=lambda fact: (fact.sheet_row if fact.sheet_row is not None else 0, str(fact.id)),
+    )
+    values = [Decimal(fact.numeric_value) for fact in rows if fact.numeric_value is not None]
+    total = sum(values, Decimal(0))
+
+    # The expression is the addition itself, so the total can be re-added by hand. Long, and that is
+    # the point: a bill total nobody can check is a number to be taken on trust.
+    return Calculated(
+        fact_type=DERIVED_BILL_ITEMS_TOTAL,
+        kind=FactKind.MONEY,
+        value=total,
+        expression=" + ".join(str(value) for value in values),
+        calculation="sum_of",
+        currency=next((fact.currency for fact in rows if fact.currency), None),
+        inputs={f"{FIELD_LINE_AMOUNT}:{index}": fact for index, fact in enumerate(rows, start=1)},
     )
 
 
@@ -245,11 +293,12 @@ def _comparable_pair(
     return left_value, right_value, left.unit or right.unit
 
 
-# Calculations that need only facts from a single work item. Registered rather than called directly
-# so adding one is a one-line change here and nothing else -- the same reason the rule registry
-# exists.
+# Every calculation this module performs, by the derived fact type it produces. A registry for
+# introspection rather than dispatch -- the knowledge registry is checked against it, so a
+# calculation that exists without being described here fails a test.
 CALCULATIONS: Final[dict[str, object]] = {
     DERIVED_BID_SECURITY_SHARE: compute_bid_security_share,
+    DERIVED_BILL_ITEMS_TOTAL: compute_bill_items_total,
     DERIVED_QUANTITY_VARIANCE: compute_quantity_variance,
     DERIVED_REMAINING_CONTRACT_QUANTITY: compute_remaining_contract_quantity,
     DERIVED_RATE_VARIANCE: compute_rate_variance,
@@ -305,4 +354,11 @@ def compute_for_document(facts: list[ExtractedFact]) -> tuple[Calculated, ...]:
         calculated = compute(newest)
         if calculated is not None:
             results.append(calculated)
+
+    # Given every fact rather than one per type, because it sums a table. Kept separate from the
+    # loop above instead of widening every calculation's signature: one calculation needs the rows
+    # and five do not.
+    total = compute_bill_items_total(facts)
+    if total is not None:
+        results.append(total)
     return tuple(results)

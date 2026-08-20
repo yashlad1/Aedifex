@@ -21,6 +21,7 @@ from typing import Final
 
 from aedifex.calculation.engine import (
     DERIVED_BID_SECURITY_SHARE,
+    DERIVED_BILL_ITEMS_TOTAL,
     DERIVED_QUANTITY_VARIANCE,
     DERIVED_RATE_VARIANCE,
     DERIVED_REMAINING_CONTRACT_QUANTITY,
@@ -32,6 +33,7 @@ from aedifex.domain.evidence import (
     FactOrigin,
     RelationshipType,
 )
+from aedifex.extraction.pdf_boq import FIELD_LINE_AMOUNT, FIELD_STATED_BILL_TOTAL
 from aedifex.extraction.spreadsheet import (
     FIELD_CLAIMED_RATE,
     FIELD_CONTRACT_RATE,
@@ -51,6 +53,7 @@ from aedifex.extraction.tender_notice import (
     FIELD_NIT_NUMBER,
     FIELD_PRESCRIBED_BID_SECURITY_SHARE,
 )
+from aedifex.verification.bill_total import BILL_TOTAL_RULE_ID
 from aedifex.verification.cross_document import (
     AGREEMENT_RULE_ID,
     SHARE_CONSISTENCY_RULE_ID,
@@ -241,6 +244,37 @@ FACT_TYPES: Final[tuple[FactTypeInfo, ...]] = (
         produced_by="aedifex.extraction.spreadsheet",
     ),
     FactTypeInfo(
+        fact_type=FIELD_LINE_AMOUNT,
+        kind=FactKind.MONEY,
+        origin=FactOrigin.EXTRACTED,
+        description=(
+            "The amount a bill of quantities states for one line item. Negative for a recovery or "
+            "credit, which a bill writes in accounting parentheses."
+        ),
+        produced_by="aedifex.extraction.pdf_boq",
+    ),
+    FactTypeInfo(
+        fact_type=FIELD_STATED_BILL_TOTAL,
+        kind=FactKind.MONEY,
+        origin=FactOrigin.EXTRACTED,
+        description=(
+            "The total a bill of quantities states for itself. Never the sum of anything -- what "
+            "the rows add up to is a derived fact, and whether the two agree is a rule."
+        ),
+        produced_by="aedifex.extraction.pdf_boq",
+    ),
+    FactTypeInfo(
+        fact_type=DERIVED_BILL_ITEMS_TOTAL,
+        kind=FactKind.MONEY,
+        origin=FactOrigin.DERIVED,
+        description=(
+            "The sum of a bill's line amounts, with one recorded input per line item so the total "
+            "unfolds into the pages it was added from."
+        ),
+        produced_by="aedifex.calculation.engine",
+        inputs=(FIELD_LINE_AMOUNT,),
+    ),
+    FactTypeInfo(
         fact_type=DERIVED_QUANTITY_VARIANCE,
         kind=FactKind.QUANTITY,
         origin=FactOrigin.DERIVED,
@@ -322,6 +356,17 @@ RULE_TYPES: Final[tuple[RuleTypeInfo, ...]] = (
             "itself, or against a rate supplied by the caller. Inconclusive when neither exists."
         ),
         consumes=(DERIVED_BID_SECURITY_SHARE, FIELD_PRESCRIBED_BID_SECURITY_SHARE),
+    ),
+    RuleTypeInfo(
+        rule_id=BILL_TOTAL_RULE_ID,
+        scope="document",
+        description=(
+            "Checks that a priced bill of quantities adds up to the total it states for itself. "
+            "REVIEW rather than FAIL when it does not: the rule can establish that the two "
+            "figures disagree but not which of them is wrong, and a bill that does not add up is "
+            "as likely to mean the extraction is untrustworthy as that the document is."
+        ),
+        consumes=(DERIVED_BILL_ITEMS_TOTAL, FIELD_STATED_BILL_TOTAL),
     ),
     RuleTypeInfo(
         rule_id=AGREEMENT_RULE_ID,

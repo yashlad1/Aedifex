@@ -1,9 +1,9 @@
 """Reading a priced bill of quantities out of a PDF's text layer.
 
 Written against a real document, not a template: pages 164-171 of an NHAI bid document already in
-this corpus, which holds a 31-row priced BOQ totalling ₹8.46 crore. Before this existed the pipeline
-extracted four tender-notice fields from that document and nothing else — the entire bill was
-invisible.
+this corpus, which holds a 35-item priced BOQ totalling ₹8,46,49,969.01. Before this existed the
+pipeline extracted four tender-notice fields from that document and nothing else — the entire bill
+was invisible.
 
 The layout is not a grid once a PDF has been flattened to text. Each row arrives as::
 
@@ -23,9 +23,14 @@ header at all.
 
 **Every row is checked arithmetically before it is emitted.** ``quantity x rate`` must reproduce the
 stated amount, and a row that fails is reported rather than returned. That single rule is what makes
-positional parsing of a flattened table safe: a misread row almost never satisfies it. On the real
-document it rejected the grand-total row, which had been parsed as "item 34" with a quantity of
-512,711.86 — a plausible-looking line item whose real identity is the ₹8.46 crore total.
+positional parsing of a flattened table safe: a misread row almost never satisfies it, and it caught
+two of the four money defects found in this module.
+
+It is not sufficient on its own, and the two it missed say why. A block can hold another item's
+figures and close perfectly (see ``_sequential_item_starts``), and a row can be dropped entirely
+without any surviving row noticing. The complement is the bill's own total, checked by
+:mod:`aedifex.verification.bill_total` over what this module returns — arithmetic within a row here,
+arithmetic across the bill there.
 
 Deliberately narrow. This reads the layout in front of it and refuses everything else; it is not a
 general PDF table framework, and the next real document is expected to need changes here rather than
@@ -51,12 +56,18 @@ from aedifex.extraction.spreadsheet import (
 
 __all__ = [
     "FIELD_LINE_AMOUNT",
+    "FIELD_STATED_BILL_TOTAL",
     "BoqRow",
     "PdfBoq",
     "read_pdf_boq",
 ]
 
 FIELD_LINE_AMOUNT: Final[str] = "line_amount"
+
+# The total the bill states for itself. A document-scoped fact rather than a row-scoped one, and
+# deliberately not the sum of anything: it is what the document says, and comparing it to what the
+# rows add up to is a rule's job.
+FIELD_STATED_BILL_TOTAL: Final[str] = "stated_bill_total"
 
 # Where a priced bill of quantities begins. Matched on a page of its own rather than anywhere the
 # phrase appears: a bid document mentions "BOQ" on twenty pages and prices it on eight.
@@ -87,7 +98,26 @@ _ITEM_NUMBER: Final[re.Pattern[str]] = re.compile(r"^(\d{1,3})(?:\s+(\S.*))?$")
 # on separate lines. Used to tell the priced table from a mention of it.
 _RATE_HEADER: Final[re.Pattern[str]] = re.compile(r"^\s*Rate(\s+per)?\s*$", re.MULTILINE)
 _QUANTITY_HEADER: Final[re.Pattern[str]] = re.compile(r"^\s*Quantity\s*$", re.MULTILINE)
-_MONEY_LINE: Final[re.Pattern[str]] = re.compile(r"^[\d,]+\.\d{2}$")
+
+# A figure in the table, which may be bracketed: a bill of quantities writes a credit in accounting
+# parentheses, and the real document ends with one -- item 35, "Recovery of Milled Material", at
+# 661.50 Cum x (1,785.60) = (11,81,174.40). Reading only unbracketed figures dropped that row
+# entirely and overstated the bill by 11.8 lakh, which is the whole of the discrepancy this reader
+# could not previously explain. A recovery, a deduction and a credit note are ordinary construction
+# accounting, so the sign is part of the value and not a formatting quirk to be ignored.
+_MONEY_LINE: Final[re.Pattern[str]] = re.compile(r"^\(?[\d,]+\.\d{2}\)?$")
+
+# Where the bill stops. Anchored to a line that is *only* a total label: "total internal reflection"
+# and "total mix" both appear inside item descriptions, and neither ends anything. Without this the
+# final item's block ran on into the total and took it as one of its three figures.
+_TOTAL_LABEL: Final[re.Pattern[str]] = re.compile(
+    r"^(?:Grand\s+)?Total(?:\s+(?:Estimated\s+)?(?:Cost|Amount|Price))?$", re.IGNORECASE
+)
+
+# A priced sub-item under a parent heading: "(a)", "(b)". Items 21 and 22 of the real document are
+# headings whose figures live entirely in their sub-items, which is normal practice rather than an
+# oddity of this bill.
+_SUB_ITEM: Final[re.Pattern[str]] = re.compile(r"^\(([a-z])\)$", re.IGNORECASE)
 
 # A page marker such as "VII-5" sits at the top of every page in this volume.
 _PAGE_MARKER: Final[re.Pattern[str]] = re.compile(r"^[IVXL]+-\d+$")
@@ -127,16 +157,38 @@ class PdfBoq:
     rejected: tuple[str, ...]
     """Rows that failed the arithmetic check, with the numbers, so nothing is silently dropped."""
 
+    stated_total: Decimal | None = None
+    """The total the bill states for itself, read from its own total row.
+
+    Kept separate from :attr:`total_amount`, which is what the rows add up to. Whether those two
+    agree is a question for a rule, and answering it here would be this module deciding that its own
+    parse is correct.
+    """
+
+    stated_total_page: int | None = None
+    stated_total_literal: str | None = None
+
     @property
     def total_amount(self) -> Decimal:
         return sum((row.amount for row in self.rows), Decimal(0))
 
 
 def _to_decimal(text: str) -> Decimal | None:
+    """Parse one table figure, honouring accounting parentheses as a negative.
+
+    ``(11,81,174.40)`` is minus eleven lakh, and a bill of quantities says so with brackets rather
+    than a minus sign. Dropping the bracket would turn a recovery into a charge, which is a sign
+    error in a payment figure -- the most expensive kind of misreading this module can commit.
+    """
+    stripped = text.strip()
+    negative = stripped.startswith("(") and stripped.endswith(")")
+    if negative:
+        stripped = stripped[1:-1]
     try:
-        return Decimal(text.replace(",", "").strip())
+        value = Decimal(stripped.replace(",", ""))
     except InvalidOperation:
         return None
+    return -value if negative else value
 
 
 def _agrees(quantity: Decimal, rate: Decimal, amount: Decimal) -> bool:
@@ -192,6 +244,87 @@ def _sequential_item_starts(numbered: list[tuple[int, str]]) -> list[int]:
     return starts
 
 
+def _unit_in(block: list[tuple[int, str]]) -> str | None:
+    """The unit for a block, whether it sits on its own line or ends the description line."""
+    unit = next((line for _, line in block if _UNIT.match(line)), None)
+    if unit is not None:
+        return unit
+    return next(
+        (
+            tail
+            for _, line in block
+            if (tail := line.rsplit(maxsplit=1)[-1] if line.split() else "") and _UNIT.match(tail)
+        ),
+        None,
+    )
+
+
+def _build_row(
+    identifier: str, block: list[tuple[int, str]], page_number: int, order: int
+) -> tuple[BoqRow | None, str | None]:
+    """One priced row from one block, or a reason it was refused.
+
+    The last three figures are quantity, rate and amount; anything earlier belongs to the
+    description, which quotes figures constantly ("not exceeding 25 mm", "1:4", "clause 601").
+    """
+    values = [
+        parsed
+        for _, line in block
+        if _MONEY_LINE.match(line) and (parsed := _to_decimal(line)) is not None
+    ]
+    if len(values) < 3:
+        return None, None
+
+    # More than one complete triple means the block holds more than one priced row, and taking the
+    # last would report one row under another's number -- silently, and with arithmetic that closes.
+    # Sub-items are handled before this point by splitting on their own markers; anything still
+    # holding two triples here is a block this reader has misread, and refusing is the honest
+    # answer.
+    if len(values) >= 6 and _agrees(values[-6], values[-5], values[-4]):
+        return None, (
+            f"item {identifier} (page {page_number}): the block contains more than one priced "
+            f"row — {values[-6]} x {values[-5]} = {values[-4]} and {values[-3]} x "
+            f"{values[-2]} = {values[-1]}. Refused: reporting either one as the item would be "
+            f"wrong, and this block is not the sub-item layout the reader knows"
+        )
+
+    quantity, rate, amount = values[-3], values[-2], values[-1]
+    description = " ".join(
+        line for _, line in block if not _MONEY_LINE.match(line) and not _UNIT.match(line)
+    ).strip()
+
+    if not _agrees(quantity, rate, amount):
+        return None, (
+            f"item {identifier} (page {page_number}): {quantity} x {rate} = {quantity * rate} "
+            f"but the amount is stated as {amount}; refused rather than reported, because a "
+            f"row whose arithmetic does not close was probably not read correctly"
+        )
+
+    return (
+        BoqRow(
+            item_identifier=identifier,
+            description=description[:2000],
+            unit=_unit_in(block),
+            quantity=quantity,
+            rate=rate,
+            amount=amount,
+            page=page_number,
+            order=order,
+        ),
+        None,
+    )
+
+
+def _stated_total(
+    numbered: list[tuple[int, str]], label_at: int
+) -> tuple[int, str, Decimal] | None:
+    """The figure the bill states as its own total: the first money line after the total label."""
+    for page_number, line in numbered[label_at + 1 :]:
+        if _MONEY_LINE.match(line) and (value := _to_decimal(line)) is not None:
+            return page_number, line, value
+    return None
+
+
 def read_pdf_boq(document: DocumentText) -> PdfBoq:
     """Extract priced line items from a bill of quantities in ``document``.
 
@@ -213,89 +346,50 @@ def read_pdf_boq(document: DocumentText) -> PdfBoq:
                 continue
             numbered.append((sheet.number, line))
 
-    starts = _sequential_item_starts(numbered)
+    # The bill ends at its own total row, and the scan has to end there too: without this the last
+    # item's block ran on and took the grand total as one of its three figures.
+    #
+    # Looked for *after* the first item rather than anywhere, because a "Total" in a preamble or a
+    # page footer would otherwise truncate the bill before it started -- and this failure is silent,
+    # producing an empty bill rather than a wrong one.
+    all_starts = _sequential_item_starts(numbered)
+    first_item = all_starts[0] if all_starts else 0
+    total_at = next(
+        (
+            index
+            for index, (_, line) in enumerate(numbered)
+            if index > first_item and _TOTAL_LABEL.match(line)
+        ),
+        None,
+    )
+    stated = _stated_total(numbered, total_at) if total_at is not None else None
+    items = numbered[:total_at] if total_at is not None else numbered
+
+    # A prefix of the lines yields a prefix of the item starts, so the sequence does not need
+    # recomputing -- filtering keeps the two views of the bill from being able to disagree.
+    starts = [index for index in all_starts if index < len(items)]
     rows: list[BoqRow] = []
     rejected: list[str] = []
 
     for position, start in enumerate(starts):
-        end = starts[position + 1] if position + 1 < len(starts) else len(numbered)
-        page_number, first_line = numbered[start]
+        end = starts[position + 1] if position + 1 < len(starts) else len(items)
+        page_number, first_line = items[start]
         match = _ITEM_NUMBER.match(first_line)
         identifier = match.group(1) if match else first_line
         # Whatever followed the number on its own line is the start of the description, and may
         # carry the unit at the end of it.
         remainder = (match.group(2) if match else None) or ""
-        block = ([(page_number, remainder)] if remainder else []) + numbered[start + 1 : end]
+        block = ([(page_number, remainder)] if remainder else []) + items[start + 1 : end]
         if len(block) > _MAX_DESCRIPTION_LINES + 8:
             # Far past the end of the table; the bill has finished and this is prose.
             continue
 
-        values = [
-            parsed
-            for _, line in block
-            if _MONEY_LINE.match(line) and (parsed := _to_decimal(line)) is not None
-        ]
-        if len(values) < 3:
-            continue
-
-        # More than one complete triple means the block holds more than one priced row. On the real
-        # document, items 21 and 22 each carry sub-items "(a)" and "(b)" with their own unit,
-        # quantity, rate and amount, and the parent row is a heading with no figures of its own.
-        #
-        # Taking the last triple reported sub-item (b) as though it were the item, silently and with
-        # internally consistent arithmetic — the same misattribution the sequence fix removed
-        # elsewhere. Refusing is the only honest option: this reader has no representation for a
-        # parent item with priced children, and inventing one from a positional guess would put a
-        # wrong quantity into a payment reconciliation.
-        if len(values) >= 6 and _agrees(values[-6], values[-5], values[-4]):
-            rejected.append(
-                f"item {identifier} (page {page_number}): the block contains more than one priced "
-                f"row — {values[-6]} x {values[-5]} = {values[-4]} and {values[-3]} x "
-                f"{values[-2]} = {values[-1]} — which is how this document writes sub-items "
-                f"'(a)' and '(b)'. Refused: reporting either one as the item would be wrong, and "
-                f"sub-items are not yet represented"
-            )
-            continue
-
-        # The last three are quantity, rate and amount; anything earlier belongs to the description
-        # (specifications quote figures constantly).
-        quantity, rate, amount = values[-3], values[-2], values[-1]
-        unit = next((line for _, line in block if _UNIT.match(line)), None)
-        if unit is None:
-            # On a merged row the unit is the last word of the description line.
-            unit = next(
-                (
-                    tail
-                    for _, line in block
-                    if (tail := line.rsplit(maxsplit=1)[-1] if line.split() else "")
-                    and _UNIT.match(tail)
-                ),
-                None,
-            )
-        description = " ".join(
-            line for _, line in block if not _MONEY_LINE.match(line) and not _UNIT.match(line)
-        ).strip()
-
-        if not _agrees(quantity, rate, amount):
-            rejected.append(
-                f"item {identifier} (page {page_number}): {quantity} x {rate} = {quantity * rate} "
-                f"but the amount is stated as {amount}; refused rather than reported, because a "
-                f"row whose arithmetic does not close was probably not read correctly"
-            )
-            continue
-
-        rows.append(
-            BoqRow(
-                item_identifier=identifier,
-                description=description[:2000],
-                unit=unit,
-                quantity=quantity,
-                rate=rate,
-                amount=amount,
-                page=page_number,
-                order=len(rows) + 1,
-            )
-        )
+        for sub_identifier, sub_block in _split_sub_items(identifier, block):
+            row, refusal = _build_row(sub_identifier, sub_block, page_number, len(rows) + 1)
+            if refusal is not None:
+                rejected.append(refusal)
+            elif row is not None:
+                rows.append(row)
 
     # The page of the first accepted row, not the page the heading appeared on. A bid document
     # references its bill of quantities in its contents long before it prices it — on the observed
@@ -304,7 +398,40 @@ def read_pdf_boq(document: DocumentText) -> PdfBoq:
         rows=tuple(rows),
         first_page=rows[0].page if rows else None,
         rejected=tuple(rejected),
+        stated_total=stated[2] if stated else None,
+        stated_total_page=stated[0] if stated else None,
+        stated_total_literal=stated[1] if stated else None,
     )
+
+
+def _split_sub_items(
+    identifier: str, block: list[tuple[int, str]]
+) -> list[tuple[str, list[tuple[int, str]]]]:
+    """One item block, split into the priced rows it actually contains.
+
+    Items 21 and 22 of the real document are headings — a description, no figures — whose prices
+    live in sub-items ``(a)`` and ``(b)``, each with its own unit, quantity, rate and amount. That
+    is normal practice in a bill of quantities, not a quirk of this one.
+
+    The parent's description is kept on each sub-item, because on its own ``5th kilometre stone``
+    is not an item of work; the sentence a surveyor needs is the heading plus the qualifier.
+    Identifiers become ``21(a)`` and ``21(b)``, which are what the document calls them, and which
+    stay distinct from ``21`` under the existing identifier normalisation without any change to it.
+
+    A block with no markers is returned unchanged, so the ordinary case pays nothing for this.
+    """
+    marks = [index for index, (_, line) in enumerate(block) if _SUB_ITEM.match(line)]
+    if not marks:
+        return [(identifier, block)]
+
+    heading = block[: marks[0]]
+    split: list[tuple[str, list[tuple[int, str]]]] = []
+    for position, mark in enumerate(marks):
+        end = marks[position + 1] if position + 1 < len(marks) else len(block)
+        match = _SUB_ITEM.match(block[mark][1])
+        letter = match.group(1).lower() if match else str(position)
+        split.append((f"{identifier}({letter})", heading + block[mark + 1 : end]))
+    return split
 
 
 def fact_kinds() -> dict[str, FactKind]:
@@ -315,11 +442,16 @@ def fact_kinds() -> dict[str, FactKind]:
         FIELD_CONTRACTED_QUANTITY: FactKind.QUANTITY,
         FIELD_CONTRACT_RATE: FactKind.MONEY,
         FIELD_LINE_AMOUNT: FactKind.MONEY,
+        FIELD_STATED_BILL_TOTAL: FactKind.MONEY,
     }
 
 
 def currency_for(fact_type: str) -> str | None:
-    return CURRENCY_INR if fact_type in {FIELD_CONTRACT_RATE, FIELD_LINE_AMOUNT} else None
+    return (
+        CURRENCY_INR
+        if fact_type in {FIELD_CONTRACT_RATE, FIELD_LINE_AMOUNT, FIELD_STATED_BILL_TOTAL}
+        else None
+    )
 
 
 def boq_fields(boq: PdfBoq) -> list[tuple[str, BoqRow]]:

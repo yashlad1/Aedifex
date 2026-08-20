@@ -18,6 +18,11 @@ from typing import Final
 
 from aedifex.extraction.tender_notice import TenderNotice
 from aedifex.infrastructure.database.models import DerivedFact
+from aedifex.verification.bill_total import (
+    BILL_TOTAL_RULE_ID,
+    BILL_TOTAL_RULE_VERSION,
+    evaluate_bill_total,
+)
 from aedifex.verification.cross_document import (
     AGREEMENT_RULE_ID,
     SHARE_CONSISTENCY_RULE_ID,
@@ -39,6 +44,8 @@ __all__ = [
     "AGREEMENT_RULE_ID",
     "BID_SECURITY_RULE_ID",
     "BID_SECURITY_RULE_VERSION",
+    "BILL_TOTAL_RULE_ID",
+    "BILL_TOTAL_RULE_VERSION",
     "NOT_SOURCED",
     "PROJECT_RULES",
     "RULES",
@@ -48,18 +55,20 @@ __all__ = [
     "RuleResult",
     "evaluate_all",
     "evaluate_bid_security",
+    "evaluate_bill_total",
     "evaluate_project",
 ]
 
-# Rules take the notice plus keyword options. Only one option exists so far and only one rule reads
-# it; a rule that does not care simply does not declare it. This is kept this plain deliberately --
-# a dispatch layer for options nobody has asked for yet would be the premature generality this
-# milestone is meant to avoid.
+# Rules take the notice plus keyword options. Every rule is handed every option and absorbs the ones
+# it does not read, which is why each declares ``**_unused``. Kept this plain deliberately: a
+# dispatch layer that worked out which rule wants which option would be more machinery than two
+# rules and two options can justify.
 Rule = Callable[..., RuleResult]
 ProjectRule = Callable[[ProjectFacts], ProjectRuleResult]
 
 RULES: Final[Mapping[str, Rule]] = {
     BID_SECURITY_RULE_ID: evaluate_bid_security,
+    BILL_TOTAL_RULE_ID: evaluate_bill_total,
 }
 
 
@@ -68,6 +77,8 @@ def evaluate_all(
     *,
     prescribed_share: Decimal | None = None,
     share: DerivedFact | None = None,
+    refused_rows: int = 0,
+    bill_total: DerivedFact | None = None,
 ) -> tuple[RuleResult, ...]:
     """Run every registered rule over one document's facts, in a stable order.
 
@@ -80,9 +91,19 @@ def evaluate_all(
             unset, each rule uses whatever the document states about itself.
         share: The derived bid-security share for this document, produced by the calculation layer.
             Rules consume it rather than dividing again.
+        refused_rows: How many table rows the extractor declined to return. A rule that sums rows
+            needs this to know its sum is incomplete; every rule receives it and most ignore it.
+        bill_total: The summed line amounts of this document's bill of quantities, produced by the
+            calculation layer with one input row per line item.
     """
     return tuple(
-        RULES[rule_id](notice, prescribed_share=prescribed_share, share=share)
+        RULES[rule_id](
+            notice,
+            prescribed_share=prescribed_share,
+            share=share,
+            refused_rows=refused_rows,
+            bill_total=bill_total,
+        )
         for rule_id in sorted(RULES)
     )
 

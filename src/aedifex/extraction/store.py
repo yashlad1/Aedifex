@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -50,12 +51,35 @@ def _fingerprint(inputs: Mapping[str, ExtractedFact]) -> str:
 
 
 __all__ = [
+    "FactSet",
     "persist_derived_facts",
     "persist_facts",
     "persist_finding",
     "persist_project_finding",
     "persist_work_item_finding",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class FactSet:
+    """Every fact one document yielded, and the subset that is addressable by type.
+
+    Two views, because two callers want different things and conflating them has now caused the
+    same bug twice. A rule asking for "the estimated cost" wants one fact; a calculation summing a
+    bill of quantities wants all 37 of its rows. The first version of this returned only a
+    type-keyed dict, so summing a bill produced the total of whichever row happened to be written
+    last — a wrong figure that looked like a right one.
+    """
+
+    all: tuple[ExtractedFact, ...]
+    """Every fact written, in extraction order."""
+
+    by_type: dict[str, ExtractedFact]
+    """Document-scoped facts only, keyed by type.
+
+    Row-scoped facts are deliberately absent: a bill states thirty-seven line amounts and none of
+    them is *the* line amount. Rows are reached through their work item, or through the whole list.
+    """
 
 
 def persist_facts(
@@ -65,15 +89,14 @@ def persist_facts(
     *,
     extractor: str = EXTRACTOR,
     extractor_version: str = EXTRACTOR_VERSION,
-) -> dict[str, ExtractedFact]:
-    """Write one row per extracted field, keyed by fact type for the caller's convenience.
+) -> FactSet:
+    """Write one row per extracted field.
 
     Fields the extractor could not find are simply absent — never written as a row with a null
     value. An absent fact and a fact whose value is unknown are different claims, and only the
     first is true here.
     """
-    # Keyed by fact type for callers that expect one of each; a table's rows are reached through
-    # their work item instead, which is the only sane way to address them.
+    written: list[ExtractedFact] = []
     stored: dict[str, ExtractedFact] = {}
     for field in notice.fields:
         # Keyed on the row as well as the type, because a table states the same kind of fact once
@@ -106,10 +129,12 @@ def persist_facts(
         row.extractor_version = extractor_version
         if existing is None:
             session.add(row)
-        stored[field.name] = row
+        written.append(row)
+        if field.sheet_row is None:
+            stored[field.name] = row
 
     session.flush()
-    return stored
+    return FactSet(all=tuple(written), by_type=stored)
 
 
 def persist_finding(

@@ -28,12 +28,14 @@ from sqlalchemy.orm import Session
 
 from aedifex.calculation.engine import (
     DERIVED_BID_SECURITY_SHARE,
+    DERIVED_BILL_ITEMS_TOTAL,
     compute_for_document,
     compute_for_work_item,
 )
 from aedifex.domain.documents import DocumentState, assert_transition_allowed
 from aedifex.errors import ExtractionError
 from aedifex.extraction.pdf_boq import (
+    FIELD_STATED_BILL_TOTAL,
     PdfBoq,
     boq_fields,
     currency_for,
@@ -165,15 +167,21 @@ def analyse_document(
     # Calculate, then judge. The order is the architecture: the calculation layer turns facts into
     # reusable derived facts and knows nothing about thresholds, and the rules consume what it
     # produced rather than dividing the same two numbers again.
-    calculated = compute_for_document(list(facts.values()))
+    #
+    # Given *every* fact, not one per type. A bill of quantities states thirty-seven line amounts
+    # and the calculation that sums them needs all of them; passing the type-keyed view summed one
+    # row and called it the bill total.
+    calculated = compute_for_document(list(facts.all))
     derived = persist_derived_facts(session, calculated, document_id=document_id)
 
     findings = tuple(
-        persist_finding(session, document_id, result, facts)
+        persist_finding(session, document_id, result, facts.by_type)
         for result in evaluate_all(
             notice,
             prescribed_share=prescribed_share,
             share=derived.get(DERIVED_BID_SECURITY_SHARE),
+            refused_rows=len(boq.rejected),
+            bill_total=derived.get(DERIVED_BILL_ITEMS_TOTAL),
         )
     )
 
@@ -183,7 +191,7 @@ def analyse_document(
     _log.info(
         "analysis.finished",
         document_id=str(document_id),
-        facts=len(facts),
+        facts=len(facts.all),
         derived=len(derived),
         findings=len(findings),
         pages_read=text.pages_read,
@@ -195,7 +203,7 @@ def analyse_document(
     return AnalysisOutcome(
         document_id=document_id,
         notice=notice,
-        facts=tuple(facts.values()),
+        facts=facts.all,
         derived=tuple(derived.values()),
         findings=findings,
         pages_read=text.pages_read,
@@ -339,12 +347,12 @@ def analyse_spreadsheet(
         document_id=str(document_id),
         document_type=document.document_type.value,
         rows=len(sheet.rows),
-        facts=len(facts),
+        facts=len(facts.all),
     )
     return AnalysisOutcome(
         document_id=document_id,
         notice=notice,
-        facts=tuple(facts.values()),
+        facts=facts.all,
         derived=(),
         findings=(),
         pages_read=len(sheet.rows),
@@ -380,6 +388,28 @@ def _boq_fields(boq: PdfBoq) -> tuple[ExtractedField, ...]:
                     snippet=f"BOQ item {row.item_identifier}, page {row.page}",
                 ),
                 method=f"pdf_boq:item {row.item_identifier}",
+            )
+        )
+
+    # The bill's own total, if it states one. Document-scoped -- no ``sheet_row`` -- because it is a
+    # statement about the whole bill rather than about a row, and because that is what makes it
+    # deduplicate to one fact per document under the existing partial unique indexes.
+    if boq.stated_total is not None and boq.stated_total_page is not None:
+        fields.append(
+            ExtractedField(
+                name=FIELD_STATED_BILL_TOTAL,
+                kind=kinds[FIELD_STATED_BILL_TOTAL],
+                literal=(boq.stated_total_literal or f"{boq.stated_total}")[:512],
+                value=boq.stated_total,
+                currency=currency_for(FIELD_STATED_BILL_TOTAL),
+                unit=None,
+                evidence=Evidence(
+                    page=boq.stated_total_page,
+                    start=0,
+                    end=0,
+                    snippet=f"BOQ total, page {boq.stated_total_page}",
+                ),
+                method="pdf_boq:stated total",
             )
         )
     return tuple(fields)

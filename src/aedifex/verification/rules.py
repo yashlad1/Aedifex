@@ -131,6 +131,7 @@ def evaluate_bid_security(
     *,
     prescribed_share: Decimal | None = None,
     share: DerivedFact | None = None,
+    **_unused: object,
 ) -> RuleResult:
     """Check a notice's bid security against the share it is required to be.
 
@@ -140,6 +141,10 @@ def evaluate_bid_security(
             Overrides the rate extracted from the document. This parameter is the whole
             configuration seam — a caller who has sourced a rate elsewhere can supply it — and
             deliberately not a global setting, because the rate varies by tender.
+        share: The derived bid-security share, produced by the calculation layer. Consumed rather
+            than recomputed here.
+        **_unused: Options other rules declare. Accepted and ignored, because the registry hands
+            every rule the same keywords.
 
     Returns:
         ``PASS``/``FAIL`` when a rate was available, otherwise ``INCONCLUSIVE``. The observed share
