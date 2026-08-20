@@ -19,7 +19,7 @@ from typing import Annotated, Final
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from aedifex import __version__
 from aedifex.acquisition.catalog import (
@@ -35,6 +35,7 @@ from aedifex.acquisition.catalog import (
 from aedifex.acquisition.registry import SourceDefinition, SourceRegistry, get_registry
 from aedifex.config import Settings, get_settings
 from aedifex.errors import SourceRegistryError
+from aedifex.infrastructure.database.models import ExtractedFact, Finding
 from aedifex.infrastructure.database.session import session_scope
 from aedifex.infrastructure.observability.logging import (
     bind_job_context,
@@ -315,6 +316,135 @@ class CrawlRunListResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class FactResponse(BaseModel):
+    """One extracted fact and the span of the document that supports it.
+
+    Carries the literal alongside the normalised value on purpose. A caller who disagrees with our
+    parse of "Rs. 16.93 Lacs" can see exactly what the document said and argue with the number
+    rather than having to trust it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    fact_id: str
+    document_id: str
+    fact_type: str
+    literal: str
+    value: str | None
+    currency: str | None
+    page: int
+    span_start: int
+    span_end: int
+    snippet: str
+    method: str
+    extractor: str
+    extractor_version: str
+    extracted_at: str
+
+    @classmethod
+    def from_row(cls, row: ExtractedFact) -> FactResponse:
+        return cls(
+            fact_id=str(row.id),
+            document_id=str(row.document_id),
+            fact_type=row.fact_type,
+            literal=row.literal,
+            # Serialised as a string, not a float: these are exact decimals and JSON numbers are
+            # not. A money value that survives extraction only to be rounded by a JSON parser has
+            # been corrupted at the last possible moment.
+            value=None if row.numeric_value is None else str(row.numeric_value),
+            currency=row.currency,
+            page=row.page,
+            span_start=row.span_start,
+            span_end=row.span_end,
+            snippet=row.snippet,
+            method=row.method,
+            extractor=row.extractor,
+            extractor_version=row.extractor_version,
+            extracted_at=row.extracted_at.isoformat(),
+        )
+
+
+class EvidenceResponse(BaseModel):
+    """A finding's citation of one fact: which fact, in what role, and where it was found."""
+
+    model_config = ConfigDict(frozen=True)
+
+    role: str
+    fact_id: str
+    fact_type: str
+    literal: str
+    page: int
+    snippet: str
+
+
+class FindingResponse(BaseModel):
+    """One rule's verdict on one document, with the evidence it rested on.
+
+    ``outcome`` may be ``inconclusive``, and that is a first-class answer rather than a failure:
+    it means the rule could not source a threshold it was willing to judge against. Clients must
+    render it distinctly from ``pass`` — ``expected`` reads ``NOT SOURCED`` in that case.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    finding_id: str
+    document_id: str
+    rule_id: str
+    rule_version: str
+    outcome: str
+    summary: str
+    expected: str
+    observed: str
+    detail: dict[str, object]
+    evaluated_at: str
+    evidence: list[EvidenceResponse]
+
+    @classmethod
+    def from_row(cls, row: Finding, facts: dict[uuid.UUID, ExtractedFact]) -> FindingResponse:
+        cited: list[EvidenceResponse] = []
+        for link in sorted(row.evidence, key=lambda e: e.role):
+            fact = facts.get(link.fact_id)
+            if fact is None:
+                continue
+            cited.append(
+                EvidenceResponse(
+                    role=link.role,
+                    fact_id=str(fact.id),
+                    fact_type=fact.fact_type,
+                    literal=fact.literal,
+                    page=fact.page,
+                    snippet=fact.snippet,
+                )
+            )
+        return cls(
+            finding_id=str(row.id),
+            document_id=str(row.document_id),
+            rule_id=row.rule_id,
+            rule_version=row.rule_version,
+            outcome=row.outcome,
+            summary=row.summary,
+            expected=row.expected,
+            observed=row.observed,
+            detail=dict(row.detail),
+            evaluated_at=row.evaluated_at.isoformat(),
+            evidence=cited,
+        )
+
+
+class FactListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    returned: int
+    facts: list[FactResponse]
+
+
+class FindingListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    returned: int
+    findings: list[FindingResponse]
+
+
 def settings_dependency() -> Settings:
     return get_settings()
 
@@ -511,6 +641,53 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown document {document_id}"
             )
         return DocumentResponse.from_entry(entry)
+
+    @app.get(
+        f"{API_PREFIX}/documents/{{document_id}}/facts",
+        response_model=FactListResponse,
+        tags=["analysis"],
+    )
+    def get_document_facts(document_id: uuid.UUID) -> FactListResponse:
+        """Every fact extracted from one document, newest extractor version included.
+
+        Facts from superseded extractor versions are returned too. They are what older findings
+        were computed from, so hiding them would make a stored verdict unexplainable.
+        """
+        with session_scope() as session:
+            rows = list(
+                session.execute(
+                    select(ExtractedFact)
+                    .where(ExtractedFact.document_id == document_id)
+                    .order_by(ExtractedFact.extractor_version, ExtractedFact.fact_type)
+                ).scalars()
+            )
+        return FactListResponse(
+            returned=len(rows), facts=[FactResponse.from_row(row) for row in rows]
+        )
+
+    @app.get(
+        f"{API_PREFIX}/documents/{{document_id}}/findings",
+        response_model=FindingListResponse,
+        tags=["analysis"],
+    )
+    def get_document_findings(document_id: uuid.UUID) -> FindingListResponse:
+        """Every rule verdict for one document, each with the facts it cited."""
+        with session_scope() as session:
+            rows = list(
+                session.execute(
+                    select(Finding)
+                    .where(Finding.document_id == document_id)
+                    .order_by(Finding.rule_id, Finding.rule_version)
+                ).scalars()
+            )
+            facts = {
+                row.id: row
+                for row in session.execute(
+                    select(ExtractedFact).where(ExtractedFact.document_id == document_id)
+                ).scalars()
+            }
+            payload = [FindingResponse.from_row(row, facts) for row in rows]
+        return FindingListResponse(returned=len(payload), findings=payload)
 
     @app.get(f"{API_PREFIX}/corpus", response_model=CorpusSummaryResponse, tags=["corpus"])
     def get_corpus_summary() -> CorpusSummaryResponse:

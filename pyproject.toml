@@ -37,6 +37,10 @@ dependencies = [
     # the checksum support this uses to have the *server* verify an upload is an S3 API feature that
     # a MinIO-specific client would not exercise the same way.
     "boto3>=1.36,<2",
+    # PDF text extraction. pypdf rather than PyMuPDF because PyMuPDF is AGPL and this project is
+    # proprietary; pypdf is BSD-3-Clause. pdfplumber would give per-character coordinates, which
+    # would make evidence spans richer, but it is not needed to locate a value to a page.
+    "pypdf>=6.1,<7",
 ]
 
 [project.optional-dependencies]

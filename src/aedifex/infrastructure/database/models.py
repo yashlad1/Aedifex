@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 
 from sqlalchemy import (
@@ -44,6 +45,7 @@ from sqlalchemy import (
     Index,
     Integer,
     MetaData,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -238,6 +240,8 @@ class Document(Base):
 
     sightings: Mapped[list[DiscoveredUrl]] = relationship(back_populates="document")
     retrievals: Mapped[list[DocumentRetrieval]] = relationship(back_populates="document")
+    facts: Mapped[list[ExtractedFact]] = relationship(back_populates="document")
+    findings: Mapped[list[Finding]] = relationship(back_populates="document")
 
     __table_args__ = (
         CheckConstraint(f"sha256 {_SHA256_HEX}", name="sha256_is_lower_hex"),
@@ -413,3 +417,135 @@ class DiscoveredUrl(Base):
             postgresql_where=text_clause("dead_lettered_at IS NULL"),
         ),
     )
+
+
+class ExtractedFact(Base):
+    """One value read out of one document, with the evidence for it.
+
+    The unit of the intelligence layer, and deliberately narrow: a fact is a *single* value, its
+    normalised form, and where in the document it was found. Facts are not interpreted here and
+    carry no judgement -- that is what findings are for.
+
+    Append-only within an extractor version. Re-running the same extractor over the same document
+    is idempotent because of the unique constraint; changing the extractor produces a new row rather
+    than overwriting the old one, so a finding made last month can still be read against the facts
+    that actually produced it. Evidence that can be silently rewritten is not evidence.
+
+    ``numeric_value`` is NUMERIC, not double precision. These values reach a division and a
+    percentage comparison, and binary floating point is not a thing to do arithmetic on money with.
+    """
+
+    __tablename__ = "extracted_facts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+
+    fact_type: Mapped[str] = mapped_column(String(64))
+    """What the value is: ``estimated_cost``, ``bid_security``, ``nit_number``."""
+
+    literal: Mapped[str] = mapped_column(String(512))
+    """The text exactly as the document rendered it, so a parse can be argued with."""
+
+    numeric_value: Mapped[Decimal | None] = mapped_column(Numeric(20, 2), default=None)
+    currency: Mapped[str | None] = mapped_column(String(3), default=None)
+
+    # Where it came from. A fact without these is an assertion.
+    page: Mapped[int] = mapped_column(Integer)
+    span_start: Mapped[int] = mapped_column(Integer)
+    span_end: Mapped[int] = mapped_column(Integer)
+    snippet: Mapped[str] = mapped_column(Text)
+    """Verbatim surrounding text, so a reviewer can judge the value without opening the PDF."""
+
+    method: Mapped[str] = mapped_column(String(128))
+    """Which extraction rule produced it, e.g. ``table:header-block``."""
+
+    extractor: Mapped[str] = mapped_column(String(64))
+    extractor_version: Mapped[str] = mapped_column(String(32))
+    extracted_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    document: Mapped[Document] = relationship(back_populates="facts")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "fact_type",
+            "extractor_version",
+            name="one_fact_per_type_per_extractor_version",
+        ),
+        CheckConstraint("page >= 1", name="page_is_one_based"),
+        CheckConstraint("span_end >= span_start", name="span_is_whole"),
+        CheckConstraint("currency IS NULL OR currency = upper(currency)", name="currency_is_upper"),
+    )
+
+
+class Finding(Base):
+    """The result of evaluating one deterministic rule against one document's facts.
+
+    A finding says what was checked, what was expected, what was observed, and which facts it read.
+    It stores the observed value rather than only the verdict, because "FAIL" without the number is
+    not a result anybody can act on -- and because a threshold that later turns out to be wrong
+    should be re-judgeable without re-running anything.
+
+    Rules are versioned. A verdict is only reproducible if you know which version of which rule
+    produced it, and rule thresholds are exactly the kind of thing that gets revised once real
+    documents disagree with them.
+    """
+
+    __tablename__ = "findings"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+
+    rule_id: Mapped[str] = mapped_column(String(64))
+    rule_version: Mapped[str] = mapped_column(String(32))
+    outcome: Mapped[str] = mapped_column(String(16), index=True)
+    """``pass``, ``fail``, or ``inconclusive``. Inconclusive is not a failure of the document."""
+
+    summary: Mapped[str] = mapped_column(Text)
+    expected: Mapped[str] = mapped_column(String(256))
+    observed: Mapped[str] = mapped_column(String(256))
+
+    detail: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
+    """The numbers the rule used, as strings, so the arithmetic can be re-checked by hand."""
+
+    evaluated_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    document: Mapped[Document] = relationship(back_populates="findings")
+    evidence: Mapped[list[FindingEvidence]] = relationship(
+        back_populates="finding", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id", "rule_id", "rule_version", name="one_finding_per_rule_version"
+        ),
+        CheckConstraint("outcome IN ('pass', 'fail', 'inconclusive')", name="outcome_is_known"),
+    )
+
+
+class FindingEvidence(Base):
+    """Which fact a finding relied on, and in what capacity.
+
+    A join table rather than a JSON list of ids, so the database itself refuses a finding that
+    points at a fact which no longer exists. This is the link that makes a result traceable all the
+    way back to a page span of a stored document, which is the property the whole pipeline exists to
+    have.
+    """
+
+    __tablename__ = "finding_evidence"
+
+    finding_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("findings.id", ondelete="CASCADE"), primary_key=True
+    )
+    fact_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("extracted_facts.id", ondelete="RESTRICT"), primary_key=True
+    )
+    role: Mapped[str] = mapped_column(String(64))
+    """How the rule used it, e.g. ``estimated_cost``. Names the slot, not just the link."""
+
+    finding: Mapped[Finding] = relationship(back_populates="evidence")
+    fact: Mapped[ExtractedFact] = relationship()

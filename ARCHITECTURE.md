@@ -83,16 +83,29 @@ Phase 0 is complete. Implemented and tested:
 | robots.txt, frontier queue, discovery, crawl runner | [acquisition/crawl/](src/aedifex/acquisition/crawl/) |
 | Corpus catalog and operational metrics | [catalog.py](src/aedifex/acquisition/catalog.py) |
 | Operator entry point | [apps/crawler/main.py](apps/crawler/main.py) |
+| Bounded PDF text extraction | [extraction/pdftext.py](src/aedifex/extraction/pdftext.py) |
+| Indian money parsing, NIT field extraction | [extraction/quantities.py](src/aedifex/extraction/quantities.py), [extraction/tender_notice.py](src/aedifex/extraction/tender_notice.py) |
+| Facts, findings, evidence links | [extraction/store.py](src/aedifex/extraction/store.py), `extracted_facts` / `findings` / `finding_evidence` |
+| Deterministic rules and registry | [verification/](src/aedifex/verification/) |
+| Analysis pipeline | [extraction/runner.py](src/aedifex/extraction/runner.py) |
 
-The acquisition pipeline is complete end to end and has been run: a source definition produces a
-crawl that reads listing pages, fills a durable frontier, downloads documents, verifies them, stores
-them immutably, and records provenance — against local servers we control. **No real portal has been
-crawled**, because no source's terms have been reviewed and the registry refuses to enable one that
-has not (ADR 0006, rule 60).
+The pipeline is complete end to end and has been run against a real portal. NHAI's terms were
+reviewed and recorded (ADR 0006, rule 60), its tender API was reverse-engineered from the portal's own
+JS bundle, and a bounded crawl acquired real tender documents into immutable storage with provenance.
+Those documents then went the rest of the way: bounded text extraction, field extraction with page
+spans, facts and findings in PostgreSQL, a deterministic rule, and a result readable over CLI and API
+whose evidence points back at the page it came from.
 
-Not yet built: parsing, OCR, classification, archive expansion, synthetic generation, the evidence
-graph, the rules engine, and the risk engine. Directories for those are created when their first real
-code lands, rather than kept as empty scaffolding.
+One property of that path is worth stating because it was nearly got wrong. A rule's threshold is
+**evidence, not configuration**. The first notice read implied a 2% bid security; hardcoding it would
+have failed a legitimate tender whose own Instructions to Bidders prescribe 1%. So the prescribed rate
+is extracted as a fact with its own page and span, supplied to the rule as an input, and where no rate
+can be sourced the rule measures the ratio and returns `INCONCLUSIVE` rather than inventing a
+threshold to judge against.
+
+Not yet built: OCR (one acquired document is image-only), classification, archive expansion, synthetic
+generation, entities and relationships, the evidence graph, and the risk engine. Directories for those
+are created when their first real code lands, rather than kept as empty scaffolding.
 
 ## Key decisions and their reasons
 

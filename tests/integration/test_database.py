@@ -155,6 +155,9 @@ class TestMigrations:
             "documents",
             "discovered_urls",
             "document_retrievals",
+            "extracted_facts",
+            "findings",
+            "finding_evidence",
         }
 
     def test_enum_columns_persist_lowercase_values(self, session: Session) -> None:

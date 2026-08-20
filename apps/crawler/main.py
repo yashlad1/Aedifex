@@ -25,6 +25,8 @@ import argparse
 import signal
 import sys
 import threading
+import uuid
+from decimal import Decimal
 from ipaddress import ip_address
 from pathlib import Path
 from types import FrameType
@@ -32,7 +34,8 @@ from typing import TYPE_CHECKING
 
 import boto3
 from botocore.config import Config as BotoConfig
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
 
 from aedifex import __version__
 from aedifex.acquisition.catalog import (
@@ -51,6 +54,8 @@ from aedifex.acquisition.registry import get_registry
 from aedifex.acquisition.registry.models import SourceDefinition
 from aedifex.config import Settings, get_settings
 from aedifex.errors import AedifexError, ConfigurationError
+from aedifex.extraction.runner import DEFAULT_MAX_PAGES, AnalysisOutcome, analyse_document
+from aedifex.infrastructure.database.models import Document, ExtractedFact
 from aedifex.infrastructure.database.session import build_engine
 from aedifex.infrastructure.observability.logging import configure_logging, get_logger
 from aedifex.infrastructure.storage.objects import RawObjectStore
@@ -72,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
             return _sources()
         if args.command == "crawl":
             return _crawl(args, settings)
+        if args.command == "analyse":
+            return _analyse(args, settings)
         if args.command == "status":
             return _status(args, settings)
     except AedifexError as error:
@@ -104,6 +111,26 @@ def _parser() -> argparse.ArgumentParser:
     crawl.add_argument("--max-pages", type=int, default=None)
     crawl.add_argument("--max-seconds", type=float, default=None)
     crawl.add_argument("--batch-size", type=int, default=10)
+
+    analyse = commands.add_parser(
+        "analyse", help="Extract facts from an acquired document and evaluate the rules"
+    )
+    target = analyse.add_mutually_exclusive_group(required=True)
+    target.add_argument("document_id", nargs="?", help="A document UUID from the catalog")
+    target.add_argument(
+        "--all", action="store_true", help="Analyse every acquired document, oldest first"
+    )
+    analyse.add_argument("--max-pages", type=int, default=DEFAULT_MAX_PAGES)
+    analyse.add_argument(
+        "--prescribed-share",
+        type=Decimal,
+        default=None,
+        metavar="FRACTION",
+        help=(
+            "Bid-security rate to judge against, as a fraction (0.01 for 1%%). Use only for a rate "
+            "you can cite; without it, a document that states no rate is measured, not judged."
+        ),
+    )
 
     status = commands.add_parser("status", help="Show the corpus, the queue, and recent runs")
     status.add_argument("--source", default=None)
@@ -206,6 +233,87 @@ def _crawl(args: argparse.Namespace, settings: Settings) -> int:
     print(f"success rate {outcome.success_rate:.1%}, duplicate rate {outcome.duplicate_rate:.1%}")
     # A cancelled run is not a failure; it is a run that was asked to stop and did so cleanly.
     return 0 if outcome.succeeded or outcome.stop_reason.value == "cancelled" else 1
+
+
+def _analyse(args: argparse.Namespace, settings: Settings) -> int:
+    """Run the analysis pipeline and print the evidence behind every verdict.
+
+    The output leads with the finding and then shows the facts it rested on, page by page, because a
+    verdict a reader cannot trace is not worth printing. An ``INCONCLUSIVE`` result is displayed as
+    plainly as a pass: the ratio is still shown, and ``expected`` reads ``NOT SOURCED`` so that
+    "we did not judge this" can never be mistaken for "this passed".
+    """
+    engine = build_engine(settings)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    store = RawObjectStore(_s3(settings), bucket=settings.storage_bucket)
+
+    with sessions() as session:
+        if args.all:
+            targets = list(
+                session.execute(select(Document.id).order_by(Document.first_seen_at)).scalars()
+            )
+        else:
+            targets = [uuid.UUID(args.document_id)]
+
+        if not targets:
+            print("no acquired documents to analyse")
+            return 0
+
+        failures = 0
+        for index, document_id in enumerate(targets):
+            if index:
+                print()
+            try:
+                outcome = analyse_document(
+                    session,
+                    store,
+                    document_id,
+                    max_pages=args.max_pages,
+                    prescribed_share=args.prescribed_share,
+                )
+                session.commit()
+            except AedifexError as error:
+                session.rollback()
+                failures += 1
+                print(f"{document_id}  ERROR  {error}")
+                continue
+            _print_analysis(session, outcome)
+
+    return 1 if failures else 0
+
+
+def _print_analysis(session: Session, outcome: AnalysisOutcome) -> None:
+    document = session.get(Document, outcome.document_id)
+    name = (document.original_filename if document else None) or str(outcome.document_id)
+    print(f"DOCUMENT  {name}")
+    print(f"  id {outcome.document_id}")
+    print(
+        f"  {outcome.page_count} pages, {outcome.pages_read} read"
+        f"{'' if outcome.had_text_layer else '  (NO TEXT LAYER - needs OCR)'}"
+    )
+
+    if outcome.facts:
+        print("\nFACTS")
+        for fact in sorted(outcome.facts, key=lambda f: f.fact_type):
+            value = f"{fact.numeric_value:,}" if fact.numeric_value is not None else fact.literal
+            unit = f" {fact.currency}" if fact.currency else ""
+            print(f"  {fact.fact_type:32} {value}{unit}")
+            print(f"  {'':32} literal {fact.literal!r}  page {fact.page}  [{fact.method}]")
+
+    print("\nFINDINGS")
+    for finding in outcome.findings:
+        print(f"  {finding.rule_id} (v{finding.rule_version})")
+        print(f"    observed  {finding.observed}")
+        print(f"    expected  {finding.expected}")
+        print(f"    result    {finding.outcome.upper()}")
+        print(f"    {finding.summary}")
+        for link in sorted(finding.evidence, key=lambda e: e.role):
+            cited = session.get(ExtractedFact, link.fact_id)
+            if cited is not None:
+                print(f"    evidence  {link.role} -> page {cited.page}: {cited.snippet[:140]}")
+
+    for note in outcome.unsupported:
+        print(f"  not extracted: {note}")
 
 
 def _status(args: argparse.Namespace, settings: Settings) -> int:

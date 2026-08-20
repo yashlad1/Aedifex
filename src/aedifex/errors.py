@@ -12,6 +12,7 @@ __all__ = [
     "AcquisitionError",
     "AedifexError",
     "ConfigurationError",
+    "ExtractionError",
     "InvalidStateTransitionError",
     "SourceNotCollectableError",
     "SourceRegistryError",
@@ -55,6 +56,15 @@ class UnsafeContentError(AcquisitionError):
     Raised for oversized payloads, disallowed media types, and filenames that attempt
     path traversal. Carrying its own type means these events can be counted and alerted
     on separately from ordinary transport failures.
+    """
+
+
+class ExtractionError(AedifexError):
+    """A document could not be turned into text or facts.
+
+    Distinct from :class:`AcquisitionError`: the bytes arrived intact and are still valid evidence.
+    What failed is our reading of them, which is our problem and not the source's. Raising this
+    never invalidates a stored object or its provenance.
     """
 
 
