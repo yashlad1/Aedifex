@@ -179,6 +179,32 @@ unit differs from another by case alone; an equivalence table is a different cla
 from a single portal's spelling habits is the per-portal special case principle 10 names. A second
 real document can answer it.
 
+### N6. Five real objects sit in immutable storage with no provenance at all
+
+Nine NHAI PDFs are in the raw tier; four have a document row. The other five have **no document row,
+no retrieval row, and no frontier row** — the frontier's only four `downloaded` entries all carry a
+`document_id`. Nothing in the database records where those bytes came from.
+
+They include the two most valuable documents in the corpus: `65ab…`, the 145-page bid document whose
+Instructions to Bidders prescribe 1% bid security at clause 13.2 — the only document that can drive
+the bid-security rule to a PASS — and `cc8a…` at 232 pages.
+
+**They cannot be admitted to the evidence graph, and must not be.** Ingesting them as uploads would
+record an upload that never happened; writing retrieval rows would invent a URL and an HTTP status.
+Either is a fabricated provenance row, which is the one thing the project's own rules name as never
+permissible. Nor are they deleted: the raw tier is immutable.
+
+The only honest route is re-acquisition from the live source, which produces genuine provenance and,
+because storage is content-addressed, resolves to the same five keys without duplicating anything.
+That is blocked on the crawler contact address. NEXT, and blocked on the owner rather than on code.
+
+**The general gap this exposes:** `scripts/audit_traceability.py` walks findings *down* to artifacts
+and would never have found this, because these objects support no finding. Nothing walks the other
+direction — artifact up to provenance — to detect bytes in the evidence store that nothing explains.
+That check is a small extension of the existing script rather than new infrastructure, and it is
+deliberately not written yet: the architecture is frozen pending real-corpus evidence, and this is
+one instance found by hand, not a demonstrated need for a standing gate.
+
 ### N5. Inconclusive findings cite nothing, including what they did find
 
 The 118 remaining chain breaks are all INCONCLUSIVE, and tolerated: an INCONCLUSIVE asserts only that

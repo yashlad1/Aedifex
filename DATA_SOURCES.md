@@ -95,6 +95,29 @@ Never, regardless of review outcome:
 | `world_bank_projects` | Development-bank project and procurement records | Infrastructure focus, bidding documents | Many languages; poor first target |
 | `ted_europa` | EU contract and award notices | Highly structured and consistently schema'd | Least representative of the messy scanned evidence the audit engine must eventually handle |
 
+### India — post-award records
+
+**None of the sources above publishes a post-award record.** Every one is a tender, a notice, a bid
+document, a schedule of rates or an award notice, which is the pre-award half of a contract's life.
+A measurement book, an interim payment certificate, a variation order and an inspection record are
+where construction money is actually decided, and no Indian procurement portal is known to publish
+them.
+
+The candidates below are therefore a different shape: mostly documents that *report on* post-award
+records rather than being them. That distinction is load-bearing and is why the table names it.
+
+| Source | What it offers | Why it is interesting | Concerns |
+| --- | --- | --- | --- |
+| `cag_audit_reports` | CAG performance and compliance audit reports on highways, irrigation and PWD works | The closest public analogue to Aedifex's own output. Quotes real contracted / measured / billed / paid quantities and rates, **and states the audit rule it applied** — which is what priority 4 needs and what synthetic examples cannot supply | **Reports on records; is not the record.** A fact traces to a page of an audit report, not to a measurement book, so a finding must not claim primary measurement authority from it. Figures are extracts inside a narrative rather than tabulated |
+| `court_arbitration_awards` | Judgments and published arbitral awards in construction disputes | Quote measurement, billing, variation and payment figures in unusual detail, because they are what the parties fought over | Adversarial framing: figures are *claims* that the document then adjudicates, so a quantity may appear three times with three values. Heavy personal data. Selection bias toward contracts that went wrong |
+| `state_pwd_disclosures` | State PWD and urban-local-body proactive disclosures under RTI s.4 — work orders, completion certificates, running-account summaries | Occasionally the primary record itself, which none of the others are | Wildly variable by state; frequently scanned images, so OCR-gated; personal data common |
+| `world_bank_projects` (post-award use) | Implementation Completion Reports, audited project financial statements | Mandatory disclosure, infrastructure focus | Aggregate level — project totals rather than line items. Already listed above for its procurement records |
+| `industry_samples` | Sanitised real documents provided directly by a contractor, consultant or client | **Highest fidelity available.** The only candidate that is reliably the primary record | Not a crawl — an ingest, via `manual_upload`. Needs a human relationship, a sanitisation step, and a decision about what may be retained. No technical work unblocks it |
+
+None is approved. None has had its terms read, its `robots.txt` fetched, or a reviewer recorded, and
+none may be enabled until steps 1–8 above are complete. They are listed so the legal judgement has
+something concrete to act on.
+
 ### Synthetic
 
 `synthetic_projects` is enabled. It is registered as a source rather than special-cased so

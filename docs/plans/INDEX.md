@@ -10,6 +10,7 @@ of this folder still says when it was written and what its status was.
 
 | Created | Subject | Status |
 |---|---|---|
+| 2026-08-20 | [Development priorities](2026-08-20-development-priorities.md) | Standing direction |
 | 2026-08-20 | [Real post-award data — findings](2026-08-20-real-data-findings.md) | Live record |
 | 2026-08-19 | [Vertical slice — known limitations](2026-08-19-vertical-slice-known-limitations.md) | Live record |
 | 2026-08-19 22:51 | [Reuse evaluation + finish the NHAI vertical slice](2026-08-19-2251-aedifex-reuse-evaluation-and-vertical-slice.md) | Executed |
@@ -41,6 +42,11 @@ stops being one only when something replaces it.
 through the pipeline, classified BLOCKER / NEXT / DEFERRED. Started as an investigation of one real
 priced bill of quantities that had been sitting in the corpus unread; now the standing log for
 everything real data reveals.
+
+**2026-08-20 — Development priorities.** The standing direction: architecture is complete unless real
+data demonstrates otherwise, priority 1 is acquiring real post-award documents, and every feature
+must name the construction decision it improves. Records why priorities 2–5 are gated on 1, and the
+one design conclusion current evidence does support.
 
 ## How real documents enter the pipeline
 
