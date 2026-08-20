@@ -4,6 +4,10 @@ Date: 2026-08-20
 
 ## What this is, and what it is not
 
+Companion to [CONSTRUCTION_INFORMATION_MODEL.md](CONSTRUCTION_INFORMATION_MODEL.md), which covers
+what the information *is* — the four chains, the deterministic-versus-AI boundary per document, and the
+minimum evidence needed for each kind of verification. This document is the survey of where it exists.
+
 A survey of where construction evidence exists, what each document contains, and what Aedifex would
 be able to do with it. **No design.** No tables, APIs, relationships or rules are proposed here; the
 architecture stays frozen until a real document requires a change.

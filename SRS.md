@@ -143,7 +143,14 @@ Every future component must fit into this pipeline.
 
 ## 7. Data Acquisition
 
-The crawler is **NOT** the product. Its responsibility is only to acquire evidence safely:
+Aedifex is an **evidence acquisition platform**, and acquisition is broader than crawling. A document
+may arrive from a public procurement portal, a manual upload, a customer export, an email, an ERP
+system, cloud storage or an API, and **every path converges into the same immutable pipeline.** The
+pipeline begins only once a document has been acquired. Origin affects **provenance** and nothing
+after it: a measurement is a measurement whether it was fetched or handed over.
+
+The crawler is **NOT** the product. Its responsibility — and that of every other acquisition path — is
+only to acquire evidence safely:
 
 - discover documents
 - download documents
@@ -173,9 +180,14 @@ These retain partial structure.
 
 ### 8.3 Structured Data
 
-Tender Number · Estimated Cost · Contract Value · Bid Security · Completion Period · Contractor ·
-Employer · Road Length · Project Location · Material Quantity · Invoice Number · Payment Amount ·
-Dates · Units · Coordinates
+*Pre-award and award:* Tender Number · Estimated Cost · Contract Value · Bid Security · Completion
+Period · Contractor · Employer · Road Length · Project Location · Material Quantity · Invoice Number ·
+Payment Amount · Dates · Units · Coordinates
+
+*Post-award:* Item Number · Contracted Quantity · Measured Quantity · Certified Quantity · Contract
+Rate · Applied Rate · Line Amount · Retention · Mobilisation Advance and Recovery · Liquidated
+Damages · Price Adjustment · Variation Reference · Sanction Reference · Test Value · Appointed Date ·
+Extension Granted
 
 These become Facts.
 
@@ -214,14 +226,24 @@ Contract
    ↓
 BOQ
    ↓
-Invoice
-   ↓
 Measurement Book
+   ↓
+Invoice / IPC
    ↓
 Payment
    ↓
 Completion
 ```
+
+A **measurement precedes the bill it justifies** — work is measured, then claimed, then certified.
+Stated the other way round, the question that matters (*is this claim supported by a measurement?*)
+reads backwards.
+
+This single chain is a simplification. Quantity, rate, money and time each run their own chain from
+reference data to audit, and **a verification is almost always the comparison of two adjacent links**:
+`measured → certified` is over-certification, `contracted → measured` without a variation is
+unauthorised work, `gross → net` is a deduction error. See
+[docs/research/CONSTRUCTION_INFORMATION_MODEL.md](docs/research/CONSTRUCTION_INFORMATION_MODEL.md) §1.
 
 This becomes the Evidence Graph.
 
@@ -238,7 +260,11 @@ Rules are deterministic. **Rules never guess.**
 
 ## 13. Findings
 
-Findings are conclusions supported by evidence: `PASS`, `FAIL`, `WARNING`, `REVIEW`, `INCONCLUSIVE`.
+Findings are conclusions supported by evidence: `PASS`, `FAIL`, `REVIEW`, `INCONCLUSIVE`.
+
+`REVIEW` means a person must look: the rule established a discrepancy but not its cause, and calling
+that a failure would assert more than the evidence supports. `INCONCLUSIVE` means the evidence needed
+was absent — not a failure of the document, and it must never be displayed as one.
 
 Every finding must contain:
 
@@ -303,10 +329,12 @@ Every answer must be explainable.
 A successful Aedifex deployment allows a user to move seamlessly from:
 
 ```text
-Finding → Evidence → Fact → Document → Page → Original Source
+Finding → Evidence → Derived Fact → Fact → Relationship → Document → Page/Cell → Immutable Raw Artifact
 ```
 
-without losing provenance.
+without losing provenance. Derived facts and spreadsheet cells are part of the chain because computed
+values and tabular evidence are both citable; `scripts/audit_traceability.py` walks exactly this path
+over every stored finding and fails on a `PASS`, `FAIL` or `REVIEW` that cannot be traced.
 
 - Every conclusion must be reproducible.
 - Every extracted value must be traceable.
@@ -336,8 +364,13 @@ The following principles govern all future development:
 
 ## 19. Current Development Strategy
 
-The current milestone is **NOT** to build an auditing platform. The current milestone is to
-establish the reusable evidence pipeline:
+**Superseded as of 2026-08-20:** the vertical slice below is complete, and the architecture is frozen
+pending real-corpus evidence. Current priorities are in
+[docs/plans/2026-08-20-development-priorities.md](docs/plans/2026-08-20-development-priorities.md).
+The strategy is retained because its second half still governs.
+
+The first milestone was **NOT** to build an auditing platform. It was to establish the reusable
+evidence pipeline:
 
 ```text
 Source → Document → Artifact → Text → Facts → Evidence → Rule → Finding → CLI/API
@@ -348,3 +381,25 @@ architecture.
 
 Future work should expand **horizontally** (new document types, new sources, new facts, new rules,
 new personas) rather than redesigning the pipeline.
+
+---
+
+## 20. Revision note
+
+**2026-08-20.** Six refinements were applied to this document as the output of the Construction
+Information Model milestone. Each corrects a place where the SRS had fallen behind the implementation
+or behind what real construction documents turned out to require. Nothing in the vision, mission,
+philosophy, personas, AI boundary or guiding principles was altered.
+
+| § | Change | Why |
+| --- | --- | --- |
+| 7 | Acquisition stated as broader than crawling; all paths converge, origin affects only provenance | Documents arrive by upload, export, email, ERP and API, not only by crawl |
+| 8.3 | Post-award fact vocabulary added | The original list stopped at award and could not describe payment verification |
+| 11 | Measurement Book moved before Invoice; the single chain noted as a simplification of four | A measurement precedes the bill it justifies; stated in reverse, quantity variance reads backwards |
+| 13 | `WARNING` removed from the outcome vocabulary | Never implemented, and the database check constraint would reject it. `REVIEW` already carries that meaning |
+| 17 | Derived Fact, Relationship and Page/Cell added to the traceability chain | All three exist and are traversable; the audit script walks this path |
+| 19 | Superseded by the development priorities record | The vertical slice it describes is complete |
+
+The analysis behind these changes, including the minimum document set for each verification domain and
+what would falsify it, is in
+[docs/research/CONSTRUCTION_INFORMATION_MODEL.md](docs/research/CONSTRUCTION_INFORMATION_MODEL.md).

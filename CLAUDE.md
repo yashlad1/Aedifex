@@ -22,6 +22,8 @@ Then read, as the task requires:
 | [DATA_SOURCES.md](DATA_SOURCES.md) | Source approval, and the hard limits that hold regardless of review |
 | [SECURITY.md](SECURITY.md) | The threat model and the controls that implement it |
 | [docs/adr/](docs/adr/) | Decisions already taken, with their reasoning |
+| [docs/research/CONSTRUCTION_INFORMATION_MODEL.md](docs/research/CONSTRUCTION_INFORMATION_MODEL.md) | What construction information *is*: the four chains, the deterministic/AI boundary per document, and the minimum evidence for each verification domain |
+| [docs/research/CORPUS_ROADMAP.md](docs/research/CORPUS_ROADMAP.md) | Where construction evidence exists worldwide, and what we are missing |
 | [docs/plans/](docs/plans/) | Implementation plans, newest first |
 | [docs/requirements/functional.md](docs/requirements/functional.md) | Numbered requirements and their status |
 
