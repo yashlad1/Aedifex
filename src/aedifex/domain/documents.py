@@ -66,6 +66,12 @@ class DocumentType(StrEnum):
     # --- Commercial basis of a project ------------------------------------------
     CONTRACT = "contract"
     BILL_OF_QUANTITIES = "bill_of_quantities"
+    MEASUREMENT_BOOK = "measurement_book"
+    """A measurement book or measurement-sheet extract: what was measured on site."""
+
+    RUNNING_BILL = "running_bill"
+    """A running account bill or interim payment claim: what is being claimed, cumulatively."""
+
     SCHEDULE_OF_RATES = "schedule_of_rates"
     """A published rate schedule (CPWD DSR, state PWD SOR, and equivalents).
 
@@ -103,6 +109,11 @@ DOCUMENT_TYPE_CATEGORY: Final[MappingProxyType[DocumentType, DocumentCategory]] 
         DocumentType.BILL_OF_QUANTITIES: DocumentCategory.PROCUREMENT,
         DocumentType.SCHEDULE_OF_RATES: DocumentCategory.PROCUREMENT,
         DocumentType.PURCHASE_ORDER: DocumentCategory.PROCUREMENT,
+        # A measurement book records what was executed on site: engineering evidence, even though a
+        # payment claim is what usually cites it.
+        DocumentType.MEASUREMENT_BOOK: DocumentCategory.ENGINEERING,
+        # A running bill is a claim for money. Financial, though it rests on engineering evidence.
+        DocumentType.RUNNING_BILL: DocumentCategory.FINANCIAL,
         DocumentType.INVOICE: DocumentCategory.FINANCIAL,
         DocumentType.DELIVERY_CHALLAN: DocumentCategory.PROCUREMENT,
         DocumentType.GOODS_RECEIPT_NOTE: DocumentCategory.PROCUREMENT,

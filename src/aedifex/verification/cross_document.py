@@ -101,14 +101,23 @@ class ProjectFacts:
     """Values the calculation layer produced for these documents. Reused, never recomputed here."""
 
     def latest_by_type(self) -> dict[str, list[ExtractedFact]]:
-        """Facts grouped by type, keeping one row per document per type.
+        """Document-level facts grouped by type, keeping one row per document per type.
 
         When a document has facts from several extractor versions the newest wins — comparing an
         old extraction against a new one would report a disagreement between two of *our* runs
         rather than between two documents.
+
+        **Item-scoped facts are excluded.** A bill of quantities states a contracted quantity once
+        per work item, so "the documents of this project disagree about contracted_quantity" is
+        meaningless — the values belong to different items and the reconciliation rules compare them
+        per item. Including them produced exactly that false positive on the first spreadsheet
+        project: a claimed rate of 74,500 for one item was reported as disagreeing with 8,000 for
+        another, in the same document.
         """
         newest: dict[tuple[str, uuid.UUID], ExtractedFact] = {}
         for fact in self.facts:
+            if fact.work_item_id is not None:
+                continue
             key = (fact.fact_type, fact.document_id)
             current = newest.get(key)
             if current is None or fact.extractor_version > current.extractor_version:

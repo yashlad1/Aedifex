@@ -12,6 +12,7 @@ import uuid
 from decimal import Decimal
 
 from aedifex.calculation.engine import (
+    CALCULATIONS,
     DERIVED_BID_SECURITY_SHARE,
     compute_bid_security_share,
     compute_for_document,
@@ -20,6 +21,7 @@ from aedifex.domain.evidence import FactKind, FactOrigin
 from aedifex.infrastructure.database.models import ExtractedFact
 from aedifex.knowledge.registry import FACT_TYPES, RULE_TYPES
 from aedifex.verification import PROJECT_RULES, RULES
+from aedifex.verification.reconciliation import RECONCILIATION_RULES
 
 
 def a_fact(fact_type: str, value: Decimal | None, *, version: str = "1") -> ExtractedFact:
@@ -102,10 +104,11 @@ def test_the_newest_extractor_version_wins() -> None:
 def test_the_registry_describes_only_types_the_code_can_produce() -> None:
     """The registry's docstring promises this. Without a check it is just a comment."""
     derived = {info.fact_type for info in FACT_TYPES if info.origin is FactOrigin.DERIVED}
-    assert derived == {DERIVED_BID_SECURITY_SHARE}
+    assert DERIVED_BID_SECURITY_SHARE in derived
+    assert derived == set(CALCULATIONS)
 
     registered_rules = {info.rule_id for info in RULE_TYPES}
-    assert registered_rules == set(RULES) | set(PROJECT_RULES)
+    assert registered_rules == set(RULES) | set(PROJECT_RULES) | set(RECONCILIATION_RULES)
 
     # A derived fact's declared inputs must themselves be registered fact types.
     known = {info.fact_type for info in FACT_TYPES}

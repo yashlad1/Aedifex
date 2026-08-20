@@ -43,6 +43,7 @@ from aedifex.infrastructure.database.models import (
     Finding,
     Project,
     ProjectDocument,
+    WorkItem,
 )
 from aedifex.infrastructure.database.session import session_scope
 from aedifex.infrastructure.observability.logging import (
@@ -952,6 +953,80 @@ def create_app() -> FastAPI:
             )
             payload = [RelationshipResponse.from_row(row) for row in rows]
         return RelationshipListResponse(returned=len(payload), relationships=payload)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/work-items", tags=["projects"])
+    def get_project_work_items(project_id: uuid.UUID) -> dict[str, object]:
+        """Each item of work, the facts about it from every document, and its findings.
+
+        The payment-reconciliation view: one entry per item, carrying what was contracted, what was
+        measured, and what is claimed, each with the cell it came from. Derived values are listed
+        separately from stated ones so a reader can tell which numbers a document asserts.
+        """
+        with session_scope() as session:
+            items = list(
+                session.execute(
+                    select(WorkItem)
+                    .where(WorkItem.project_id == project_id)
+                    .order_by(WorkItem.normalised_identifier)
+                ).scalars()
+            )
+            payload: list[dict[str, object]] = []
+            for item in items:
+                facts = list(
+                    session.execute(
+                        select(ExtractedFact).where(ExtractedFact.work_item_id == item.id)
+                    ).scalars()
+                )
+                derived = list(
+                    session.execute(
+                        select(DerivedFact).where(
+                            DerivedFact.project_id == project_id,
+                            DerivedFact.fact_type.like(f"{item.normalised_identifier}:%"),
+                        )
+                    ).scalars()
+                )
+                findings = list(
+                    session.execute(
+                        select(Finding)
+                        .where(Finding.work_item_id == item.id)
+                        .order_by(Finding.rule_id)
+                    ).scalars()
+                )
+                payload.append(
+                    {
+                        "work_item_id": str(item.id),
+                        "item_identifier": item.item_identifier,
+                        "description": item.description,
+                        "unit": item.unit,
+                        "matched_by": item.matched_by,
+                        "facts": [FactResponse.from_row(fact) for fact in facts],
+                        "derived_facts": [
+                            {
+                                "fact_type": row.fact_type.split(":", 1)[-1],
+                                "value": (
+                                    None if row.numeric_value is None else str(row.numeric_value)
+                                ),
+                                "unit": row.unit,
+                                "currency": row.currency,
+                                "expression": row.expression,
+                                "calculation": f"{row.calculation} v{row.calculation_version}",
+                            }
+                            for row in sorted(derived, key=lambda r: r.fact_type)
+                        ],
+                        "findings": [
+                            {
+                                "rule_id": row.rule_id,
+                                "outcome": row.outcome,
+                                "expected": row.expected,
+                                "observed": row.observed,
+                                "summary": row.summary,
+                                "detail": dict(row.detail),
+                            }
+                            for row in findings
+                        ],
+                    }
+                )
+        return {"returned": len(payload), "work_items": payload}
 
     @app.get(f"{API_PREFIX}/knowledge", tags=["knowledge"])
     def get_knowledge() -> dict[str, object]:

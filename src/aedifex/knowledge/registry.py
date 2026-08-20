@@ -19,8 +19,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from aedifex.calculation.engine import DERIVED_BID_SECURITY_SHARE
+from aedifex.calculation.engine import (
+    DERIVED_BID_SECURITY_SHARE,
+    DERIVED_QUANTITY_VARIANCE,
+    DERIVED_RATE_VARIANCE,
+    DERIVED_REMAINING_CONTRACT_QUANTITY,
+    DERIVED_UNSUPPORTED_AMOUNT,
+)
 from aedifex.domain.evidence import FactKind, FactOrigin, RelationshipType
+from aedifex.extraction.spreadsheet import (
+    FIELD_CLAIMED_RATE,
+    FIELD_CONTRACT_RATE,
+    FIELD_CONTRACTED_QUANTITY,
+    FIELD_CUMULATIVE_CLAIM_QUANTITY,
+    FIELD_CURRENT_CLAIM_QUANTITY,
+    FIELD_ITEM_DESCRIPTION,
+    FIELD_ITEM_IDENTIFIER,
+    FIELD_MEASURED_QUANTITY,
+    FIELD_PREVIOUS_CERTIFIED_QUANTITY,
+    FIELD_PROJECT_REFERENCE,
+)
 from aedifex.extraction.tender_notice import (
     FIELD_BID_SECURITY,
     FIELD_DOCUMENT_DATE,
@@ -31,6 +49,11 @@ from aedifex.extraction.tender_notice import (
 from aedifex.verification.cross_document import (
     AGREEMENT_RULE_ID,
     SHARE_CONSISTENCY_RULE_ID,
+)
+from aedifex.verification.reconciliation import (
+    CLAIM_WITHIN_MEASURED_RULE_ID,
+    CUMULATIVE_NOT_REGRESSED_RULE_ID,
+    RATE_MATCHES_CONTRACT_RULE_ID,
 )
 from aedifex.verification.rules import BID_SECURITY_RULE_ID, Outcome
 
@@ -133,6 +156,121 @@ FACT_TYPES: Final[tuple[FactTypeInfo, ...]] = (
         produced_by="aedifex.calculation.engine",
         inputs=(FIELD_ESTIMATED_COST, FIELD_BID_SECURITY),
     ),
+    # --- Post-award construction records: bill of quantities, measurement, running bill ---
+    FactTypeInfo(
+        fact_type=FIELD_PROJECT_REFERENCE,
+        kind=FactKind.IDENTIFIER,
+        origin=FactOrigin.EXTRACTED,
+        description="The project or contract reference a record quotes. A project key.",
+        produced_by="aedifex.extraction.spreadsheet",
+    ),
+    FactTypeInfo(
+        fact_type=FIELD_ITEM_IDENTIFIER,
+        kind=FactKind.IDENTIFIER,
+        origin=FactOrigin.EXTRACTED,
+        description=(
+            "The item number of a work item, e.g. 4.7.2. What connects a bill of quantities, a "
+            "measurement and a claim to the same piece of work."
+        ),
+        produced_by="aedifex.extraction.spreadsheet",
+    ),
+    FactTypeInfo(
+        fact_type=FIELD_ITEM_DESCRIPTION,
+        kind=FactKind.TEXT,
+        origin=FactOrigin.EXTRACTED,
+        description="What the work item is. Descriptive; never used for matching.",
+        produced_by="aedifex.extraction.spreadsheet",
+    ),
+    FactTypeInfo(
+        fact_type=FIELD_CONTRACTED_QUANTITY,
+        kind=FactKind.QUANTITY,
+        origin=FactOrigin.EXTRACTED,
+        description="The quantity the contract provides for, from the bill of quantities.",
+        produced_by="aedifex.extraction.spreadsheet",
+    ),
+    FactTypeInfo(
+        fact_type=FIELD_CONTRACT_RATE,
+        kind=FactKind.MONEY,
+        origin=FactOrigin.EXTRACTED,
+        description="The agreed unit rate, from the bill of quantities.",
+        produced_by="aedifex.extraction.spreadsheet",
+    ),
+    FactTypeInfo(
+        fact_type=FIELD_MEASURED_QUANTITY,
+        kind=FactKind.QUANTITY,
+        origin=FactOrigin.EXTRACTED,
+        description="The quantity actually measured on site, from the measurement book.",
+        produced_by="aedifex.extraction.spreadsheet",
+    ),
+    FactTypeInfo(
+        fact_type=FIELD_PREVIOUS_CERTIFIED_QUANTITY,
+        kind=FactKind.QUANTITY,
+        origin=FactOrigin.EXTRACTED,
+        description="What earlier bills already certified. Bounds a cumulative claim from below.",
+        produced_by="aedifex.extraction.spreadsheet",
+    ),
+    FactTypeInfo(
+        fact_type=FIELD_CURRENT_CLAIM_QUANTITY,
+        kind=FactKind.QUANTITY,
+        origin=FactOrigin.EXTRACTED,
+        description="The quantity claimed in this bill alone.",
+        produced_by="aedifex.extraction.spreadsheet",
+    ),
+    FactTypeInfo(
+        fact_type=FIELD_CUMULATIVE_CLAIM_QUANTITY,
+        kind=FactKind.QUANTITY,
+        origin=FactOrigin.EXTRACTED,
+        description="The total claimed to date. What measured work is compared against.",
+        produced_by="aedifex.extraction.spreadsheet",
+    ),
+    FactTypeInfo(
+        fact_type=FIELD_CLAIMED_RATE,
+        kind=FactKind.MONEY,
+        origin=FactOrigin.EXTRACTED,
+        description=(
+            "The unit rate being claimed. Labelled 'Rate' in a running bill exactly as the "
+            "contracted rate is in a bill of quantities, so the document type disambiguates it."
+        ),
+        produced_by="aedifex.extraction.spreadsheet",
+    ),
+    FactTypeInfo(
+        fact_type=DERIVED_QUANTITY_VARIANCE,
+        kind=FactKind.QUANTITY,
+        origin=FactOrigin.DERIVED,
+        description=(
+            "Cumulative claim minus measured quantity. Positive means the claim runs ahead of "
+            "measured work. Carries no judgement — a positive number is not an accusation."
+        ),
+        produced_by="aedifex.calculation.engine",
+        inputs=(FIELD_CUMULATIVE_CLAIM_QUANTITY, FIELD_MEASURED_QUANTITY),
+    ),
+    FactTypeInfo(
+        fact_type=DERIVED_REMAINING_CONTRACT_QUANTITY,
+        kind=FactKind.QUANTITY,
+        origin=FactOrigin.DERIVED,
+        description="Contracted quantity minus cumulative claim. Negative means overrun.",
+        produced_by="aedifex.calculation.engine",
+        inputs=(FIELD_CONTRACTED_QUANTITY, FIELD_CUMULATIVE_CLAIM_QUANTITY),
+    ),
+    FactTypeInfo(
+        fact_type=DERIVED_RATE_VARIANCE,
+        kind=FactKind.MONEY,
+        origin=FactOrigin.DERIVED,
+        description="Claimed rate minus contracted rate.",
+        produced_by="aedifex.calculation.engine",
+        inputs=(FIELD_CLAIMED_RATE, FIELD_CONTRACT_RATE),
+    ),
+    FactTypeInfo(
+        fact_type=DERIVED_UNSUPPORTED_AMOUNT,
+        kind=FactKind.MONEY,
+        origin=FactOrigin.DERIVED,
+        description=(
+            "The money value of a claim ahead of measured work: max(variance, 0) x contract rate. "
+            "Valued at the contracted rate, so a rate dispute is not folded into a quantity one."
+        ),
+        produced_by="aedifex.calculation.engine",
+        inputs=(DERIVED_QUANTITY_VARIANCE, FIELD_CONTRACT_RATE),
+    ),
 )
 
 RELATIONSHIP_TYPES: Final[tuple[RelationshipTypeInfo, ...]] = (
@@ -143,8 +281,8 @@ RELATIONSHIP_TYPES: Final[tuple[RelationshipTypeInfo, ...]] = (
     ),
     RelationshipTypeInfo(
         RelationshipType.SAME_CONTRACT,
-        "Both documents concern one contract. Needs a contract identifier nothing yet extracts.",
-        derivable=False,
+        "Both documents quote the same project or contract reference.",
+        derivable=True,
     ),
     RelationshipTypeInfo(
         RelationshipType.AMENDMENT_OF, "This document amends the other.", derivable=False
@@ -193,11 +331,49 @@ RULE_TYPES: Final[tuple[RuleTypeInfo, ...]] = (
         ),
         consumes=(DERIVED_BID_SECURITY_SHARE,),
     ),
+    RuleTypeInfo(
+        rule_id=CLAIM_WITHIN_MEASURED_RULE_ID,
+        scope="work_item",
+        description=(
+            "Checks that a cumulative claim does not exceed the measured quantity, and reports the "
+            "money at risk when it does. REVIEW rather than FAIL: the discrepancy is established, "
+            "its cause is not."
+        ),
+        consumes=(
+            FIELD_CUMULATIVE_CLAIM_QUANTITY,
+            FIELD_MEASURED_QUANTITY,
+            DERIVED_QUANTITY_VARIANCE,
+            DERIVED_UNSUPPORTED_AMOUNT,
+        ),
+    ),
+    RuleTypeInfo(
+        rule_id=RATE_MATCHES_CONTRACT_RULE_ID,
+        scope="work_item",
+        description=(
+            "Checks the claimed unit rate against the contracted one. REVIEW on a difference, "
+            "because an approved variation would make it correct and none can yet be read."
+        ),
+        consumes=(FIELD_CLAIMED_RATE, FIELD_CONTRACT_RATE, DERIVED_RATE_VARIANCE),
+    ),
+    RuleTypeInfo(
+        rule_id=CUMULATIVE_NOT_REGRESSED_RULE_ID,
+        scope="work_item",
+        description=(
+            "Checks that a cumulative claim is not below what earlier bills certified. A "
+            "cumulative figure cannot decrease, so a regression means the bill contradicts itself."
+        ),
+        consumes=(FIELD_CUMULATIVE_CLAIM_QUANTITY, FIELD_PREVIOUS_CERTIFIED_QUANTITY),
+    ),
 )
 
 FINDING_OUTCOMES: Final[tuple[FindingOutcomeInfo, ...]] = (
     FindingOutcomeInfo(Outcome.PASS, "The rule's condition held."),
     FindingOutcomeInfo(Outcome.FAIL, "The rule's condition did not hold."),
+    FindingOutcomeInfo(
+        Outcome.REVIEW,
+        "A discrepancy a person should look at. The rule established it but cannot establish its "
+        "cause, so it is neither a pass nor a failure.",
+    ),
     FindingOutcomeInfo(
         Outcome.INCONCLUSIVE,
         "The rule could not be applied — a value or a threshold was missing. Not a failure of the "

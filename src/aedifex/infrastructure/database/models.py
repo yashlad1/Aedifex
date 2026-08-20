@@ -248,6 +248,7 @@ class Document(Base):
     facts: Mapped[list[ExtractedFact]] = relationship(back_populates="document")
     findings: Mapped[list[Finding]] = relationship(back_populates="document")
     memberships: Mapped[list[ProjectDocument]] = relationship(back_populates="document")
+    uploads: Mapped[list[DocumentUpload]] = relationship(back_populates="document")
 
     __table_args__ = (
         CheckConstraint(f"sha256 {_SHA256_HEX}", name="sha256_is_lower_hex"),
@@ -466,6 +467,35 @@ class ExtractedFact(Base):
     numeric_value: Mapped[Decimal | None] = mapped_column(Numeric(20, 2), default=None)
     currency: Mapped[str | None] = mapped_column(String(3), default=None)
 
+    sheet_row: Mapped[int | None] = mapped_column(Integer, default=None)
+    """Row of the spreadsheet cell this came from, when it came from a spreadsheet.
+
+    Separate columns rather than reusing ``span_start``/``span_end``, which are documented as
+    character offsets into a page's text. Putting a row and a column in them was tried and rejected:
+    it violated ``span_end >= span_start`` for any cell in column A, and — worse — it would have
+    meant two different meanings for one pair of columns, so a reader could not tell what a number
+    in ``span_start`` referred to without first knowing the document's format.
+    """
+
+    sheet_column: Mapped[int | None] = mapped_column(Integer, default=None)
+
+    unit: Mapped[str | None] = mapped_column(String(16), default=None)
+    """Unit of measure for a quantity, e.g. ``m3``, ``MT``. Explicit, never inferred.
+
+    A quantity without its unit is not a number anyone should compute with: 470 of one thing and 470
+    of another are only comparable if both say what they are counting.
+    """
+
+    work_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("work_items.id", ondelete="SET NULL"), index=True, default=None
+    )
+    """The construction item this fact is about, when it is about one.
+
+    ``SET NULL`` rather than cascade: if a work item is removed the fact is still a true statement
+    about its document, and deleting evidence because a grouping changed would be the wrong way
+    round.
+    """
+
     date_value: Mapped[date | None] = mapped_column(Date, default=None)
     """Parsed calendar value for :attr:`FactKind.DATE` facts, so chronology is a query.
 
@@ -491,11 +521,29 @@ class ExtractedFact(Base):
     document: Mapped[Document] = relationship(back_populates="facts")
 
     __table_args__ = (
-        UniqueConstraint(
+        # A prose document states each kind of fact once; a table states it once per row. The
+        # original single constraint assumed the former, and a spreadsheet silently kept only its
+        # last row -- the extraction was correct and the persistence discarded it.
+        #
+        # Two partial indexes rather than one over four columns, because NULL never equals NULL in
+        # PostgreSQL: a single index including sheet_row would stop deduplicating page facts
+        # entirely, which is the failure this constraint exists to prevent.
+        Index(
+            "uq_extracted_facts_document_type",
             "document_id",
             "fact_type",
             "extractor_version",
-            name="one_fact_per_type_per_extractor_version",
+            unique=True,
+            postgresql_where=text_clause("sheet_row IS NULL"),
+        ),
+        Index(
+            "uq_extracted_facts_document_type_row",
+            "document_id",
+            "fact_type",
+            "extractor_version",
+            "sheet_row",
+            unique=True,
+            postgresql_where=text_clause("sheet_row IS NOT NULL"),
         ),
         CheckConstraint("page >= 1", name="page_is_one_based"),
         CheckConstraint("span_end >= span_start", name="span_is_whole"),
@@ -529,6 +577,14 @@ class Finding(Base):
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True, default=None
     )
+    work_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("work_items.id", ondelete="CASCADE"), index=True, default=None
+    )
+    """The item of work this finding is about, when it is about one.
+
+    Set alongside ``project_id``, never instead of it: a work item exists only within a project, and
+    a reviewer filtering by project must see item findings too.
+    """
 
     rule_id: Mapped[str] = mapped_column(String(64))
     rule_version: Mapped[str] = mapped_column(String(32))
@@ -568,13 +624,29 @@ class Finding(Base):
             "rule_id",
             "rule_version",
             unique=True,
-            postgresql_where=text_clause("project_id IS NOT NULL"),
+            # Excludes work-item findings, which carry project_id too and would otherwise collide
+            # with each other the moment two items were checked by the same rule.
+            postgresql_where=text_clause("project_id IS NOT NULL AND work_item_id IS NULL"),
+        ),
+        Index(
+            "uq_findings_work_item_rule",
+            "work_item_id",
+            "rule_id",
+            "rule_version",
+            unique=True,
+            postgresql_where=text_clause("work_item_id IS NOT NULL"),
         ),
         CheckConstraint(
             "(document_id IS NULL) <> (project_id IS NULL)",
             name="finding_scoped_to_exactly_one_subject",
         ),
-        CheckConstraint("outcome IN ('pass', 'fail', 'inconclusive')", name="outcome_is_known"),
+        CheckConstraint(
+            "work_item_id IS NULL OR project_id IS NOT NULL",
+            name="work_item_finding_belongs_to_a_project",
+        ),
+        CheckConstraint(
+            "outcome IN ('pass', 'fail', 'review', 'inconclusive')", name="outcome_is_known"
+        ),
     )
 
 
@@ -655,6 +727,9 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan"
     )
     findings: Mapped[list[Finding]] = relationship(back_populates="project")
+    work_items: Mapped[list[WorkItem]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         UniqueConstraint("source_id", "external_ref", name="one_project_per_source_reference"),
@@ -827,3 +902,91 @@ class DerivedFactInput(Base):
 
     derived_fact: Mapped[DerivedFact] = relationship(back_populates="inputs")
     fact: Mapped[ExtractedFact] = relationship()
+
+
+class WorkItem(Base):
+    """One item of construction work within a project — the thing a payment claim is about.
+
+    The aggregation key that makes payment reconciliation possible. A bill of quantities, a
+    measurement book, and a running bill each say something about "item 4.7.2"; until those three
+    statements are attached to one object there is nothing to reconcile.
+
+    Matching is deterministic and layered: an exact item identifier first, then a normalised form of
+    it. Nothing here uses embeddings or a model. A seam is left for semantic matching by keeping
+    ``matched_by`` on every link, so a future fuzzy match would be visibly weaker evidence rather
+    than silently equivalent to an exact one.
+
+    Scoped to a project, because item numbering restarts with every contract: "4.7.2" identifies a
+    work item only in the presence of the project it belongs to.
+    """
+
+    __tablename__ = "work_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+
+    item_identifier: Mapped[str] = mapped_column(String(64))
+    """The item number as the documents write it, e.g. ``4.7.2``."""
+
+    normalised_identifier: Mapped[str] = mapped_column(String(64))
+    """Case- and separator-normalised form, which is what matching actually compares."""
+
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    unit: Mapped[str | None] = mapped_column(String(16), default=None)
+    matched_by: Mapped[str] = mapped_column(String(64))
+    """How facts were attached: ``exact_identifier`` or ``normalised_identifier``. Never guessed."""
+
+    first_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    project: Mapped[Project] = relationship(back_populates="work_items")
+    facts: Mapped[list[ExtractedFact]] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "normalised_identifier", name="one_work_item_per_project_identifier"
+        ),
+    )
+
+
+class DocumentUpload(Base):
+    """Provenance for a document that was uploaded rather than fetched.
+
+    A separate table from ``document_retrievals`` because the two record genuinely different events.
+    A retrieval has a URL, an HTTP status and response headers; an upload has a filesystem path and
+    a person or script that put it there. Reusing the retrieval table would have meant inventing an
+    HTTP 200 for a request nobody made, which is fabricating provenance — the one thing this project
+    will not do, even for its own synthetic data.
+
+    ``is_synthetic`` is stored rather than inferred from the source id, so a query for real evidence
+    can exclude generated data without knowing which sources happen to be synthetic today.
+    """
+
+    __tablename__ = "document_uploads"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+    source_id: Mapped[str] = mapped_column(String(64), index=True)
+
+    original_path: Mapped[str] = mapped_column(Text)
+    """Where the file came from. Descriptive only, never used to build a storage key."""
+
+    is_synthetic: Mapped[bool] = mapped_column(default=False)
+    note: Mapped[str | None] = mapped_column(Text, default=None)
+
+    uploaded_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    uploaded_by: Mapped[str] = mapped_column(String(128))
+
+    storage_bucket: Mapped[str] = mapped_column(String(64))
+    storage_key: Mapped[str] = mapped_column(String(512))
+    storage_verification: Mapped[str] = mapped_column(String(32))
+    software_version: Mapped[str] = mapped_column(String(32))
+
+    document: Mapped[Document] = relationship(back_populates="uploads")
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "source_id", name="one_upload_per_document_and_source"),
+    )

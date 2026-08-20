@@ -49,11 +49,10 @@ import binascii
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Protocol, runtime_checkable
 
 from botocore.exceptions import ClientError
 
-from aedifex.acquisition.download import DownloadedFile
 from aedifex.domain.files import MEDIA_TYPES_BY_FORMAT
 from aedifex.errors import AedifexError
 from aedifex.infrastructure.storage.keys import StorageTier
@@ -61,9 +60,12 @@ from aedifex.infrastructure.storage.keys import StorageTier
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from mypy_boto3_s3.client import S3Client
 
+    from aedifex.domain.files import FileFormat
+
 __all__ = [
     "ObjectMetadata",
     "RawObjectStore",
+    "StorableFile",
     "StorageError",
     "StoredObject",
     "Verification",
@@ -134,6 +136,45 @@ class StoredObject:
         return f"{state} {self.uri}{version} ({self.size_bytes} bytes, {self.verification.value})"
 
 
+@runtime_checkable
+class StorableFile(Protocol):
+    """What :meth:`RawObjectStore.put` actually requires of a file.
+
+    Structural rather than a concrete class, because bytes reach the raw tier by more than one
+    route: the crawler produces a ``DownloadedFile`` with an HTTP story attached, and manual
+    ingestion produces an upload that has no HTTP story at all. Both are files with a digest, a size
+    and a storage key, and that is all this class needs in order to store and verify one.
+
+    Introduced so an upload does not have to invent a request that never happened in order to be
+    stored. Nothing about the raw tier's guarantees changes: the key is still checked for the raw
+    prefix, the digest is still sent to the server for verification, and the round trip is still
+    read back.
+    """
+
+    @property
+    def path(self) -> Path: ...
+
+    @property
+    def sha256(self) -> str: ...
+
+    @property
+    def size_bytes(self) -> int: ...
+
+    @property
+    def storage_key(self) -> str: ...
+
+    @property
+    def source_id(self) -> str: ...
+
+    @property
+    def file_format(self) -> FileFormat: ...
+
+    @property
+    def final_url(self) -> str:
+        """Where the bytes came from, as a URI. ``file://`` for an ingested local file."""
+        ...
+
+
 class RawObjectStore:
     """The immutable raw tier of an S3-compatible bucket.
 
@@ -151,7 +192,7 @@ class RawObjectStore:
     def bucket(self) -> str:
         return self._bucket
 
-    def put(self, downloaded: DownloadedFile) -> StoredObject:
+    def put(self, downloaded: StorableFile) -> StoredObject:
         """Store ``downloaded`` in the raw tier, verify it, and return where it went.
 
         Idempotent: if the key already holds an object with the same digest and size, nothing is
@@ -268,7 +309,7 @@ class RawObjectStore:
             raise StorageError(f"could not read versioning for {self._bucket}: {error}") from error
         return response.get("Status") == "Enabled"
 
-    def _upload(self, downloaded: DownloadedFile, key: str) -> None:
+    def _upload(self, downloaded: StorableFile, key: str) -> None:
         """Send the file, with the digest attached so the store validates it for us."""
         try:
             with downloaded.path.open("rb") as handle:
@@ -289,9 +330,7 @@ class RawObjectStore:
         except ClientError as error:
             raise StorageError(f"could not store {key}: {error}") from error
 
-    def _confirm_existing(
-        self, downloaded: DownloadedFile, existing: ObjectMetadata
-    ) -> StoredObject:
+    def _confirm_existing(self, downloaded: StorableFile, existing: ObjectMetadata) -> StoredObject:
         """Decide whether an object already at this key is the one we have.
 
         The key contains the digest, so a mismatch is not a routine collision — it is corruption or
@@ -324,7 +363,7 @@ class RawObjectStore:
             already_present=True,
         )
 
-    def _verify(self, downloaded: DownloadedFile, stored: ObjectMetadata) -> Verification:
+    def _verify(self, downloaded: StorableFile, stored: ObjectMetadata) -> Verification:
         """Compare what the store now holds against what was sent.
 
         Raises:
@@ -352,7 +391,7 @@ class RawObjectStore:
         )
 
 
-def _media_type_for(downloaded: DownloadedFile) -> str:
+def _media_type_for(downloaded: StorableFile) -> str:
     """The media type to store the object under.
 
     Our own resolved format, not the server's ``Content-Type`` header. The header was one input to

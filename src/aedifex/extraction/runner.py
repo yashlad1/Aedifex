@@ -26,17 +26,29 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from aedifex.calculation.engine import DERIVED_BID_SECURITY_SHARE, compute_for_document
+from aedifex.calculation.engine import (
+    DERIVED_BID_SECURITY_SHARE,
+    compute_for_document,
+    compute_for_work_item,
+)
 from aedifex.domain.documents import DocumentState, assert_transition_allowed
 from aedifex.errors import ExtractionError
 from aedifex.extraction.pdftext import extract_text
+from aedifex.extraction.spreadsheet import SheetFact, read_construction_sheet
 from aedifex.extraction.store import (
     persist_derived_facts,
     persist_facts,
     persist_finding,
     persist_project_finding,
+    persist_work_item_finding,
 )
-from aedifex.extraction.tender_notice import TenderNotice, extract_tender_notice
+from aedifex.extraction.tender_notice import (
+    Evidence,
+    ExtractedField,
+    TenderNotice,
+    extract_tender_notice,
+)
+from aedifex.extraction.work_items import link_work_items
 from aedifex.infrastructure.database.models import (
     DerivedFact,
     Document,
@@ -44,13 +56,23 @@ from aedifex.infrastructure.database.models import (
     ExtractedFact,
     Finding,
     Project,
+    ProjectDocument,
+    WorkItem,
 )
 from aedifex.infrastructure.observability.logging import get_logger
 from aedifex.infrastructure.storage.objects import RawObjectStore
 from aedifex.verification import evaluate_all, evaluate_project
 from aedifex.verification.cross_document import load_project_facts
+from aedifex.verification.reconciliation import WorkItemFacts, evaluate_work_item
 
-__all__ = ["AnalysisOutcome", "ProjectAnalysis", "analyse_document", "analyse_project"]
+__all__ = [
+    "AnalysisOutcome",
+    "ProjectAnalysis",
+    "analyse_document",
+    "analyse_project",
+    "analyse_spreadsheet",
+    "reconcile_work_items",
+]
 
 _log = get_logger(__name__)
 
@@ -58,6 +80,10 @@ _log = get_logger(__name__)
 # rate its own bid security must satisfy — in the observed corpus, page 13 of 145. A notice-only
 # extract is three pages and simply has no such clause.
 DEFAULT_MAX_PAGES = 260
+
+# Recorded on spreadsheet facts so they are distinguishable from PDF-extracted ones, and so a change
+# to the sheet reader versions independently of the notice reader.
+SPREADSHEET_EXTRACTOR = "construction_spreadsheet"
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,3 +276,154 @@ def analyse_project(session: Session, project_id: uuid.UUID) -> ProjectAnalysis:
         relationships=project_facts.relationships,
         findings=findings,
     )
+
+
+def analyse_spreadsheet(
+    session: Session, store: RawObjectStore, document_id: uuid.UUID
+) -> AnalysisOutcome:
+    """Extract facts from a stored construction spreadsheet.
+
+    The XLSX counterpart of :func:`analyse_document`. Rules are not evaluated here: a bill of
+    quantities on its own says nothing that needs checking, and every reconciliation rule needs
+    facts from three documents at once. So this stops at facts, and the work-item pass that follows
+    is where the comparison happens.
+    """
+    document = session.execute(
+        select(Document).where(Document.id == document_id)
+    ).scalar_one_or_none()
+    if document is None:
+        raise ExtractionError(f"unknown document {document_id}")
+
+    data = _read_verified_bytes(store, document)
+    sheet = read_construction_sheet(data, document_type=document.document_type.value)
+
+    fields: list[ExtractedField] = []
+    if sheet.project_reference is not None:
+        fields.append(_field_from_cell(sheet.project_reference))
+    for row in sheet.rows:
+        fields.extend(_field_from_cell(fact) for fact in row.facts)
+
+    notice = TenderNotice(fields=tuple(fields), unsupported=sheet.unsupported)
+
+    _advance(document, DocumentState.PROCESSING)
+    session.flush()
+    facts = persist_facts(session, document_id, notice, extractor=SPREADSHEET_EXTRACTOR)
+    _advance(document, DocumentState.PROCESSED)
+    session.flush()
+
+    _log.info(
+        "spreadsheet_analysis.finished",
+        document_id=str(document_id),
+        document_type=document.document_type.value,
+        rows=len(sheet.rows),
+        facts=len(facts),
+    )
+    return AnalysisOutcome(
+        document_id=document_id,
+        notice=notice,
+        facts=tuple(facts.values()),
+        derived=(),
+        findings=(),
+        pages_read=len(sheet.rows),
+        page_count=len(sheet.rows),
+        had_text_layer=bool(sheet.rows),
+    )
+
+
+def _field_from_cell(fact: SheetFact) -> ExtractedField:
+    """Turn a spreadsheet cell into the same ExtractedField a PDF span produces.
+
+    One representation for both, so everything downstream -- persistence, calculation, rules,
+    evidence -- is indifferent to whether a value came from a page or a cell. The cell reference
+    goes in the snippet, which is what a reviewer needs in order to look: ``BOQ!D7`` locates a value
+    in a spreadsheet as precisely as a character span locates one in prose.
+
+    The grid position goes in ``sheet_row``/``sheet_column`` rather than the character-span columns,
+    which mean something else. Work-item linking groups on the row, because a fact and its item
+    identifier are related by sharing one.
+    """
+    return ExtractedField(
+        name=fact.fact_type,
+        kind=fact.kind,
+        literal=fact.literal,
+        value=fact.value,
+        currency=fact.currency,
+        unit=fact.unit,
+        sheet_row=fact.cell.row,
+        sheet_column=fact.cell.column,
+        evidence=Evidence(page=1, start=0, end=0, snippet=fact.cell.reference),
+        method=f"cell:{fact.cell.reference}",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkItemAnalysis:
+    """One work item, everything known about it, and what the rules concluded."""
+
+    work_item: WorkItem
+    facts: tuple[ExtractedFact, ...]
+    derived: tuple[DerivedFact, ...]
+    findings: tuple[Finding, ...]
+
+
+def reconcile_work_items(session: Session, project_id: uuid.UUID) -> tuple[WorkItemAnalysis, ...]:
+    """Link facts to work items, calculate, then reconcile — the payment path end to end.
+
+    The order is the architecture. Linking connects three documents' statements to one item;
+    calculation turns those statements into variances without judging them; the rules judge the
+    variances without recomputing them. Each stage can be read, tested and corrected on its own.
+
+    Idempotent throughout: linking is keyed on the normalised identifier, derived facts on the
+    calculation version, findings on the rule version.
+    """
+    link_work_items(session, project_id)
+
+    filenames: dict[str, str] = {}
+    for document in session.execute(
+        select(Document)
+        .join(ProjectDocument, ProjectDocument.document_id == Document.id)
+        .where(ProjectDocument.project_id == project_id)
+    ).scalars():
+        filenames[str(document.id)] = document.original_filename or str(document.id)
+
+    items = list(
+        session.execute(
+            select(WorkItem)
+            .where(WorkItem.project_id == project_id)
+            .order_by(WorkItem.normalised_identifier)
+        ).scalars()
+    )
+
+    analyses: list[WorkItemAnalysis] = []
+    for item in items:
+        facts = list(
+            session.execute(
+                select(ExtractedFact).where(ExtractedFact.work_item_id == item.id)
+            ).scalars()
+        )
+        calculated = compute_for_work_item(facts)
+        derived = persist_derived_facts(session, calculated, project_id=project_id, work_item=item)
+
+        by_type = {fact.fact_type: fact for fact in facts}
+        bundle = WorkItemFacts(work_item=item, facts=by_type, derived=derived, filenames=filenames)
+        findings = tuple(
+            persist_work_item_finding(session, project_id, item.id, result)
+            for result in evaluate_work_item(bundle)
+        )
+        analyses.append(
+            WorkItemAnalysis(
+                work_item=item,
+                facts=tuple(facts),
+                derived=tuple(derived.values()),
+                findings=findings,
+            )
+        )
+
+    session.flush()
+    _log.info(
+        "work_items.reconciled",
+        project_id=str(project_id),
+        work_items=len(analyses),
+        outcomes=",".join(sorted({f.outcome for analysis in analyses for f in analysis.findings})),
+    )
+    return tuple(analyses)

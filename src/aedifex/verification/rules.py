@@ -62,12 +62,20 @@ _PERCENT_PLACES: Final[Decimal] = Decimal("0.0001")
 
 
 class Outcome(StrEnum):
-    """The three things a rule can conclude. Stored as the ``outcome`` column verbatim."""
+    """What a rule can conclude. Stored as the ``outcome`` column verbatim."""
 
     # The suppression below is for ruff's S105 hardcoded-password heuristic, which fires on any
     # name containing "PASS". This is a verdict, not a credential.
     PASS = "pass"  # noqa: S105
     FAIL = "fail"
+    REVIEW = "review"
+    """Something a person should look at. Not a failure, and not a pass.
+
+    Distinct from FAIL on purpose. A claim exceeding measured work may be an error, a timing
+    difference, or a variation nobody has recorded yet — the rule can establish the discrepancy but
+    not its cause, and calling that a failure asserts more than the evidence supports.
+    """
+
     INCONCLUSIVE = "inconclusive"
 
 

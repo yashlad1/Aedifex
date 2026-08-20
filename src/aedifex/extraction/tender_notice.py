@@ -127,6 +127,14 @@ class ExtractedField:
     date_value: dt.date | None = None
     """Parsed calendar value for date facts, so chronology is a query rather than a parse."""
 
+    unit: str | None = None
+    """Unit of measure for a quantity. Explicit, never inferred — 470 m3 and 470 MT are not
+    comparable, and a quantity that has lost its unit invites exactly that comparison."""
+
+    sheet_row: int | None = None
+    sheet_column: int | None = None
+    """Grid position, for a value read from a spreadsheet cell rather than a page of text."""
+
 
 @dataclass(frozen=True, slots=True)
 class TenderNotice:

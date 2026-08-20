@@ -28,8 +28,10 @@ from aedifex.infrastructure.database.models import (
     ExtractedFact,
     Finding,
     FindingEvidence,
+    WorkItem,
 )
 from aedifex.verification.cross_document import ProjectRuleResult
+from aedifex.verification.reconciliation import WorkItemRuleResult
 from aedifex.verification.rules import RuleResult
 
 # Ten decimal places, matching DerivedFact.numeric_value's NUMERIC(28, 10).
@@ -40,6 +42,7 @@ __all__ = [
     "persist_facts",
     "persist_finding",
     "persist_project_finding",
+    "persist_work_item_finding",
 ]
 
 
@@ -57,13 +60,18 @@ def persist_facts(
     value. An absent fact and a fact whose value is unknown are different claims, and only the
     first is true here.
     """
+    # Keyed by fact type for callers that expect one of each; a table's rows are reached through
+    # their work item instead, which is the only sane way to address them.
     stored: dict[str, ExtractedFact] = {}
     for field in notice.fields:
+        # Keyed on the row as well as the type, because a table states the same kind of fact once
+        # per line. Without the row in the key, a three-row bill of quantities persisted one row.
         existing = session.execute(
             select(ExtractedFact).where(
                 ExtractedFact.document_id == document_id,
                 ExtractedFact.fact_type == field.name,
                 ExtractedFact.extractor_version == extractor_version,
+                ExtractedFact.sheet_row == field.sheet_row,
             )
         ).scalar_one_or_none()
 
@@ -79,6 +87,9 @@ def persist_facts(
         row.method = field.method
         row.kind = field.kind
         row.date_value = field.date_value
+        row.unit = field.unit
+        row.sheet_row = field.sheet_row
+        row.sheet_column = field.sheet_column
         row.extractor = extractor
         row.extractor_version = extractor_version
         if existing is None:
@@ -182,6 +193,7 @@ def persist_derived_facts(
     *,
     document_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
+    work_item: WorkItem | None = None,
 ) -> dict[str, DerivedFact]:
     """Store computed values and the facts that fed them, keyed by fact type.
 
@@ -192,13 +204,19 @@ def persist_derived_facts(
     if (document_id is None) == (project_id is None):
         raise ValueError("a derived fact belongs to exactly one of a document or a project")
 
+    # A work item's derived facts are project-scoped but must not collide across items, so the item
+    # is folded into the fact type. Two items of one project both have a quantity_variance, and
+    # keying them only on (project, fact_type) would make the second overwrite the first.
+    prefix = f"{work_item.normalised_identifier}:" if work_item is not None else ""
+
     stored: dict[str, DerivedFact] = {}
     for item in calculated:
+        scoped_type = f"{prefix}{item.fact_type}"
         existing = session.execute(
             select(DerivedFact).where(
                 DerivedFact.document_id == document_id,
                 DerivedFact.project_id == project_id,
-                DerivedFact.fact_type == item.fact_type,
+                DerivedFact.fact_type == scoped_type,
                 DerivedFact.calculation_version == item.calculation_version,
             )
         ).scalar_one_or_none()
@@ -208,7 +226,7 @@ def persist_derived_facts(
             if existing is not None
             else DerivedFact(document_id=document_id, project_id=project_id)
         )
-        row.fact_type = item.fact_type
+        row.fact_type = scoped_type
         row.kind = item.kind
         # Quantized to the column's scale here rather than in the calculation, so what a caller
         # reads back is exactly what the database holds. The engine deliberately does not round --
@@ -233,3 +251,48 @@ def persist_derived_facts(
 
     session.flush()
     return stored
+
+
+def persist_work_item_finding(
+    session: Session,
+    project_id: uuid.UUID,
+    work_item_id: uuid.UUID,
+    result: WorkItemRuleResult,
+) -> Finding:
+    """Write a reconciliation finding about one item of work.
+
+    Scoped to the project *and* the work item: a reviewer filtering by project must see item
+    findings, and a reviewer looking at one item must not see the others'.
+    """
+    existing = session.execute(
+        select(Finding).where(
+            Finding.work_item_id == work_item_id,
+            Finding.rule_id == result.rule_id,
+            Finding.rule_version == result.rule_version,
+        )
+    ).scalar_one_or_none()
+
+    finding = (
+        existing
+        if existing is not None
+        else Finding(project_id=project_id, work_item_id=work_item_id)
+    )
+    finding.rule_id = result.rule_id
+    finding.rule_version = result.rule_version
+    finding.outcome = result.outcome.value
+    finding.summary = result.summary
+    finding.expected = result.expected
+    finding.observed = result.observed
+    finding.detail = dict(result.detail)
+    if existing is None:
+        session.add(finding)
+    else:
+        finding.evidence.clear()
+    session.flush()
+
+    for role in sorted(result.evidence):
+        finding.evidence.append(FindingEvidence(fact_id=result.evidence[role].id, role=role))
+    for role, derived in sorted(result.derived_evidence.items()):
+        finding.evidence.append(FindingEvidence(derived_fact_id=derived.id, role=role))
+    session.flush()
+    return finding

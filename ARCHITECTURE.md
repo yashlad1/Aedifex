@@ -93,6 +93,10 @@ Phase 0 is complete. Implemented and tested:
 | Cross-document rules | [verification/cross_document.py](src/aedifex/verification/cross_document.py) |
 | Calculation layer, derived facts | [calculation/engine.py](src/aedifex/calculation/engine.py), `derived_facts` / `derived_fact_inputs` |
 | Knowledge registry | [knowledge/registry.py](src/aedifex/knowledge/registry.py), `GET /v1/knowledge` |
+| Local-file ingestion, upload provenance | [extraction/ingest.py](src/aedifex/extraction/ingest.py), `document_uploads` |
+| Construction spreadsheet reader | [extraction/spreadsheet.py](src/aedifex/extraction/spreadsheet.py) |
+| Work items, deterministic item linkage | [extraction/work_items.py](src/aedifex/extraction/work_items.py), `work_items` |
+| Payment reconciliation rules | [verification/reconciliation.py](src/aedifex/verification/reconciliation.py) |
 
 The pipeline is complete end to end and has been run against a real portal. NHAI's terms were
 reviewed and recorded (ADR 0006, rule 60), its tender API was reverse-engineered from the portal's own
@@ -133,8 +137,25 @@ an extracted fact or a derived fact per slot, enforced by a check constraint. Bo
 nobody wrote the computed one down, so the CLI labels them `evidence` and `derived` and the API sets
 `origin`.
 
-Not yet built: OCR (one acquired document is image-only), classification, archive expansion, synthetic
-generation, the entity layer above projects (Contract, BOQItem, Invoice), and the risk engine. Directories for those are created when their first real code lands,
+Above projects sit **work items** — the thing a payment claim is actually about. A bill of
+quantities, a measurement book and a running bill each make statements about "item 4.7.2"; until
+those are attached to one object there is nothing to reconcile. Attachment is deterministic: an exact
+item identifier, then a normalised form of it, with every link recording which layer matched so a
+weaker match is visibly weaker in the database.
+
+That completes the first post-award workflow. Contracted 500 m³, measured 470 m³, claimed 520 m³
+produces a variance of +50 m³, an unsupported amount of ₹400,000 at the contracted rate, and a
+`REVIEW` — with each number citing a named cell in a named file. `REVIEW` rather than `FAIL` because a
+claim ahead of measured work may be an error, a timing difference, or an unrecorded variation, and the
+rule can establish the discrepancy without establishing its cause.
+
+Two properties of that path are load-bearing. Units are never converted: there is no density table
+here, and comparing 520 m³ with 470 tonnes is refused rather than coerced. And a discrepancy is
+reported, never resolved — the pipeline has no basis for deciding which document is right.
+
+Not yet built: OCR (one acquired document is image-only), classification, archive expansion, the
+entity layer between projects and work items (Contract, Invoice, PaymentCertificate), variation
+orders, and the risk engine. Directories for those are created when their first real code lands,
 rather than kept as empty scaffolding.
 
 ## Key decisions and their reasons

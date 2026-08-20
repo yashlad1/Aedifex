@@ -204,3 +204,21 @@ Never commit customer documents, vendor proprietary specifications, paid databas
 standards without redistribution rights — not even as test fixtures. For standards such as BIS/IS
 codes, store permitted metadata and references separately from copyrighted text; being able to view
 a standard does not permit copying it into this repository or a training corpus.
+
+## Synthetic construction projects
+
+`data/synthetic/<PROJECT_REF>/` holds generated post-award records — a bill of quantities, a
+measurement book extract, and a running account bill — used to exercise payment reconciliation where
+no public post-award corpus exists. Regenerate with:
+
+```bash
+python -m scripts.generate_synthetic_project
+```
+
+Everything in it is fictional. Files carry `SYNTHETIC` in the name and a banner row in every sheet,
+and `GROUND_TRUTH.json` records which line items were made inconsistent on purpose, so a discrepancy
+can be attributed to the dataset or to the pipeline.
+
+The generator uses no clock and no random seed, so regenerating produces the same figures. It is
+ingested under the `synthetic_projects` source and marked `is_synthetic` on its upload rows; because
+projects never span sources, a synthetic record can never be compared against a real one.

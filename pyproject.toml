@@ -41,6 +41,11 @@ dependencies = [
     # proprietary; pypdf is BSD-3-Clause. pdfplumber would give per-character coordinates, which
     # would make evidence spans richer, but it is not needed to locate a value to a page.
     "pypdf>=6.1,<7",
+    # XLSX reading. Construction records -- BOQs, measurement sheets, running bills -- are
+    # spreadsheets far more often than they are prose, so a table reader is not optional for
+    # post-award documents. openpyxl is the maintained reader for the modern format and is
+    # MIT-licensed; xlrd handles only the legacy .xls and is explicitly not a substitute.
+    "openpyxl>=3.1,<4",
 ]
 
 [project.optional-dependencies]
@@ -54,6 +59,10 @@ dev = [
     # boto3 ships no type information, so mypy --strict would see every S3 call as Any and the
     # storage layer would be the one place with no type checking at all.
     "boto3-stubs[s3]>=1.36,<2",
+    # Same reasoning for openpyxl: the spreadsheet reader is where construction quantities and
+    # rates enter the system, and untyped cell access there is exactly where a wrong column would
+    # go unnoticed.
+    "types-openpyxl>=3.1,<4",
     "pip-audit>=2.9,<3",
     # Issues a throwaway CA and server certificates so the TLS path is tested with a real
     # handshake. Mocking TLS would leave the security-critical half of the transport unverified.

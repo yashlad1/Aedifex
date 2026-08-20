@@ -172,3 +172,91 @@ runs leave 2 derived facts, 4 input links, 0 duplicates), the `/v1/knowledge` en
 printers. Covered by test: the share calculation including the not-exactly-2% case, every refusal
 path, newest-extractor-version selection, and the registry's claim that it describes only types the
 code can produce.
+
+---
+
+# Addendum — payment reconciliation (2026-08-20)
+
+## The dataset is synthetic, and separated
+
+`data/synthetic/AEDX-SYNTH-001/` holds three generated spreadsheets and a `GROUND_TRUTH.json`
+recording exactly which line items were made inconsistent on purpose. Everything in it is fictional:
+no real project, contractor, employer, or price. Every file carries `SYNTHETIC` in its name and a
+banner row in the sheet, and the generator is committed
+(`scripts/generate_synthetic_project.py`) so the data is reproducible rather than mysterious. The
+files themselves are gitignored: the generator is the source of truth, and regeneration is
+byte-identical — verified, after openpyxl's embedded creation timestamp was found to make every run
+produce a different digest, which in a content-addressed store meant a new document id and a
+duplicate artifact on every regeneration.
+
+It is kept out of the NHAI corpus by **source**, not by convention: it is ingested under
+`synthetic_projects`, and projects never span sources, so a synthetic record cannot be compared
+against a real one. Uploads also carry `is_synthetic`, so a query for real evidence can exclude
+generated data without knowing which sources happen to be synthetic today.
+
+**All three documents are XLSX.** The brief preferred "XLSX/PDF"; spreadsheets are what BOQs,
+measurement sheets and running bills actually are, and using them for all three avoided adding a
+PDF-generation dependency for no evidential gain. A scanned measurement sheet — the realistic hard
+case — needs OCR and is a separate slice.
+
+## What the synthetic project proves, and what it cannot
+
+Item 4.7.2 exercises the full path to a `REVIEW` with ₹400,000 of unsupported value; item 4.7.3
+exercises a rate variance; item 4.7.1 passes all three rules. So both disagreement *kinds* are
+demonstrated on real files rather than only in tests.
+
+It cannot prove behaviour on messy input. The sheets have clean headers, one sheet per file, no merged
+cells, no continuation rows, no subtotals interleaved with items, and no scanned pages. Real
+measurement books have all of those.
+
+## Not built
+
+- **No variation-order support.** Rule 2 therefore returns `REVIEW` on any rate difference, which on
+  a real project with approved variations would be noisy. Reading a variation order is the obvious
+  next document type.
+- **No entity layer between projects and work items.** There is no `Contract`,
+  `PaymentCertificate`, or `Invoice` object, so a rule cannot yet ask whether a *bill* as a whole is
+  payable — only whether each item reconciles.
+- **No cross-document derived facts.** Every calculation still draws its inputs from one work item.
+  The schema supports project-scoped derived facts and nothing produces one.
+- **Item matching is identifier-only.** Two documents describing the same work with different item
+  numbers will not link. `matched_by` is the seam for semantic matching; nothing populates it beyond
+  `exact_identifier` and `normalised_identifier`.
+- **Units are compared, never converted.** Deliberate. A tonne-to-cubic-metre conversion is a
+  density, and inventing one would fabricate evidence.
+
+## Defects found by execution
+
+1. **`span_start`/`span_end` overloaded with grid coordinates.** Storing (row, column) there violated
+   `span_end >= span_start` for any cell in column A — and worse, gave one pair of columns two
+   meanings. Replaced with explicit `sheet_row`/`sheet_column`.
+2. **Fact uniqueness assumed one fact of each type per document.** True of prose, false of a table: a
+   three-row bill of quantities silently persisted only its last row. The extraction was correct and
+   the persistence discarded it. Replaced with two partial unique indexes, because a single index
+   including `sheet_row` would have stopped deduplicating page facts entirely (NULL never equals NULL).
+3. **The cross-document agreement rule produced a false positive** on the first spreadsheet project,
+   reporting a claimed rate of 74,500 for one item as disagreeing with 8,000 for another — in the same
+   document. Item-scoped facts are now excluded from it; they are reconciled per item instead.
+4. **Relationships were labelled `same_tender` for a project keyed by contract reference.** Now
+   `same_contract`, chosen from the fact that grouped the documents.
+5. **The downgrade failed twice more**, first on the restored fact constraint and then on
+   `derived_fact_inputs`' `ON DELETE RESTRICT`. Both are now handled in dependency order. That
+   RESTRICT is deliberate — a computed value must not outlive its evidence — so the ordering is the
+   constraint working, not an obstacle to it.
+6. **The synthetic generator was not reproducible.** openpyxl stamps a creation time into every
+   workbook, so regenerating the dataset produced different bytes, a different SHA-256, and therefore
+   a different document. Found by testing the determinism claim rather than trusting it. Document
+   properties are now pinned.
+7. **Two modified constraints were invisible to autogenerate**: the `outcome` check constraint (which
+   would have rejected every `review` finding) and the project-scope unique index. Alembic compares
+   both by name. The model edit for the first also failed silently in an earlier pass and was caught
+   only by the offline DDL harness, which `alembic check` cannot substitute for.
+
+## Testing debt
+
+Verified by execution only: ingestion and upload provenance, spreadsheet extraction on real files,
+work-item linking, the `/v1/projects/{id}/work-items` endpoint, and idempotency (repeated runs leave
+3 work items, 14 derived facts, 0 duplicates). Covered by test: quantity and money arithmetic, the
+unit-mismatch refusal, exposure flooring and contract-rate pricing, identifier normalisation
+including the 4.7.2/4.7.20 boundary, all three rules' PASS and REVIEW paths, and the missing-input
+INCONCLUSIVE path.

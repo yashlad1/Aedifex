@@ -54,7 +54,10 @@ from aedifex.acquisition.pipeline import Acquirer
 from aedifex.acquisition.registry import get_registry
 from aedifex.acquisition.registry.models import SourceDefinition
 from aedifex.config import Settings, get_settings
+from aedifex.domain.documents import DocumentType
+from aedifex.domain.files import FileFormat
 from aedifex.errors import AedifexError, ConfigurationError
+from aedifex.extraction.ingest import ingest_file
 from aedifex.extraction.projects import reconcile_projects
 from aedifex.extraction.runner import (
     DEFAULT_MAX_PAGES,
@@ -62,6 +65,8 @@ from aedifex.extraction.runner import (
     ProjectAnalysis,
     analyse_document,
     analyse_project,
+    analyse_spreadsheet,
+    reconcile_work_items,
 )
 from aedifex.infrastructure.database.models import (
     DerivedFact,
@@ -90,6 +95,8 @@ def main(argv: list[str] | None = None) -> int:
             return _sources()
         if args.command == "crawl":
             return _crawl(args, settings)
+        if args.command == "ingest":
+            return _ingest(args, settings)
         if args.command == "analyse":
             return _analyse(args, settings)
         if args.command == "status":
@@ -152,6 +159,20 @@ def _parser() -> argparse.ArgumentParser:
             "you can cite; without it, a document that states no rate is measured, not judged."
         ),
     )
+
+    ingest = commands.add_parser(
+        "ingest", help="Store a local file as evidence under a manual-upload source"
+    )
+    ingest.add_argument("paths", nargs="+", help="Files to ingest")
+    ingest.add_argument("--source", required=True, help="A manual_upload source id")
+    ingest.add_argument(
+        "--type",
+        required=True,
+        choices=sorted(member.value for member in DocumentType),
+        help="Document type. Stated, not guessed",
+    )
+    ingest.add_argument("--synthetic", action="store_true", help="Mark as generated test data")
+    ingest.add_argument("--note", default=None)
 
     status = commands.add_parser("status", help="Show the corpus, the queue, and recent runs")
     status.add_argument("--source", default=None)
@@ -256,6 +277,50 @@ def _crawl(args: argparse.Namespace, settings: Settings) -> int:
     return 0 if outcome.succeeded or outcome.stop_reason.value == "cancelled" else 1
 
 
+def _ingest(args: argparse.Namespace, settings: Settings) -> int:
+    """Store local files as immutable evidence, recording an upload rather than a retrieval."""
+    source = get_registry(settings).get(args.source)
+    engine = build_engine(settings)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    store = RawObjectStore(_s3(settings), bucket=settings.storage_bucket)
+    store.ensure_bucket()
+
+    document_type = DocumentType(args.type)
+    file_format_for = {".xlsx": FileFormat.XLSX, ".pdf": FileFormat.PDF}
+
+    failures = 0
+    with sessions() as session:
+        for raw in args.paths:
+            path = Path(raw)
+            file_format = file_format_for.get(path.suffix.lower())
+            if file_format is None:
+                failures += 1
+                print(f"{path.name}  ERROR  unsupported extension {path.suffix!r}")
+                continue
+            try:
+                outcome = ingest_file(
+                    session,
+                    store,
+                    path,
+                    source=source,
+                    document_type=document_type,
+                    file_format=file_format,
+                    uploaded_by=f"cli:{args.source}",
+                    software_version=__version__,
+                    is_synthetic=args.synthetic,
+                    note=args.note,
+                )
+                session.commit()
+            except AedifexError as error:
+                session.rollback()
+                failures += 1
+                print(f"{path.name}  ERROR  {error}")
+                continue
+            print(f"{outcome.describe()}  {outcome.document.id}")
+
+    return 1 if failures else 0
+
+
 def _analyse(args: argparse.Namespace, settings: Settings) -> int:
     """Run the analysis pipeline and print the evidence behind every verdict.
 
@@ -289,13 +354,18 @@ def _analyse(args: argparse.Namespace, settings: Settings) -> int:
             if index:
                 print()
             try:
-                outcome = analyse_document(
-                    session,
-                    store,
-                    document_id,
-                    max_pages=args.max_pages,
-                    prescribed_share=args.prescribed_share,
-                )
+                document = session.get(Document, document_id)
+                if document is not None and document.file_format is FileFormat.XLSX:
+                    # A construction spreadsheet, not prose. Different reader, same fact model.
+                    outcome = analyse_spreadsheet(session, store, document_id)
+                else:
+                    outcome = analyse_document(
+                        session,
+                        store,
+                        document_id,
+                        max_pages=args.max_pages,
+                        prescribed_share=args.prescribed_share,
+                    )
                 session.commit()
             except AedifexError as error:
                 session.rollback()
@@ -344,6 +414,18 @@ def _analyse_projects(args: argparse.Namespace, sessions: sessionmaker[Session])
             _print_project(session, analysis)
 
     return 1 if failures else 0
+
+
+def _plain(value: Decimal | None) -> str:
+    """A decimal without exponent notation or trailing zeros.
+
+    ``Decimal("0E-10")`` and ``Decimal("50.0000000000")`` are exactly right in the database and
+    unreadable in a report. ``normalize`` alone turns 50 into ``5E+1``, so the format specifier is
+    what actually keeps it plain.
+    """
+    if value is None:
+        return "—"
+    return f"{value.normalize():f}"
 
 
 def _print_project(session: Session, analysis: ProjectAnalysis) -> None:
@@ -395,6 +477,41 @@ def _print_project(session: Session, analysis: ProjectAnalysis) -> None:
             f"  {fact.fact_type:32} {value:>18}  [{fact.kind.value}]  "
             f"{analysis.filename(fact.document_id)} p{fact.page}"
         )
+
+    items = reconcile_work_items(session, project.id)
+    if items:
+        print("\nWORK ITEMS")
+        for entry in items:
+            item = entry.work_item
+            unit = item.unit or ""
+            print(f"\n  {item.item_identifier} — {item.description or '(no description)'}")
+            print(f"    matched by {item.matched_by}")
+            values = {fact.fact_type: fact for fact in entry.facts}
+            for label, key in (
+                ("Contracted", "contracted_quantity"),
+                ("Measured", "measured_quantity"),
+                ("Previously certified", "previous_certified_quantity"),
+                ("Claimed (cumulative)", "cumulative_claim_quantity"),
+                ("Contract rate", "contract_rate"),
+                ("Claimed rate", "claimed_rate"),
+            ):
+                stated = values.get(key)
+                if stated is None:
+                    continue
+                suffix = unit if "quantity" in key else (stated.currency or "")
+                print(
+                    f"    {label:22} {_plain(stated.numeric_value):>12} {suffix:5}"
+                    f"  [{analysis.filename(stated.document_id)} {stated.snippet}]"
+                )
+            for derived in sorted(entry.derived, key=lambda d: d.fact_type):
+                name = derived.fact_type.split(":", 1)[-1]
+                print(
+                    f"    {name:22} {_plain(derived.numeric_value):>12} "
+                    f"{(derived.unit or derived.currency or ''):5}  ({derived.expression})"
+                )
+            for finding in entry.findings:
+                print(f"    {finding.outcome.upper():13} {finding.rule_id}")
+                print(f"    {'':13} {finding.summary}")
 
     print("\nFINDINGS")
     for finding in analysis.findings:
