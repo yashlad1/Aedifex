@@ -164,6 +164,10 @@ differs. Reference-vs-project is noted, since that is the axis that matters.
 | AusTender, Canadian Buy and Sell | AU, CA | Notices, awards | [K] |
 | Open Contracting / OCDS publishers | ~40 jurisdictions | Structured buyer/tender/award/contract relationships | Ground truth for entity matching, not documents |
 
+**Indian post-award sources are catalogued separately and exhaustively** in
+[INDIAN_POSTAWARD_SOURCES.md](INDIAN_POSTAWARD_SOURCES.md) — all eight categories of public authority,
+with the public/login/licence/robots determination for each, and why almost none is usable.
+
 ### B. Public oversight and audit bodies — audit phase
 
 | Source | Yields | Note |

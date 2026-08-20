@@ -116,6 +116,15 @@ document informs many projects or records one.
 
 ### India — post-award records
 
+A systematic search of every Indian public authority holding post-award records — state PWD e-MB
+systems, PMGSY/OMMAS, CPWD, NHAI, Smart City SPVs, irrigation departments, municipal corporations and
+RTI s.4 disclosures — is in
+[docs/research/INDIAN_POSTAWARD_SOURCES.md](docs/research/INDIAN_POSTAWARD_SOURCES.md). Its verdict:
+**no Indian public authority proactively publishes primary post-award records.** Two routes outrank
+everything in the table below — **MGNREGA/NREGASoft**, which publishes transaction-level records
+because the RTI Act requires it, and an **RTI application**, which is the only route to a contract
+agreement now that the CIC has confirmed NHAI does not publish them.
+
 **None of the sources above publishes a post-award record.** Every one is a tender, a notice, a bid
 document, a schedule of rates or an award notice, which is the pre-award half of a contract's life.
 A measurement book, an interim payment certificate, a variation order and an inspection record are

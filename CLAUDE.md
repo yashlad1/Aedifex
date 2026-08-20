@@ -24,6 +24,7 @@ Then read, as the task requires:
 | [docs/adr/](docs/adr/) | Decisions already taken, with their reasoning |
 | [docs/research/CONSTRUCTION_INFORMATION_MODEL.md](docs/research/CONSTRUCTION_INFORMATION_MODEL.md) | What construction information *is*: the four chains, the deterministic/AI boundary per document, and the minimum evidence for each verification domain |
 | [docs/research/CORPUS_ROADMAP.md](docs/research/CORPUS_ROADMAP.md) | Where construction evidence exists worldwide, and what we are missing |
+| [docs/research/INDIAN_POSTAWARD_SOURCES.md](docs/research/INDIAN_POSTAWARD_SOURCES.md) | Every Indian post-award source, ranked, and why almost none is usable |
 | [docs/plans/](docs/plans/) | Implementation plans, newest first |
 | [docs/requirements/functional.md](docs/requirements/functional.md) | Numbered requirements and their status |
 
