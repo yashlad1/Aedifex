@@ -225,8 +225,14 @@ data: seven tender documents for specific procurements and five synthetic projec
 currently unplaced documents are not an instance of this — they are tender notices whose NIT number
 was not extracted, which is an extraction gap, not a reference-data one.
 
-Deliberately unresolved. One real Schedule of Rates and one real measurement book would settle the
-design; reasoning will not.
+**The design constraint is settled; the implementation is not.** Project facts stay isolated by
+default, and reference evidence reaches a rule through explicit, evidence-backed applicability rather
+than global visibility: *project evidence + applicable reference evidence → rule evaluation*. A
+global flag, a null-project wildcard, per-project copies and model-inferred applicability are all
+rejected, with reasons, in [ADR 0014](../adr/0014-reference-data-by-explicit-applicability.md).
+
+Which applicability dimensions are needed — jurisdiction, authority, contract type, effective date,
+project type, an operator link — is what a real document will decide. Reasoning will not.
 
 ### N6. Five real objects sit in immutable storage with no provenance at all
 

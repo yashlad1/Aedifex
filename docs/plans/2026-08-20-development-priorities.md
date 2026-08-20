@@ -50,6 +50,24 @@ So priority 1 is not "crawl harder". It needs either a new class of source or a 
 directly, and both are decisions for the owner. Candidate post-award sources are recorded in
 `DATA_SOURCES.md` for legal review; none is approved and none is being collected.
 
+## The trigger for the next implementation work
+
+No implementation work begins until one of these arrives:
+
+- a real **Measurement Book**
+- a real **IPC / RA Bill**
+- a real **Variation Order**
+- a real **Payment Certificate**
+- a real **Schedule of Rates or other reference document required by an actual rule**
+
+Then: run it through the current pipeline **first**, unchanged, and let the document determine the
+next architecture change. Not the reverse.
+
+One design constraint is already settled so that it cannot be got wrong under time pressure: project
+facts stay isolated by default, and reference evidence reaches a rule by explicit, evidence-backed
+applicability rather than by global scope —
+[ADR 0014](../adr/0014-reference-data-by-explicit-applicability.md).
+
 ## The distinction the business model will have to make
 
 Named here because the candidate sources force it, and because it is the one design conclusion that

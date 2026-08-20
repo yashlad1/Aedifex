@@ -15,6 +15,10 @@ supersedes the old one, so the reasoning history survives.
 | [0008](0008-python-version-policy.md) | Python version policy: support 3.12 and 3.13 | Accepted |
 | [0009](0009-supply-chain-integrity.md) | Supply-chain integrity: lockfile, digest pins, layered scanning | Accepted |
 | [0010](0010-fetch-retry-ssrf-policy.md) | HTTP fetch policy: SSRF validation, retries, rate limiting | Accepted (pre-implementation) |
+| [0011](0011-transport-boundary.md) | Transport boundary: validated targets only | Accepted |
+| [0012](0012-postgresql-frontier-queue.md) | PostgreSQL as the frontier queue | Accepted |
+| [0013](0013-reuse-evaluation-kingfisher-scrapy-ocds.md) | Reuse evaluation: Kingfisher, Scrapy, OCDS | Accepted |
+| [0014](0014-reference-data-by-explicit-applicability.md) | Reference data by explicit applicability, not global scope | Accepted (pre-implementation) |
 
 Write one when a change constrains future work, chooses between viable technologies,
 introduces or removes a boundary, or encodes a policy in code. See

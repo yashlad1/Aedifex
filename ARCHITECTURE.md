@@ -59,13 +59,28 @@ other. That strict scoping is exactly what makes cross-document comparison safe.
 
 Reference data has no such identifier by nature. A Schedule of Rates belongs to no tender and must be
 comparable against *many* projects' bills. Under the present rules it would land in
-`documents_without_project_key` and be invisible to every rule. `project_documents` is a join table,
-so the schema already permits one document in many projects; what does not yet exist is any way to
-place a document that names no project, or to scope a rule across projects deliberately rather than
-accidentally.
+`documents_without_project_key` and be invisible to every rule.
 
-This is the crux of the business-object modelling work, and it is deliberately unresolved: one real
-Schedule of Rates and one real measurement book would settle it, and no amount of reasoning will.
+**Project scoping will not be weakened to fix that.** The design is settled even though nothing is
+built: reference evidence reaches a rule through **explicit, evidence-backed applicability**, never
+through global visibility —
+
+```text
+project evidence  +  applicable reference evidence  ->  rule evaluation
+```
+
+Applicability is a provenanced claim that a given reference document governs a given project, and may
+later be expressed through jurisdiction, issuing authority, contract type, effective date, project
+type, or an explicit operator link. A "global document" flag is rejected: it is one boolean that
+discards the isolation invariant for every rule at once, and it is the fix a future contributor is
+most likely to reach for. See
+[ADR 0014](docs/adr/0014-reference-data-by-explicit-applicability.md) for the alternatives and why
+each fails.
+
+Deliberately unresolved beyond that. `project_documents` is already a join table, so the schema
+permits one document in many projects and no migration is implied. Which applicability dimensions are
+needed, and whether they are columns, relationship types or predicates, is a question one real
+Schedule of Rates required by an actual rule would settle — and that reasoning will not.
 
 ## Layers
 
