@@ -76,6 +76,10 @@ Never, regardless of review outcome:
 - Collect personal data beyond what is incidentally present in public documents, or train
   models on it without screening.
 
+The full ecosystem survey — every realistic source worldwide, with the document lifecycle it serves —
+is in [docs/research/CORPUS_ROADMAP.md](docs/research/CORPUS_ROADMAP.md). This file remains the record
+of what has been *reviewed and decided*; that one is the record of what exists.
+
 ## Candidate sources
 
 Grouped below by geography for historical reasons. The axis that actually matters is **reference data

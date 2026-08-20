@@ -40,6 +40,19 @@ Concretely: the existing model has `Project`, `Document`, `WorkItem`, `Extracted
 question **one real IPC and one real measurement book would settle in an afternoon** and that no
 amount of reasoning settles now.
 
+## The ecosystem survey behind these priorities
+
+[docs/research/CORPUS_ROADMAP.md](../research/CORPUS_ROADMAP.md) catalogues the construction document
+lifecycle — 56 document types across pre-award, award, post-award, audit and reference — with producer,
+consumer, contents, primary-or-secondary standing, and likely Aedifex mapping for each, plus a gap
+analysis against the measured corpus and ranked acquisition recommendations.
+
+Its two conclusions that bear directly on priority 1: the **contract agreement** unlocks more rules
+than any other single document, because every post-award threshold lives in it and none may be
+configured; and **US state DOT bid tabulations** are line-item priced construction data that is
+already public and needs nothing from anyone, which makes them the only recommendation that is not
+blocked.
+
 ## What the corpus cannot currently deliver
 
 Every source in `DATA_SOURCES.md` — approved, candidate, and blocked alike — is **pre-award**:
