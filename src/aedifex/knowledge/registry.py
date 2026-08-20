@@ -392,7 +392,9 @@ RULE_TYPES: Final[tuple[RuleTypeInfo, ...]] = (
         description=(
             "Reports any value the project's active documents disagree about. Runs before the "
             "other item rules, because evidence that contradicts itself must be resolved before "
-            "any conclusion drawn from it means anything. REVIEW names every conflicting document."
+            "any conclusion drawn from it means anything. REVIEW names every conflicting document, "
+            "and PASS cites every fact it resolved -- a pass that named nothing could not be "
+            "checked. Consumes no fixed type: it reads whatever the item has."
         ),
         consumes=(),
     ),

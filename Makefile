@@ -58,6 +58,11 @@ test-all: ## Run the whole suite
 validate-registry: ## Validate the source registry and show review status
 	$(PYTHON) -m scripts.validate_registry
 
+audit-traceability: ## Walk every finding back to its immutable raw artifact (needs DB + storage)
+	# The property the platform exists to provide, checked rather than assumed. Fails only on a
+	# conclusive finding that cannot be traced -- an inconclusive one asserts no value to trace.
+	$(PYTHON) -m scripts.audit_traceability
+
 audit: ## Audit the locked dependency set for known vulnerabilities
 	# Audits uv.lock rather than the installed environment: --strict otherwise fails on our
 	# own editable, non-PyPI package, and the lock is what actually ships.

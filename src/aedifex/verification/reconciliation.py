@@ -443,23 +443,54 @@ def evaluate_unambiguous_evidence(item: WorkItemFacts) -> WorkItemRuleResult:
     no other rule happens to depend on it.
     """
     conflicts = tuple(selection for selection in item.selections.values() if selection.conflicting)
-    if not conflicts:
+    if conflicts:
+        return _conflicted(UNAMBIGUOUS_EVIDENCE_RULE_ID, item, conflicts)
+
+    # The facts this rule actually resolved, cited by type. Without them the verdict was a PASS
+    # asserting "every value used is stated by exactly one active document" while naming none of
+    # them, and an observed of "0 conflicts" that a reviewer had no way to check. A traceability
+    # audit over the corpus found 38 such findings -- every one of them a pass.
+    checked = {
+        fact_type: selection.fact
+        for fact_type, selection in sorted(item.selections.items())
+        if selection.fact is not None
+    }
+    if not checked:
+        # Nothing resolved, so nothing was checked. Reporting that as a pass would make an absence
+        # of evidence look like a confirmation, and it is the one case where this rule cannot cite
+        # anything because there is genuinely nothing to cite.
         return WorkItemRuleResult(
             rule_id=UNAMBIGUOUS_EVIDENCE_RULE_ID,
             rule_version=RULE_VERSION,
             work_item_id=str(item.work_item.id),
-            outcome=Outcome.PASS,
+            outcome=Outcome.INCONCLUSIVE,
             summary=(
-                f"Item {item.work_item.item_identifier}: every value used is stated by exactly one "
-                f"active document, or agreed by all of them."
+                f"Item {item.work_item.item_identifier}: no value could be resolved from the "
+                f"project's active documents, so there was nothing to check for ambiguity."
             ),
             expected="one authoritative value per fact",
-            observed="0 conflicts",
-            detail={"conflicts": "0"},
+            observed=NOT_SOURCED,
+            detail={"conflicts": "0", "facts_checked": "0"},
             evidence={},
             derived_evidence={},
         )
-    return _conflicted(UNAMBIGUOUS_EVIDENCE_RULE_ID, item, conflicts)
+
+    return WorkItemRuleResult(
+        rule_id=UNAMBIGUOUS_EVIDENCE_RULE_ID,
+        rule_version=RULE_VERSION,
+        work_item_id=str(item.work_item.id),
+        outcome=Outcome.PASS,
+        summary=(
+            f"Item {item.work_item.item_identifier}: each of the {len(checked)} values used "
+            f"({', '.join(sorted(checked))}) is stated by exactly one active document, or agreed "
+            f"by all of them."
+        ),
+        expected="one authoritative value per fact",
+        observed=f"0 conflicts across {len(checked)} facts",
+        detail={"conflicts": "0", "facts_checked": str(len(checked))},
+        evidence=checked,
+        derived_evidence={},
+    )
 
 
 RECONCILIATION_RULES: Final[dict[str, object]] = {

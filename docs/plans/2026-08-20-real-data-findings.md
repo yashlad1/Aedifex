@@ -87,6 +87,42 @@ asking for "the estimated cost" wants one fact, and a calculation summing a bill
 
 Found by reading the output of a real document rather than by a test — the number was visibly absurd.
 
+### B8. Thirty-eight PASS verdicts cited no evidence at all
+
+Found by auditing the chain the platform exists to provide, rather than by reading a document:
+
+    Finding -> Evidence -> Derived Fact -> Fact -> Document -> Page/Cell -> Immutable Raw Artifact
+
+Of 172 stored findings, **156 cited nothing**. Splitting by outcome is what made it actionable:
+
+| Outcome | No evidence | With evidence |
+| --- | --- | --- |
+| pass | **38** | 10 |
+| review | 0 | 4 |
+| inconclusive | 118 | 2 |
+
+The 38 were all `work_item_evidence_unambiguous`, which returned PASS with `evidence={}` — a summary
+reading "every value used is stated by exactly one active document" that **named none of them**, and
+an `observed` of "0 conflicts" a reviewer had no way to check. 37 of the 38 were the real NHAI
+project's work items. A verdict that cannot be traced is the one thing this platform may not produce,
+so: BLOCKER.
+
+Fixed by citing the facts the rule actually resolved — it already held them in `item.selections` and
+was discarding them. Evidence links across the corpus went **46 to 240**, facts reached **92 to
+286**. A work item where *nothing* resolves now returns INCONCLUSIVE rather than PASS, because a
+pass citing nothing would leave the same hole open in a case the corpus does not currently contain.
+
+Two things the audit confirmed rather than found, which are worth stating because they were assumed
+before: every one of the 286 facts reached resolves to a document with a provenance row and to a raw
+object in immutable storage **whose digest still matches** the document record; and the page locator
+needs no runtime check at all, because `extracted_facts.page` is NOT NULL with a `page >= 1`
+constraint — mypy rejected the check as unreachable, which is the stronger outcome.
+
+The audit is now [`scripts/audit_traceability.py`](../../scripts/audit_traceability.py) and
+`make audit-traceability`, following the existing `scripts/validate_registry.py` pattern. It fails
+only on a *conclusive* finding that cannot be traced. Run it against every new class of real
+document.
+
 ---
 
 ## NEXT
@@ -142,6 +178,18 @@ same unit and one document is no basis for saying so. Case-folding is safe becau
 unit differs from another by case alone; an equivalence table is a different claim, and building one
 from a single portal's spelling habits is the per-portal special case principle 10 names. A second
 real document can answer it.
+
+### N5. Inconclusive findings cite nothing, including what they did find
+
+The 118 remaining chain breaks are all INCONCLUSIVE, and tolerated: an INCONCLUSIVE asserts only that
+a fact was missing, and there is no evidence for an absence. The audit exits zero for them
+deliberately.
+
+But most of them found *something*. `claim_within_measured_quantity` on a real BOQ item has the
+contracted quantity and the contract rate in hand and lacks only the measurement, and citing the two
+it has would turn "inconclusive" into "inconclusive, and here is the half of the chain that exists".
+That is explainability, not correctness — no finding is untrustworthy because of it — so it is NEXT
+rather than BLOCKER.
 
 ### N3b. An item number written `21 (a)` will not link to `21(a)`
 
