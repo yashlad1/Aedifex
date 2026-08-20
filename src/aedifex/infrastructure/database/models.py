@@ -878,6 +878,16 @@ class DerivedFact(Base):
     expression: Mapped[str] = mapped_column(Text)
     """The arithmetic in words, e.g. ``1693000 / 84649969``. What makes it redoable by hand."""
 
+    inputs_fingerprint: Mapped[str] = mapped_column(String(64), server_default=text_clause("''"))
+    """Digest of the exact input fact ids this value was computed from.
+
+    Identity by calculation version alone was not enough. A calculation is stale when its *inputs*
+    change — a superseded document dropping out of active selection, or a newer fact replacing an
+    older one — and the version does not move for either. Comparing fingerprints makes that
+    detectable, so a reused value can be distinguished from a recomputed one rather than assumed
+    current.
+    """
+
     computed_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     inputs: Mapped[list[DerivedFactInput]] = relationship(

@@ -17,7 +17,7 @@ the comparison by hand from the citation alone.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Final
 
@@ -26,6 +26,7 @@ from aedifex.calculation.engine import (
     DERIVED_RATE_VARIANCE,
     DERIVED_UNSUPPORTED_AMOUNT,
 )
+from aedifex.extraction.selection import Selected
 from aedifex.extraction.spreadsheet import (
     FIELD_CLAIMED_RATE,
     FIELD_CONTRACT_RATE,
@@ -41,17 +42,20 @@ __all__ = [
     "CUMULATIVE_NOT_REGRESSED_RULE_ID",
     "RATE_MATCHES_CONTRACT_RULE_ID",
     "RECONCILIATION_RULES",
+    "UNAMBIGUOUS_EVIDENCE_RULE_ID",
     "WorkItemFacts",
     "WorkItemRuleResult",
     "evaluate_claim_within_measured",
     "evaluate_cumulative_not_regressed",
     "evaluate_rate_matches_contract",
+    "evaluate_unambiguous_evidence",
     "evaluate_work_item",
 ]
 
 CLAIM_WITHIN_MEASURED_RULE_ID: Final[str] = "claim_within_measured_quantity"
 RATE_MATCHES_CONTRACT_RULE_ID: Final[str] = "claimed_rate_matches_contract_rate"
 CUMULATIVE_NOT_REGRESSED_RULE_ID: Final[str] = "cumulative_claim_not_below_previous_certified"
+UNAMBIGUOUS_EVIDENCE_RULE_ID: Final[str] = "work_item_evidence_unambiguous"
 RULE_VERSION: Final[str] = "1"
 
 
@@ -64,6 +68,22 @@ class WorkItemFacts:
     derived: dict[str, DerivedFact]
     filenames: dict[str, str]
     """Document id (as string) to filename, so a summary can name where a value came from."""
+
+    selections: dict[str, Selected] = field(default_factory=dict)
+    """How each fact was chosen, including the ones that could not be.
+
+    A rule reads this to distinguish "no document states this" from "two active documents disagree".
+    The first is a gap; the second is a conflict, and only the second means the project has a
+    problem the operator must resolve before any reconciliation of that item can be trusted.
+    """
+
+    def conflicts(self, *fact_types: str) -> tuple[Selected, ...]:
+        """Unresolved selections among the given types, worst case first."""
+        return tuple(
+            selection
+            for fact_type in fact_types
+            if (selection := self.selections.get(fact_type)) is not None and selection.conflicting
+        )
 
     def where(self, fact: ExtractedFact | DerivedFact | None) -> str:
         if fact is None:
@@ -102,6 +122,49 @@ def _plain(value: Decimal | None) -> str:
     return f"{value.normalize():f}"
 
 
+def _conflicted(
+    rule_id: str, item: WorkItemFacts, conflicts: tuple[Selected, ...]
+) -> WorkItemRuleResult:
+    """Refuse to judge an item whose evidence contradicts itself.
+
+    ``REVIEW`` rather than ``INCONCLUSIVE``: an unresolved conflict between two active documents is
+    not a gap in the evidence, it is a problem *in* the evidence, and somebody has to decide which
+    revision governs. Naming the documents is the whole value of the finding.
+    """
+    detail = {
+        selection.fact_type: (
+            f"{len(selection.considered)} active documents disagree: "
+            + "; ".join(
+                f"{fact.numeric_value if fact.numeric_value is not None else fact.literal}"
+                f" from {item.filenames.get(str(fact.document_id), str(fact.document_id))}"
+                for fact in selection.considered
+            )
+        )
+        for selection in conflicts
+    }
+    return WorkItemRuleResult(
+        rule_id=rule_id,
+        rule_version=RULE_VERSION,
+        work_item_id=str(item.work_item.id),
+        outcome=Outcome.REVIEW,
+        summary=(
+            f"Item {item.work_item.item_identifier}: cannot be reconciled because the project's "
+            f"active documents disagree. "
+            + " ".join(selection.reason + "." for selection in conflicts)
+            + " Record which document supersedes the other, then re-run."
+        ),
+        expected="one authoritative value per fact",
+        observed=f"{len(conflicts)} unresolved conflict(s)",
+        detail=detail,
+        evidence={
+            f"{selection.fact_type}#{index}": fact
+            for selection in conflicts
+            for index, fact in enumerate(selection.considered, start=1)
+        },
+        derived_evidence={},
+    )
+
+
 def _inconclusive(
     rule_id: str,
     item: WorkItemFacts,
@@ -131,6 +194,10 @@ def evaluate_claim_within_measured(item: WorkItemFacts) -> WorkItemRuleResult:
     subtracting again, and reports the money at risk from ``unsupported_amount`` when available — a
     quantity discrepancy without its value is hard for a reviewer to prioritise.
     """
+    conflicts = item.conflicts(FIELD_CUMULATIVE_CLAIM_QUANTITY, FIELD_MEASURED_QUANTITY)
+    if conflicts:
+        return _conflicted(CLAIM_WITHIN_MEASURED_RULE_ID, item, conflicts)
+
     claimed = item.facts.get(FIELD_CUMULATIVE_CLAIM_QUANTITY)
     measured = item.facts.get(FIELD_MEASURED_QUANTITY)
     variance = item.derived.get(DERIVED_QUANTITY_VARIANCE)
@@ -220,6 +287,10 @@ def evaluate_rate_matches_contract(item: WorkItemFacts) -> WorkItemRuleResult:
     approved variation is exactly the thing that would make a differing rate correct, and we cannot
     yet see one.
     """
+    conflicts = item.conflicts(FIELD_CLAIMED_RATE, FIELD_CONTRACT_RATE)
+    if conflicts:
+        return _conflicted(RATE_MATCHES_CONTRACT_RULE_ID, item, conflicts)
+
     claimed = item.facts.get(FIELD_CLAIMED_RATE)
     contracted = item.facts.get(FIELD_CONTRACT_RATE)
     variance = item.derived.get(DERIVED_RATE_VARIANCE)
@@ -292,6 +363,10 @@ def evaluate_cumulative_not_regressed(item: WorkItemFacts) -> WorkItemRuleResult
     bill contradicts its own history — which is a arithmetic or transcription problem, not a
     site one.
     """
+    conflicts = item.conflicts(FIELD_CUMULATIVE_CLAIM_QUANTITY, FIELD_PREVIOUS_CERTIFIED_QUANTITY)
+    if conflicts:
+        return _conflicted(CUMULATIVE_NOT_REGRESSED_RULE_ID, item, conflicts)
+
     cumulative = item.facts.get(FIELD_CUMULATIVE_CLAIM_QUANTITY)
     previous = item.facts.get(FIELD_PREVIOUS_CERTIFIED_QUANTITY)
 
@@ -355,7 +430,40 @@ def evaluate_cumulative_not_regressed(item: WorkItemFacts) -> WorkItemRuleResult
     )
 
 
+def evaluate_unambiguous_evidence(item: WorkItemFacts) -> WorkItemRuleResult:
+    """Report any fact about this item that the project's active documents disagree about.
+
+    A separate rule rather than a check bolted onto the others, and the reason is a gap this found
+    on its first run. The three reconciliation rules each guard the facts *they* read, so a conflict
+    in a fact none of them reads directly — ``contracted_quantity``, which reaches them only via a
+    derived value — produced no finding at all. Two active bills of quantities disagreed and Aedifex
+    said nothing.
+
+    This rule reads every selection for the item, so an ambiguity cannot be invisible merely because
+    no other rule happens to depend on it.
+    """
+    conflicts = tuple(selection for selection in item.selections.values() if selection.conflicting)
+    if not conflicts:
+        return WorkItemRuleResult(
+            rule_id=UNAMBIGUOUS_EVIDENCE_RULE_ID,
+            rule_version=RULE_VERSION,
+            work_item_id=str(item.work_item.id),
+            outcome=Outcome.PASS,
+            summary=(
+                f"Item {item.work_item.item_identifier}: every value used is stated by exactly one "
+                f"active document, or agreed by all of them."
+            ),
+            expected="one authoritative value per fact",
+            observed="0 conflicts",
+            detail={"conflicts": "0"},
+            evidence={},
+            derived_evidence={},
+        )
+    return _conflicted(UNAMBIGUOUS_EVIDENCE_RULE_ID, item, conflicts)
+
+
 RECONCILIATION_RULES: Final[dict[str, object]] = {
+    UNAMBIGUOUS_EVIDENCE_RULE_ID: evaluate_unambiguous_evidence,
     CLAIM_WITHIN_MEASURED_RULE_ID: evaluate_claim_within_measured,
     RATE_MATCHES_CONTRACT_RULE_ID: evaluate_rate_matches_contract,
     CUMULATIVE_NOT_REGRESSED_RULE_ID: evaluate_cumulative_not_regressed,
@@ -365,6 +473,9 @@ RECONCILIATION_RULES: Final[dict[str, object]] = {
 def evaluate_work_item(item: WorkItemFacts) -> tuple[WorkItemRuleResult, ...]:
     """Run every reconciliation rule over one work item, in a stable order."""
     return (
+        # Ambiguity first: if the evidence contradicts itself, that is the finding a reviewer needs
+        # before any of the others mean anything.
+        evaluate_unambiguous_evidence(item),
         evaluate_claim_within_measured(item),
         evaluate_cumulative_not_regressed(item),
         evaluate_rate_matches_contract(item),

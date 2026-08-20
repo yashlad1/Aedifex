@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import tempfile
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
@@ -34,6 +34,7 @@ from aedifex.calculation.engine import (
 from aedifex.domain.documents import DocumentState, assert_transition_allowed
 from aedifex.errors import ExtractionError
 from aedifex.extraction.pdftext import extract_text
+from aedifex.extraction.selection import Selected, select_facts
 from aedifex.extraction.spreadsheet import SheetFact, read_construction_sheet
 from aedifex.extraction.store import (
     persist_derived_facts,
@@ -364,6 +365,25 @@ class WorkItemAnalysis:
     facts: tuple[ExtractedFact, ...]
     derived: tuple[DerivedFact, ...]
     findings: tuple[Finding, ...]
+    selections: dict[str, Selected] = field(default_factory=dict)
+
+    @property
+    def selected(self) -> dict[str, ExtractedFact]:
+        """Only the facts that selection actually chose."""
+        return {
+            fact_type: selection.fact
+            for fact_type, selection in self.selections.items()
+            if selection.fact is not None
+        }
+
+    @property
+    def conflicts(self) -> tuple[Selected, ...]:
+        return tuple(s for s in self.selections.values() if s.conflicting)
+
+    @property
+    def excluded(self) -> tuple[ExtractedFact, ...]:
+        """Facts left out because their document is not current. Shown, never hidden."""
+        return tuple(fact for s in self.selections.values() for fact in s.excluded)
 
 
 def reconcile_work_items(session: Session, project_id: uuid.UUID) -> tuple[WorkItemAnalysis, ...]:
@@ -379,12 +399,14 @@ def reconcile_work_items(session: Session, project_id: uuid.UUID) -> tuple[WorkI
     link_work_items(session, project_id)
 
     filenames: dict[str, str] = {}
+    documents: dict[uuid.UUID, Document] = {}
     for document in session.execute(
         select(Document)
         .join(ProjectDocument, ProjectDocument.document_id == Document.id)
         .where(ProjectDocument.project_id == project_id)
     ).scalars():
         filenames[str(document.id)] = document.original_filename or str(document.id)
+        documents[document.id] = document
 
     items = list(
         session.execute(
@@ -401,11 +423,29 @@ def reconcile_work_items(session: Session, project_id: uuid.UUID) -> tuple[WorkI
                 select(ExtractedFact).where(ExtractedFact.work_item_id == item.id)
             ).scalars()
         )
-        calculated = compute_for_work_item(facts)
+        # This used to be `{fact.fact_type: fact for fact in facts}`, which kept whichever fact the
+        # database returned last. It was correct only while every version of a document agreed, and
+        # one revised bill of quantities away from a confident finding drawn from a stale revision.
+        # Selection is now explicit, records why it chose, and refuses when it cannot tell.
+        selections = select_facts(facts, documents)
+        chosen = {
+            fact_type: selection.fact
+            for fact_type, selection in selections.items()
+            if selection.fact is not None
+        }
+
+        # Calculations run on the selected facts only. Deriving a variance from a superseded
+        # quantity would launder the error one layer deeper, where the rule can no longer see it.
+        calculated = compute_for_work_item(list(chosen.values()))
         derived = persist_derived_facts(session, calculated, project_id=project_id, work_item=item)
 
-        by_type = {fact.fact_type: fact for fact in facts}
-        bundle = WorkItemFacts(work_item=item, facts=by_type, derived=derived, filenames=filenames)
+        bundle = WorkItemFacts(
+            work_item=item,
+            facts=chosen,
+            derived=derived,
+            filenames=filenames,
+            selections=selections,
+        )
         findings = tuple(
             persist_work_item_finding(session, project_id, item.id, result)
             for result in evaluate_work_item(bundle)
@@ -416,6 +456,7 @@ def reconcile_work_items(session: Session, project_id: uuid.UUID) -> tuple[WorkI
                 facts=tuple(facts),
                 derived=tuple(derived.values()),
                 findings=findings,
+                selections=selections,
             )
         )
 

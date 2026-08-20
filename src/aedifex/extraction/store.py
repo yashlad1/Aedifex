@@ -13,6 +13,7 @@ explicable against the values that actually produced it.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
@@ -36,6 +37,17 @@ from aedifex.verification.rules import RuleResult
 
 # Ten decimal places, matching DerivedFact.numeric_value's NUMERIC(28, 10).
 _DERIVED_SCALE = Decimal("1E-10")
+
+
+def _fingerprint(inputs: Mapping[str, ExtractedFact]) -> str:
+    """A digest of exactly which facts fed a calculation.
+
+    Roles are included, not just ids: swapping which fact fills ``measured_quantity`` and which
+    fills ``cumulative_claim_quantity`` is a different calculation with the same two inputs.
+    """
+    material = "|".join(f"{role}={inputs[role].id}" for role in sorted(inputs))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
 
 __all__ = [
     "persist_derived_facts",
@@ -239,6 +251,7 @@ def persist_derived_facts(
         row.calculation_version = item.calculation_version
         row.produced_by = item.produced_by
         row.expression = item.expression
+        row.inputs_fingerprint = _fingerprint(item.inputs)
         if existing is None:
             session.add(row)
         else:

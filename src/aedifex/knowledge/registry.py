@@ -26,7 +26,12 @@ from aedifex.calculation.engine import (
     DERIVED_REMAINING_CONTRACT_QUANTITY,
     DERIVED_UNSUPPORTED_AMOUNT,
 )
-from aedifex.domain.evidence import FactKind, FactOrigin, RelationshipType
+from aedifex.domain.evidence import (
+    DocumentVersionState,
+    FactKind,
+    FactOrigin,
+    RelationshipType,
+)
 from aedifex.extraction.spreadsheet import (
     FIELD_CLAIMED_RATE,
     FIELD_CONTRACT_RATE,
@@ -54,10 +59,12 @@ from aedifex.verification.reconciliation import (
     CLAIM_WITHIN_MEASURED_RULE_ID,
     CUMULATIVE_NOT_REGRESSED_RULE_ID,
     RATE_MATCHES_CONTRACT_RULE_ID,
+    UNAMBIGUOUS_EVIDENCE_RULE_ID,
 )
 from aedifex.verification.rules import BID_SECURITY_RULE_ID, Outcome
 
 __all__ = [
+    "DOCUMENT_VERSION_STATES",
     "FACT_TYPES",
     "FINDING_OUTCOMES",
     "RELATIONSHIP_TYPES",
@@ -288,7 +295,10 @@ RELATIONSHIP_TYPES: Final[tuple[RelationshipTypeInfo, ...]] = (
         RelationshipType.AMENDMENT_OF, "This document amends the other.", derivable=False
     ),
     RelationshipTypeInfo(
-        RelationshipType.SUPERSEDES, "This document replaces the other.", derivable=False
+        RelationshipType.SUPERSEDES,
+        "This document replaces the other, by explicit operator decision. Never inferred from a "
+        "filename, a revision number, or upload order.",
+        derivable=True,
     ),
     RelationshipTypeInfo(
         RelationshipType.PARENT_DOCUMENT,
@@ -332,6 +342,16 @@ RULE_TYPES: Final[tuple[RuleTypeInfo, ...]] = (
         consumes=(DERIVED_BID_SECURITY_SHARE,),
     ),
     RuleTypeInfo(
+        rule_id=UNAMBIGUOUS_EVIDENCE_RULE_ID,
+        scope="work_item",
+        description=(
+            "Reports any value the project's active documents disagree about. Runs before the "
+            "other item rules, because evidence that contradicts itself must be resolved before "
+            "any conclusion drawn from it means anything. REVIEW names every conflicting document."
+        ),
+        consumes=(),
+    ),
+    RuleTypeInfo(
         rule_id=CLAIM_WITHIN_MEASURED_RULE_ID,
         scope="work_item",
         description=(
@@ -363,6 +383,40 @@ RULE_TYPES: Final[tuple[RuleTypeInfo, ...]] = (
             "cumulative figure cannot decrease, so a regression means the bill contradicts itself."
         ),
         consumes=(FIELD_CUMULATIVE_CLAIM_QUANTITY, FIELD_PREVIOUS_CERTIFIED_QUANTITY),
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class VersionStateInfo:
+    state: DocumentVersionState
+    description: str
+    participates_in_reconciliation: bool
+
+
+DOCUMENT_VERSION_STATES: Final[tuple[VersionStateInfo, ...]] = (
+    VersionStateInfo(
+        DocumentVersionState.ACTIVE,
+        "Nothing is known to supersede it. The default, because absent evidence of supersession a "
+        "document is current.",
+        participates_in_reconciliation=True,
+    ),
+    VersionStateInfo(
+        DocumentVersionState.SUPERSEDED,
+        "Explicitly replaced by another document. Still stored and still queryable; excluded from "
+        "current-state reconciliation only.",
+        participates_in_reconciliation=False,
+    ),
+    VersionStateInfo(
+        DocumentVersionState.RETIRED,
+        "Withdrawn without a replacement, by explicit operator decision.",
+        participates_in_reconciliation=False,
+    ),
+    VersionStateInfo(
+        DocumentVersionState.UNKNOWN,
+        "Something is known to be wrong — e.g. two documents supersede each other. Participates in "
+        "nothing, and says so rather than guessing.",
+        participates_in_reconciliation=False,
     ),
 )
 

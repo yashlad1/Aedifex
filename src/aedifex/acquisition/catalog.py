@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.selectable import Subquery
 
 from aedifex.domain.documents import DocumentState
+from aedifex.domain.evidence import DocumentVersionState
 from aedifex.domain.files import FileFormat
 from aedifex.infrastructure.database.models import (
     CrawlJob,
@@ -67,6 +68,10 @@ class CatalogEntry:
     media_type: str | None
     original_filename: str | None
     state: DocumentState
+    version_state: DocumentVersionState
+    """Whether this is the current version. Decides whether its facts feed reconciliation."""
+
+    version_state_reason: str | None
     first_seen_at: datetime
 
     source_id: str
@@ -329,6 +334,8 @@ def _entry(document: Document, retrieval: DocumentRetrieval, retrieval_count: in
         media_type=document.media_type,
         original_filename=document.original_filename,
         state=document.state,
+        version_state=document.version_state,
+        version_state_reason=document.version_state_reason,
         first_seen_at=document.first_seen_at,
         source_id=retrieval.source_id,
         requested_url=retrieval.requested_url,

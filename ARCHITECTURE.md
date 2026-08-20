@@ -97,6 +97,8 @@ Phase 0 is complete. Implemented and tested:
 | Construction spreadsheet reader | [extraction/spreadsheet.py](src/aedifex/extraction/spreadsheet.py) |
 | Work items, deterministic item linkage | [extraction/work_items.py](src/aedifex/extraction/work_items.py), `work_items` |
 | Payment reconciliation rules | [verification/reconciliation.py](src/aedifex/verification/reconciliation.py) |
+| Document version state, supersession | [extraction/supersede.py](src/aedifex/extraction/supersede.py), `documents.version_state` |
+| Deterministic evidence selection | [extraction/selection.py](src/aedifex/extraction/selection.py) |
 
 The pipeline is complete end to end and has been run against a real portal. NHAI's terms were
 reviewed and recorded (ADR 0006, rule 60), its tender API was reverse-engineered from the portal's own
@@ -149,13 +151,25 @@ produces a variance of +50 m³, an unsupported amount of ₹400,000 at the contr
 claim ahead of measured work may be an error, a timing difference, or an unrecorded variation, and the
 rule can establish the discrepancy without establishing its cause.
 
-Two properties of that path are load-bearing. Units are never converted: there is no density table
-here, and comparing 520 m³ with 470 tonnes is refused rather than coerced. And a discrepancy is
-reported, never resolved — the pipeline has no basis for deciding which document is right.
+Three properties of that path are load-bearing. Units are never converted: there is no density
+table here, and comparing 520 m³ with 470 tonnes is refused rather than coerced. A discrepancy is
+reported, never resolved — the pipeline has no basis for deciding which document is right. And
+**which revision a rule used is an explicit decision with a recorded reason**, never whichever row
+the database returned last.
+
+That last one was a real defect, not a hypothetical. Reconciliation selected facts with a dict
+comprehension, which is correct for exactly as long as every version of a document agrees. Selection
+is now a policy: non-active documents are excluded, the newest extraction of a document wins, several
+agreeing documents are not a conflict, and several *disagreeing* active documents resolve to nothing
+at all — the item is reported `REVIEW` naming each conflicting document and value. Superseded
+evidence is never deleted; a finding recorded against an old revision has to stay explicable after
+the revision is replaced, and "what did the original bill of quantities say?" is a legitimate
+question.
 
 Not yet built: OCR (one acquired document is image-only), classification, archive expansion, the
 entity layer between projects and work items (Contract, Invoice, PaymentCertificate), variation
-orders, and the risk engine. Directories for those are created when their first real code lands,
+orders, automatic staleness detection for derived facts (the fingerprint makes it detectable; nothing
+sweeps for it yet), and the risk engine. Directories for those are created when their first real code lands,
 rather than kept as empty scaffolding.
 
 ## Key decisions and their reasons

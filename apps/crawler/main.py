@@ -22,6 +22,7 @@ arguments.
 from __future__ import annotations
 
 import argparse
+import getpass
 import signal
 import sys
 import threading
@@ -55,6 +56,7 @@ from aedifex.acquisition.registry import get_registry
 from aedifex.acquisition.registry.models import SourceDefinition
 from aedifex.config import Settings, get_settings
 from aedifex.domain.documents import DocumentType
+from aedifex.domain.evidence import RelationshipType
 from aedifex.domain.files import FileFormat
 from aedifex.errors import AedifexError, ConfigurationError
 from aedifex.extraction.ingest import ingest_file
@@ -68,6 +70,7 @@ from aedifex.extraction.runner import (
     analyse_spreadsheet,
     reconcile_work_items,
 )
+from aedifex.extraction.supersede import record_supersession
 from aedifex.infrastructure.database.models import (
     DerivedFact,
     Document,
@@ -97,6 +100,8 @@ def main(argv: list[str] | None = None) -> int:
             return _crawl(args, settings)
         if args.command == "ingest":
             return _ingest(args, settings)
+        if args.command == "supersede":
+            return _supersede(args, settings)
         if args.command == "analyse":
             return _analyse(args, settings)
         if args.command == "status":
@@ -173,6 +178,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     ingest.add_argument("--synthetic", action="store_true", help="Mark as generated test data")
     ingest.add_argument("--note", default=None)
+
+    supersede = commands.add_parser(
+        "supersede", help="Record that one document replaces another (operator decision)"
+    )
+    supersede.add_argument("superseding", help="The document that is now current")
+    supersede.add_argument("--replaces", required=True, help="The document it supersedes")
+    supersede.add_argument(
+        "--decided-by", default=None, help="Who decided. Defaults to the OS user"
+    )
 
     status = commands.add_parser("status", help="Show the corpus, the queue, and recent runs")
     status.add_argument("--source", default=None)
@@ -321,6 +335,26 @@ def _ingest(args: argparse.Namespace, settings: Settings) -> int:
     return 1 if failures else 0
 
 
+def _supersede(args: argparse.Namespace, settings: Settings) -> int:
+    """Record a supersession. Never inferred — this exists so the decision has an author."""
+    engine = build_engine(settings)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    decided_by = args.decided_by or getpass.getuser()
+    with sessions() as session:
+        outcome = record_supersession(
+            session,
+            superseding_id=uuid.UUID(args.superseding),
+            superseded_id=uuid.UUID(args.replaces),
+            decided_by=decided_by,
+        )
+        session.commit()
+        print(outcome.describe())
+        print(f"  project {outcome.project.external_ref}")
+        print(f"  reason  {outcome.superseded.version_state_reason}")
+        print("  both raw documents remain stored, and both sets of facts remain queryable")
+    return 0
+
+
 def _analyse(args: argparse.Namespace, settings: Settings) -> int:
     """Run the analysis pipeline and print the evidence behind every verdict.
 
@@ -436,11 +470,23 @@ def _print_project(session: Session, analysis: ProjectAnalysis) -> None:
     print(f"  membership established by {project.established_by}")
 
     print("\nDOCUMENTS")
+    superseded_by = {
+        link.to_document_id: link.from_document_id
+        for link in analysis.relationships
+        if link.relationship_type is RelationshipType.SUPERSEDES
+    }
     for document in analysis.documents:
+        # The version state leads, because it decides whether this document's facts were used at
+        # all. A listing that showed only names would make an excluded document look like a
+        # participating one.
         print(
-            f"  {(document.original_filename or str(document.id)):38} "
-            f"{document.size_bytes:>9} bytes  {document.id}"
+            f"  {(document.original_filename or str(document.id)):40} "
+            f"{document.version_state.value.upper():11} {document.size_bytes:>8} bytes"
         )
+        print(f"  {'':40} {document.id}")
+        replacement = superseded_by.get(document.id)
+        if replacement is not None:
+            print(f"  {'':40} superseded by {analysis.filename(replacement)}")
 
     print("\nRELATIONSHIPS")
     if not analysis.relationships:
@@ -486,7 +532,9 @@ def _print_project(session: Session, analysis: ProjectAnalysis) -> None:
             unit = item.unit or ""
             print(f"\n  {item.item_identifier} — {item.description or '(no description)'}")
             print(f"    matched by {item.matched_by}")
-            values = {fact.fact_type: fact for fact in entry.facts}
+            # The selected facts, not every fact on the item. A display built from all of them
+            # would show one of several conflicting values as though it had been used.
+            values = entry.selected
             for label, key in (
                 ("Contracted", "contracted_quantity"),
                 ("Measured", "measured_quantity"),
@@ -502,6 +550,19 @@ def _print_project(session: Session, analysis: ProjectAnalysis) -> None:
                 print(
                     f"    {label:22} {_plain(stated.numeric_value):>12} {suffix:5}"
                     f"  [{analysis.filename(stated.document_id)} {stated.snippet}]"
+                )
+            for conflict in entry.conflicts:
+                print(f"    CONFLICT {conflict.fact_type}: {conflict.reason}")
+                for candidate in conflict.considered:
+                    print(
+                        f"    {'':13} {_plain(candidate.numeric_value)} in "
+                        f"{analysis.filename(candidate.document_id)} {candidate.snippet}"
+                    )
+            for excluded_fact in entry.excluded:
+                print(
+                    f"    excluded {excluded_fact.fact_type}: "
+                    f"{_plain(excluded_fact.numeric_value)} from "
+                    f"{analysis.filename(excluded_fact.document_id)} (superseded)"
                 )
             for derived in sorted(entry.derived, key=lambda d: d.fact_type):
                 name = derived.fact_type.split(":", 1)[-1]

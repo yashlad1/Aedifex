@@ -260,3 +260,74 @@ work-item linking, the `/v1/projects/{id}/work-items` endpoint, and idempotency 
 unit-mismatch refusal, exposure flooring and contract-rate pricing, identifier normalisation
 including the 4.7.2/4.7.20 boundary, all three rules' PASS and REVIEW paths, and the missing-input
 INCONCLUSIVE path.
+
+---
+
+# Addendum — version-aware evidence (2026-08-20)
+
+## What CI caught that local checks did not
+
+Pushing the five accumulated commits was the first item of this milestone, and it earned its place
+immediately. Two failures, both from me verifying something narrower than the authoritative gate:
+
+1. **`mypy` is configured over `src`, `tests`, `apps` and `scripts` — 121 files.** I had been running
+   `mypy src apps`, which is 71, so eleven type errors in the synthetic generator went unseen.
+2. **The generator was not reproducible at all**, and my determinism check was too weak to notice.
+   An XLSX is a ZIP archive whose entries carry clock-derived timestamps, and openpyxl additionally
+   rewrites `dcterms:modified` during `save`, discarding whatever was pinned beforehand. Three
+   sources of nondeterminism. I had "verified" determinism by generating twice in immediate
+   succession — ZIP timestamps have two-second resolution, so both runs landed in the same second and
+   matched by accident. In a content-addressed store this produced a new document per regeneration,
+   which is how the development database came to hold nine documents for three logical files.
+
+Everything else passed on first submission: migrations base-to-head against a fresh PostgreSQL,
+integration tests, container build and smoke test, Semgrep, and secret and vulnerability scanning
+with three new dependencies.
+
+**A process error of mine is also on the record.** The commit fixing those two issues used
+`git add -A` and swept in half-finished version-state model changes without their migration, so
+`57a3e72` is internally inconsistent, left `main` red, and its message does not describe its
+contents. The following commit restores consistency, but the history now contains one commit that
+does not build.
+
+## The defect this milestone existed to remove
+
+Reconciliation selected facts with `{fact.fact_type: fact for fact in facts}` — whichever row the
+database returned last. It produced correct answers for as long as every version of every document
+agreed, and it was one revised bill of quantities away from a confident finding drawn from a stale
+revision.
+
+Replaced by an explicit policy in `extraction/selection.py`, with a recorded reason for every choice.
+
+## A gap the first run of the new policy exposed
+
+The three reconciliation rules each guard the facts *they* read. `contracted_quantity` reaches them
+only through a derived value, so when three active bills of quantities disagreed about it, **no rule
+reported anything** — item 4.7.1 came back `PASS` with an arbitrary 1200. The selector had detected
+the conflict correctly; nothing surfaced it.
+
+Fixed with a dedicated rule, `work_item_evidence_unambiguous`, which reads every selection for the
+item and therefore cannot miss a conflict merely because no other rule depends on it. The CLI display
+had the same flaw — it built its own dict comprehension over all facts — and now shows only selected
+values, plus explicit `CONFLICT` and `excluded` lines.
+
+## Not built
+
+- **No automatic staleness sweep.** `inputs_fingerprint` makes a stale derived fact *detectable*;
+  nothing scans for one. Re-running the analysis recomputes everything, so this is an operational
+  note rather than a correctness gap.
+- **Supersession is a single link, not a chain.** Rev 03 superseding Rev 02 does not automatically
+  mark Rev 01 — each link is recorded separately. Adequate while the operator records each one, and
+  transitive closure is deliberately absent rather than half-implemented.
+- **`RETIRED` has no command.** The state exists and selection honours it; nothing sets it yet.
+- **No catalog cleanup path.** Nine accumulated synthetic documents were removed from this
+  development database by hand. The raw tier deliberately has no delete, and there is still no
+  supersede-or-retire operation for a document whose *source* republished it.
+
+## Testing debt
+
+Verified by execution: the whole supersession path — three active bills of quantities produce
+`REVIEW` naming all three, recording Rev 02 supersedes Rev 01 resolves item 4.7.2 to 550 and moves
+`remaining_contract_quantity` from -20 to +30, and both revisions remain stored and queryable.
+Covered by test: superseded exclusion, active selection, agreeing duplicates, newest-extraction wins,
+superseded-only as unresolved-not-absent, and gap-versus-conflict reporting.

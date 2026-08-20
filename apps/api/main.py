@@ -53,6 +53,7 @@ from aedifex.infrastructure.observability.logging import (
     new_request_id,
 )
 from aedifex.knowledge.registry import (
+    DOCUMENT_VERSION_STATES,
     FACT_TYPES,
     FINDING_OUTCOMES,
     RELATIONSHIP_TYPES,
@@ -179,6 +180,8 @@ class DocumentResponse(BaseModel):
     media_type: str | None
     original_filename: str | None
     state: str
+    version_state: str
+    version_state_reason: str | None
     source_id: str
     requested_url: str
     final_url: str
@@ -202,6 +205,8 @@ class DocumentResponse(BaseModel):
             media_type=entry.media_type,
             original_filename=entry.original_filename,
             state=entry.state.value,
+            version_state=entry.version_state.value,
+            version_state_reason=entry.version_state_reason,
             source_id=entry.source_id,
             requested_url=entry.requested_url,
             final_url=entry.final_url,
@@ -1064,6 +1069,14 @@ def create_app() -> FastAPI:
                     "consumes": list(info.consumes),
                 }
                 for info in RULE_TYPES
+            ],
+            "document_version_states": [
+                {
+                    "state": info.state.value,
+                    "description": info.description,
+                    "participates_in_reconciliation": info.participates_in_reconciliation,
+                }
+                for info in DOCUMENT_VERSION_STATES
             ],
             "finding_outcomes": [
                 {"outcome": info.outcome.value, "description": info.description}

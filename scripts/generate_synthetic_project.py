@@ -276,6 +276,67 @@ def write_running_bill(path: Path) -> None:
     _save(workbook, path)
 
 
+# Item 4.7.2's contracted quantity is revised upward. The revision is what makes the reconciliation
+# change: against Rev 01 the cumulative claim of 520 exceeds a 500 contract; against Rev 02 it does
+# not. So "which revision governs" is not academic here -- it changes the finding.
+REVISED_QUANTITIES: Final[dict[str, Decimal]] = {"4.7.2": Decimal("550")}
+
+
+def write_revised_boq(path: Path) -> None:
+    """BOQ Rev 02: the same items, with item 4.7.2's quantity revised from 500 to 550.
+
+    Written as a genuinely separate document rather than an edit, because that is what happens on a
+    real project — the original is issued, then a revision is issued, and both exist.
+    """
+    workbook = Workbook()
+    sheet = _sheet(workbook, "BOQ", "BILL OF QUANTITIES - REVISION 02")
+    sheet.append(["Item No", "Description", "Unit", "Quantity", "Rate", "Amount"])
+    for row in ITEMS:
+        quantity = REVISED_QUANTITIES.get(row.item, row.contracted_quantity)
+        sheet.append(
+            [
+                row.item,
+                row.description,
+                row.unit,
+                float(quantity),
+                float(row.contract_rate),
+                float(quantity * row.contract_rate),
+            ]
+        )
+    _save(workbook, path)
+
+
+def write_unlinked_duplicate_boq(path: Path) -> None:
+    """A third bill of quantities that conflicts with the others and supersedes nothing.
+
+    The ambiguous case. Two active documents state different contracted quantities for item 4.7.1
+    and no supersession relationship exists between them, which is the situation a real project
+    reaches whenever someone uploads a revision without recording that it is one.
+
+    Aedifex must refuse to reconcile that item rather than pick a side. This file exists to prove it
+    refuses.
+    """
+    workbook = Workbook()
+    sheet = _sheet(workbook, "BOQ", "BILL OF QUANTITIES - UNRECORDED VARIANT")
+    sheet.append(["Item No", "Description", "Unit", "Quantity", "Rate", "Amount"])
+    for row in ITEMS:
+        if row.item != "4.7.1":
+            continue
+        # Differs from both Rev 01 and Rev 02, and nothing declares which is current.
+        quantity = Decimal("1400")
+        sheet.append(
+            [
+                row.item,
+                row.description,
+                row.unit,
+                float(quantity),
+                float(row.contract_rate),
+                float(quantity * row.contract_rate),
+            ]
+        )
+    _save(workbook, path)
+
+
 def write_ground_truth(path: Path) -> None:
     """What was planted, so a discrepancy can be attributed to the data or to the pipeline."""
     payload = {
@@ -298,6 +359,26 @@ def write_ground_truth(path: Path) -> None:
             }
             for row in ITEMS
         ],
+        "revision_scenario": {
+            "revised_item": "4.7.2",
+            "original_contracted_quantity": "500",
+            "revised_contracted_quantity": "550",
+            "note": (
+                "With BOQ Rev 02 active and Rev 01 superseded, the cumulative claim of 520 is "
+                "within the contracted 550 and the quantity variance against measured work is "
+                "unchanged at +50. Against Rev 01 the claim also exceeded the contract. The "
+                "revision changes remaining_contract_quantity from -20 to +30."
+            ),
+        },
+        "ambiguous_scenario": {
+            "item": "4.7.1",
+            "conflicting_quantities": ["1200", "1400"],
+            "note": (
+                "Two active bills of quantities state different contracted quantities for 4.7.1 "
+                "and neither supersedes the other. Expected outcome is REVIEW naming both "
+                "documents, never an arbitrary choice."
+            ),
+        },
         "expected_findings": [
             {
                 "item": "4.7.2",
@@ -321,7 +402,9 @@ def write_ground_truth(path: Path) -> None:
 
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    write_boq(OUTPUT_DIR / "SYNTHETIC_BOQ_AEDX-SYNTH-001.xlsx")
+    write_boq(OUTPUT_DIR / "SYNTHETIC_BOQ-Rev01_AEDX-SYNTH-001.xlsx")
+    write_revised_boq(OUTPUT_DIR / "SYNTHETIC_BOQ-Rev02_AEDX-SYNTH-001.xlsx")
+    write_unlinked_duplicate_boq(OUTPUT_DIR / "SYNTHETIC_BOQ-Unlinked_AEDX-SYNTH-001.xlsx")
     write_measurement(OUTPUT_DIR / "SYNTHETIC_Measurement_AEDX-SYNTH-001.xlsx")
     write_running_bill(OUTPUT_DIR / "SYNTHETIC_RA-Bill-03_AEDX-SYNTH-001.xlsx")
     write_ground_truth(OUTPUT_DIR / "GROUND_TRUTH.json")
