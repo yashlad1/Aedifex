@@ -24,6 +24,7 @@ become a value that looks extracted.
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from dataclasses import dataclass
 from decimal import Decimal
@@ -38,6 +39,7 @@ __all__ = [
     "EXTRACTOR",
     "EXTRACTOR_VERSION",
     "FIELD_BID_SECURITY",
+    "FIELD_DOCUMENT_DATE",
     "FIELD_ESTIMATED_COST",
     "FIELD_NIT_NUMBER",
     "FIELD_PRESCRIBED_BID_SECURITY_SHARE",
@@ -51,6 +53,7 @@ FIELD_NIT_NUMBER: Final[str] = "nit_number"
 FIELD_ESTIMATED_COST: Final[str] = "estimated_cost"
 FIELD_BID_SECURITY: Final[str] = "bid_security"
 FIELD_PRESCRIBED_BID_SECURITY_SHARE: Final[str] = "prescribed_bid_security_share"
+FIELD_DOCUMENT_DATE: Final[str] = "document_date"
 CURRENCY_INR: Final[str] = "INR"
 
 # Recorded on every fact. The version is bumped when extraction logic changes in a way that could
@@ -120,6 +123,9 @@ class ExtractedField:
     A cross-document rule selects on this rather than on ``name``, which is what lets one comparison
     serve every money fact instead of being rewritten per document type.
     """
+
+    date_value: dt.date | None = None
+    """Parsed calendar value for date facts, so chronology is a query rather than a parse."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -370,6 +376,49 @@ def _find_table_amounts(
     return None, None
 
 
+# "dated 07.08.2026", "Date: 04.08.2026". Day-first, which is the convention in these documents --
+# and the reason a date is parsed into a real date rather than kept as text: 07.08.2026 and
+# 07.09.2026 sort correctly as dates and incorrectly as strings.
+_DOCUMENT_DATE: Final[re.Pattern[str]] = re.compile(
+    r"(?:dated|date)\s*:?\s*(?P<day>\d{1,2})[.\-/](?P<month>\d{1,2})[.\-/](?P<year>\d{4})",
+    re.IGNORECASE,
+)
+
+
+def _find_document_date(pages: tuple[tuple[PageText, str], ...]) -> ExtractedField | None:
+    """The date the document carries next to its own reference, if it states one.
+
+    Only the first match is taken, and only from the earliest page that has one: a tender document
+    is full of other dates -- bid submission, opening, pre-bid meeting -- and the one beside the NIT
+    number is the document's own. An impossible date is skipped rather than clamped, because a
+    document stating 32.13.2026 has told us something is wrong with our reading of it.
+    """
+    for page, text in pages:
+        for match in _DOCUMENT_DATE.finditer(text):
+            try:
+                value = dt.date(
+                    int(match.group("year")), int(match.group("month")), int(match.group("day"))
+                )
+            except ValueError:
+                continue
+            return ExtractedField(
+                name=FIELD_DOCUMENT_DATE,
+                kind=FactKind.DATE,
+                literal=match.group(0),
+                value=None,
+                currency=None,
+                date_value=value,
+                evidence=Evidence(
+                    page=page.number,
+                    start=match.start(),
+                    end=match.end(),
+                    snippet=_snippet(text, match.start(), match.end()),
+                ),
+                method="label:dated",
+            )
+    return None
+
+
 def extract_tender_notice(document: DocumentText) -> TenderNotice:
     """Extract the NIT number, estimated cost, and bid security from a notice.
 
@@ -409,6 +458,12 @@ def extract_tender_notice(document: DocumentText) -> TenderNotice:
         missing.append(
             f"{FIELD_BID_SECURITY}: no 'Bid Security' header with a following amount was found"
         )
+
+    document_date = _find_document_date(pages)
+    if document_date is not None:
+        found.append(document_date)
+    else:
+        missing.append(f"{FIELD_DOCUMENT_DATE}: no 'dated'/'Date:' value found")
 
     prescribed = _find_prescribed_share(pages)
     if prescribed is not None:

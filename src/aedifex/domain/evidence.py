@@ -15,7 +15,20 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-__all__ = ["DocumentRole", "FactKind", "RelationshipType"]
+__all__ = ["DocumentRole", "FactKind", "FactOrigin", "RelationshipType"]
+
+
+class FactOrigin(StrEnum):
+    """Whether a value was read out of a document or computed from values that were.
+
+    The distinction the SRS draws between facts and derived facts, made explicit so a reader of a
+    finding can tell at a glance which of its inputs a document actually states. A derived fact is
+    every bit as citable — it records its inputs and its calculation — but nobody wrote it down, and
+    presenting the two identically would blur that.
+    """
+
+    EXTRACTED = "extracted"
+    DERIVED = "derived"
 
 
 class FactKind(StrEnum):
@@ -86,8 +99,18 @@ class RelationshipType(StrEnum):
     SAME_TENDER = "same_tender"
     """Both documents concern one tender. Established by a shared identifier fact."""
 
+    SAME_CONTRACT = "same_contract"
+    """Both documents concern one contract. Needs a contract identifier nothing yet extracts."""
+
+    AMENDMENT_OF = "amendment_of"
+    """This document amends the other. A corrigendum is the common case."""
+
     AMENDS = "amends"
     SUPERSEDES = "supersedes"
+    PARENT_DOCUMENT = "parent_document"
+    """The other document contains this one, e.g. a notice bound into a full bid document."""
+
+    CHILD_DOCUMENT = "child_document"
     INVITES_BIDS_FOR = "invites_bids_for"
     AWARDS = "awards"
     PRICES = "prices"
@@ -100,7 +123,21 @@ class RelationshipType(StrEnum):
     def is_symmetric(self) -> bool:
         """Whether the relationship reads the same in both directions.
 
-        ``SAME_TENDER`` does; ``AMENDS`` does not. This decides whether one stored row is the whole
-        truth or only half of it.
+        ``SAME_TENDER`` and ``SAME_CONTRACT`` do; ``AMENDMENT_OF`` does not. This decides whether
+        one stored row is the whole truth or only half of it.
         """
-        return self is RelationshipType.SAME_TENDER
+        return self in {RelationshipType.SAME_TENDER, RelationshipType.SAME_CONTRACT}
+
+    @property
+    def inverse(self) -> RelationshipType:
+        """The relationship read from the other document's point of view.
+
+        Symmetric types are their own inverse. Named pairs are inverted; anything without a declared
+        opposite returns itself, which is honest — an inverse that has no name cannot be stored, and
+        inventing one would put a relationship in the database that no vocabulary defines.
+        """
+        pairs = {
+            RelationshipType.PARENT_DOCUMENT: RelationshipType.CHILD_DOCUMENT,
+            RelationshipType.CHILD_DOCUMENT: RelationshipType.PARENT_DOCUMENT,
+        }
+        return pairs.get(self, self)

@@ -24,15 +24,17 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Final
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from aedifex.calculation.engine import DERIVED_BID_SECURITY_SHARE
 from aedifex.domain.evidence import FactKind
 from aedifex.infrastructure.database.models import (
+    DerivedFact,
     Document,
     DocumentRelationship,
     ExtractedFact,
@@ -44,10 +46,16 @@ from aedifex.verification.rules import NOT_SOURCED, Outcome
 __all__ = [
     "AGREEMENT_RULE_ID",
     "AGREEMENT_RULE_VERSION",
+    "SHARE_CONSISTENCY_RULE_ID",
+    "SHARE_CONSISTENCY_RULE_VERSION",
     "ProjectRuleResult",
+    "evaluate_derived_share_consistency",
     "evaluate_fact_agreement",
     "load_project_facts",
 ]
+
+SHARE_CONSISTENCY_RULE_ID: Final[str] = "bid_security_share_consistent_across_documents"
+SHARE_CONSISTENCY_RULE_VERSION: Final[str] = "1"
 
 AGREEMENT_RULE_ID: Final[str] = "cross_document_fact_agreement"
 AGREEMENT_RULE_VERSION: Final[str] = "1"
@@ -77,6 +85,8 @@ class ProjectRuleResult:
     observed: str
     detail: dict[str, str]
     evidence: dict[str, ExtractedFact]
+    derived_evidence: dict[str, DerivedFact] = field(default_factory=dict)
+    """Computed values the rule relied on, cited alongside the facts they were computed from."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +97,8 @@ class ProjectFacts:
     documents: dict[uuid.UUID, Document]
     facts: tuple[ExtractedFact, ...]
     relationships: tuple[DocumentRelationship, ...]
+    derived: tuple[DerivedFact, ...] = ()
+    """Values the calculation layer produced for these documents. Reused, never recomputed here."""
 
     def latest_by_type(self) -> dict[str, list[ExtractedFact]]:
         """Facts grouped by type, keeping one row per document per type.
@@ -143,8 +155,19 @@ def load_project_facts(session: Session, project_id: uuid.UUID) -> ProjectFacts 
             select(DocumentRelationship).where(DocumentRelationship.project_id == project_id)
         ).scalars()
     )
+    derived = tuple(
+        session.execute(
+            select(DerivedFact)
+            .where(DerivedFact.document_id.in_(document_ids))
+            .order_by(DerivedFact.fact_type, DerivedFact.document_id)
+        ).scalars()
+    )
     return ProjectFacts(
-        project=project, documents=documents, facts=facts, relationships=relationships
+        project=project,
+        documents=documents,
+        facts=facts,
+        relationships=relationships,
+        derived=derived,
     )
 
 
@@ -250,3 +273,100 @@ def evaluate_fact_agreement(project_facts: ProjectFacts) -> ProjectRuleResult:
 
 def _format(value: Decimal | None) -> str:
     return "—" if value is None else f"{value:,}"
+
+
+def evaluate_derived_share_consistency(project_facts: ProjectFacts) -> ProjectRuleResult:
+    """Check that every document of a project derives the same bid-security share.
+
+    The rule this milestone exists to make trivial. It performs **no arithmetic**: the calculation
+    layer has already produced one ``bid_security_share`` per document, with its inputs and its
+    expression stored, so all this does is ask whether the computed values are equal. Compare it
+    with the single-document rule, which consumes the very same derived fact to answer an entirely
+    different question — that is what reuse buys.
+
+    Divergence would be worth knowing about. A notice and the bid document issued for it should
+    imply the same share; if they do not, one has been revised and the other has not.
+    """
+    shares = [
+        fact
+        for fact in project_facts.derived
+        if fact.fact_type == DERIVED_BID_SECURITY_SHARE and fact.numeric_value is not None
+    ]
+
+    if len(shares) < 2:
+        return ProjectRuleResult(
+            rule_id=SHARE_CONSISTENCY_RULE_ID,
+            rule_version=SHARE_CONSISTENCY_RULE_VERSION,
+            outcome=Outcome.INCONCLUSIVE,
+            summary=(
+                f"Only {len(shares)} document(s) in this project have a calculated bid-security "
+                f"share, so there is nothing to compare. A share is calculated for a document only "
+                f"when it states both an estimated cost and a bid security."
+            ),
+            expected=NOT_SOURCED,
+            observed="nothing compared",
+            detail={"documents_with_a_share": str(len(shares))},
+            evidence={},
+            derived_evidence={
+                f"{DERIVED_BID_SECURITY_SHARE}#{index}": share
+                for index, share in enumerate(shares, start=1)
+            },
+        )
+
+    derived_evidence = {
+        f"{DERIVED_BID_SECURITY_SHARE}#{index}": share
+        for index, share in enumerate(shares, start=1)
+    }
+    detail = {
+        f"{DERIVED_BID_SECURITY_SHARE}#{index}": (
+            f"{share.numeric_value} from {project_facts.filename(share.document_id)} "
+            f"({share.expression})"
+        )
+        for index, share in enumerate(shares, start=1)
+        if share.document_id is not None
+    }
+    detail["documents_with_a_share"] = str(len(shares))
+
+    values = {Decimal(share.numeric_value) for share in shares if share.numeric_value is not None}
+    if len(values) == 1:
+        only = next(iter(values))
+        return ProjectRuleResult(
+            rule_id=SHARE_CONSISTENCY_RULE_ID,
+            rule_version=SHARE_CONSISTENCY_RULE_VERSION,
+            outcome=Outcome.PASS,
+            summary=(
+                f"All {len(shares)} documents of this project imply the same bid-security share, "
+                f"{_percent(only)}%."
+            ),
+            expected="one share across all documents of a project",
+            observed=f"{_percent(only)}%",
+            detail=detail,
+            evidence={},
+            derived_evidence=derived_evidence,
+        )
+
+    spread = ", ".join(
+        f"{_percent(Decimal(share.numeric_value))}% in "
+        f"{project_facts.filename(share.document_id)}"
+        for share in shares
+        if share.numeric_value is not None and share.document_id is not None
+    )
+    return ProjectRuleResult(
+        rule_id=SHARE_CONSISTENCY_RULE_ID,
+        rule_version=SHARE_CONSISTENCY_RULE_VERSION,
+        outcome=Outcome.FAIL,
+        summary=(
+            f"Documents of this project imply different bid-security shares: {spread}. One of them "
+            f"has been revised and the other has not; which is current is not something this rule "
+            f"can determine."
+        ),
+        expected="one share across all documents of a project",
+        observed=f"{len(values)} distinct shares",
+        detail=detail,
+        evidence={},
+        derived_evidence=derived_evidence,
+    )
+
+
+def _percent(value: Decimal) -> Decimal:
+    return (value * 100).quantize(Decimal("0.0001"))

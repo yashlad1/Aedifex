@@ -14,17 +14,33 @@ explicable against the values that actually produced it.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from aedifex.calculation.engine import Calculated
 from aedifex.extraction.tender_notice import EXTRACTOR, EXTRACTOR_VERSION, TenderNotice
-from aedifex.infrastructure.database.models import ExtractedFact, Finding, FindingEvidence
+from aedifex.infrastructure.database.models import (
+    DerivedFact,
+    DerivedFactInput,
+    ExtractedFact,
+    Finding,
+    FindingEvidence,
+)
 from aedifex.verification.cross_document import ProjectRuleResult
 from aedifex.verification.rules import RuleResult
 
-__all__ = ["persist_facts", "persist_finding", "persist_project_finding"]
+# Ten decimal places, matching DerivedFact.numeric_value's NUMERIC(28, 10).
+_DERIVED_SCALE = Decimal("1E-10")
+
+__all__ = [
+    "persist_derived_facts",
+    "persist_facts",
+    "persist_finding",
+    "persist_project_finding",
+]
 
 
 def persist_facts(
@@ -62,6 +78,7 @@ def persist_facts(
         row.snippet = field.evidence.snippet
         row.method = field.method
         row.kind = field.kind
+        row.date_value = field.date_value
         row.extractor = extractor
         row.extractor_version = extractor_version
         if existing is None:
@@ -112,6 +129,8 @@ def persist_finding(
             # inventing one keeps the evidence table honest about what it can prove.
             continue
         finding.evidence.append(FindingEvidence(fact_id=fact.id, role=role))
+    for role, derived in sorted(result.derived_evidence.items()):
+        finding.evidence.append(FindingEvidence(derived_fact_id=derived.id, role=role))
 
     session.flush()
     return finding
@@ -151,5 +170,66 @@ def persist_project_finding(
 
     for role in sorted(result.evidence):
         finding.evidence.append(FindingEvidence(fact_id=result.evidence[role].id, role=role))
+    for role, derived in sorted(result.derived_evidence.items()):
+        finding.evidence.append(FindingEvidence(derived_fact_id=derived.id, role=role))
     session.flush()
     return finding
+
+
+def persist_derived_facts(
+    session: Session,
+    calculated: Sequence[Calculated],
+    *,
+    document_id: uuid.UUID | None = None,
+    project_id: uuid.UUID | None = None,
+) -> dict[str, DerivedFact]:
+    """Store computed values and the facts that fed them, keyed by fact type.
+
+    Idempotent on (subject, fact type, calculation version). Recomputation updates the value in
+    place and rebuilds the input links, so a re-run cannot leave a derived fact citing inputs it no
+    longer used — which would be worse than a stale value, because it would look documented.
+    """
+    if (document_id is None) == (project_id is None):
+        raise ValueError("a derived fact belongs to exactly one of a document or a project")
+
+    stored: dict[str, DerivedFact] = {}
+    for item in calculated:
+        existing = session.execute(
+            select(DerivedFact).where(
+                DerivedFact.document_id == document_id,
+                DerivedFact.project_id == project_id,
+                DerivedFact.fact_type == item.fact_type,
+                DerivedFact.calculation_version == item.calculation_version,
+            )
+        ).scalar_one_or_none()
+
+        row = (
+            existing
+            if existing is not None
+            else DerivedFact(document_id=document_id, project_id=project_id)
+        )
+        row.fact_type = item.fact_type
+        row.kind = item.kind
+        # Quantized to the column's scale here rather than in the calculation, so what a caller
+        # reads back is exactly what the database holds. The engine deliberately does not round --
+        # rounding belongs at the boundary where precision is actually constrained, and that is this
+        # one.
+        row.numeric_value = item.value.quantize(_DERIVED_SCALE)
+        row.currency = item.currency
+        row.unit = item.unit
+        row.calculation = item.calculation
+        row.calculation_version = item.calculation_version
+        row.produced_by = item.produced_by
+        row.expression = item.expression
+        if existing is None:
+            session.add(row)
+        else:
+            row.inputs.clear()
+        session.flush()
+
+        for role in sorted(item.inputs):
+            row.inputs.append(DerivedFactInput(role=role, fact_id=item.inputs[role].id))
+        stored[item.fact_type] = row
+
+    session.flush()
+    return stored

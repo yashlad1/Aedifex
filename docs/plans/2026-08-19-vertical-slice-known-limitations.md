@@ -113,3 +113,62 @@ the migration itself.
 Verified by execution only: project reconciliation and its idempotency (two runs, `0 projects, 0
 memberships, 0 relationships created`), all five project API endpoints, and the CLI output. Covered by
 test: the four outcome paths of the agreement rule, including disagreement.
+
+---
+
+# Addendum — construction knowledge layer (2026-08-20)
+
+## What is real
+
+`bid_security_share` is computed once per document by the calculation layer, stored with its two
+inputs and the arithmetic as text, and consumed by **two rules** that reach different kinds of
+conclusion from it — the single-document rule against a prescribed rate, the project rule against the
+other documents. Neither divides. That is the milestone's success criterion, verified by execution.
+
+Chronology is real but thin: both documents of the one project are dated `2026-08-07`, so ordering is
+correct and completely undemonstrative. A project whose documents differ in date would show more.
+
+## Not built
+
+- **Only one calculation exists.** `share_of`. The engine is a registry with a single entry, and its
+  shape is a guess until a second calculation with different inputs arrives — which is why no
+  abstraction was built over it.
+- **No project-scoped derived facts.** The schema supports them (`derived_facts.project_id`), and
+  nothing produces one, because every calculation currently takes its inputs from a single document.
+  The example in the milestone brief — remaining contract value from a contract and a bill — is
+  exactly the shape that needs it, and needs document types the corpus lacks.
+- **`same_contract`, `amendment_of`, `supersedes`, `parent_document`, `child_document` are declared
+  vocabulary, not derivable.** `RelationshipType.inverse` exists for the parent/child pair; nothing
+  establishes them. `parent_document` is the one the corpus arguably justifies — the notice is bound
+  into the bid document — but establishing it needs either a containment check or a document-type
+  classification, and both are guesses today.
+- **Chronology has no temporal rules.** Documents can be ordered; nothing reasons about the order.
+  That was deliberate — the brief asked for chronology "without introducing workflow engines".
+- **Derived facts are not recomputed when an extractor version changes.** A new extractor version
+  writes new facts, but the derived fact keyed on `calculation_version` is not invalidated. Re-running
+  `analyse` recomputes it, so this is an operational note rather than a defect: it means a stale
+  derived value is possible between an extractor change and the next run.
+
+## Defects found by execution
+
+1. **`finding_evidence`'s primary key change was invisible to autogenerate.** Moving it from
+   `(finding_id, fact_id)` to `(finding_id, role)` — needed because `fact_id` is now nullable — is not
+   a change Alembic detects. Written by hand. Had it been missed, the model and the database would
+   have disagreed silently.
+2. **The generated downgrade would have failed again**, this time on `finding_evidence.fact_id`
+   becoming `NOT NULL` while derived-only citations existed. Pre-empted by deleting them first, the
+   same reasoning as the previous migration: evidence links are derived and rebuilt by re-running the
+   analysis.
+3. **Displayed value did not equal stored value.** The engine returns the unrounded quotient
+   (`0.02000000732427911462082165677`) while the column is `NUMERIC(28, 10)`. Quantizing moved to
+   persistence, so what a caller reads back is what the database holds.
+4. **The single-document CLI printer silently dropped derived evidence** — I had updated only the
+   project printer. The finding cited the derived fact correctly; the output just did not show it.
+
+## Testing debt
+
+Verified by execution only: derived-fact and evidence persistence, idempotent recomputation (repeated
+runs leave 2 derived facts, 4 input links, 0 duplicates), the `/v1/knowledge` endpoint, and both CLI
+printers. Covered by test: the share calculation including the not-exactly-2% case, every refusal
+path, newest-extractor-version selection, and the registry's claim that it describes only types the
+code can produce.

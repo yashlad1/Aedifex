@@ -32,13 +32,14 @@ identity cannot be known before download.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -465,6 +466,14 @@ class ExtractedFact(Base):
     numeric_value: Mapped[Decimal | None] = mapped_column(Numeric(20, 2), default=None)
     currency: Mapped[str | None] = mapped_column(String(3), default=None)
 
+    date_value: Mapped[date | None] = mapped_column(Date, default=None)
+    """Parsed calendar value for :attr:`FactKind.DATE` facts, so chronology is a query.
+
+    A separate column rather than a string in ``literal`` because ordering documents by publication
+    is the point of extracting a date at all, and ordering by text sorts 07.09.2026 before
+    07.08.2026 whenever the format changes.
+    """
+
     # Where it came from. A fact without these is an assertion.
     page: Mapped[int] = mapped_column(Integer)
     span_start: Mapped[int] = mapped_column(Integer)
@@ -583,14 +592,33 @@ class FindingEvidence(Base):
     finding_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("findings.id", ondelete="CASCADE"), primary_key=True
     )
-    fact_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("extracted_facts.id", ondelete="RESTRICT"), primary_key=True
+    role: Mapped[str] = mapped_column(String(64), primary_key=True)
+    """How the rule used it, e.g. ``estimated_cost``. Names the slot, not just the link.
+
+    Part of the primary key because a rule may cite the same fact in two slots, and because a slot
+    is what the finding actually refers to — ``estimated_cost#1`` means something to a reader in a
+    way that a bare fact id does not.
+    """
+
+    # Exactly one of these. A rule cites what a document states, or a value computed from such
+    # statements; both are evidence, and which one it is must never be ambiguous.
+    fact_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("extracted_facts.id", ondelete="RESTRICT"), default=None
     )
-    role: Mapped[str] = mapped_column(String(64))
-    """How the rule used it, e.g. ``estimated_cost``. Names the slot, not just the link."""
+    derived_fact_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("derived_facts.id", ondelete="RESTRICT"), default=None
+    )
 
     finding: Mapped[Finding] = relationship(back_populates="evidence")
-    fact: Mapped[ExtractedFact] = relationship()
+    fact: Mapped[ExtractedFact | None] = relationship()
+    derived_fact: Mapped[DerivedFact | None] = relationship()
+
+    __table_args__ = (
+        CheckConstraint(
+            "(fact_id IS NULL) <> (derived_fact_id IS NULL)",
+            name="evidence_cites_exactly_one_kind_of_fact",
+        ),
+    )
 
 
 class Project(Base):
@@ -698,3 +726,104 @@ class DocumentRelationship(Base):
             "from_document_id <> to_document_id", name="relationship_joins_two_documents"
         ),
     )
+
+
+class DerivedFact(Base):
+    """A value computed deterministically from facts, stored so more than one rule can use it.
+
+    The SRS calls for these to be first-class rather than living inside whichever rule needed them.
+    The reason is reuse, but the effect is explainability: a derived fact records its inputs, the
+    calculation that produced it, and that calculation's version, so a reader can redo the
+    arithmetic by hand and get the same number. A value computed inside a rule and thrown away
+    leaves a finding asserting a figure nobody can re-derive.
+
+    Scoped like a finding: to one document when every input came from it, to a project when the
+    inputs span documents. A share computed from a notice's own two amounts is a fact about that
+    notice; a remaining contract value computed from a contract and a bill is a fact about neither.
+
+    Carries no judgement. ``bid_security_share = 0.02`` says nothing about whether 2% is correct —
+    that is a rule's business, and keeping the two apart is what lets one calculation serve rules
+    that disagree about what it means.
+    """
+
+    __tablename__ = "derived_facts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True, default=None
+    )
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, default=None
+    )
+
+    fact_type: Mapped[str] = mapped_column(String(64), index=True)
+    """What was computed, e.g. ``bid_security_share``."""
+
+    kind: Mapped[FactKind] = mapped_column(_FACT_KIND)
+    numeric_value: Mapped[Decimal | None] = mapped_column(Numeric(28, 10), default=None)
+    """Wider and more precise than an extracted amount: a share is a ratio, not a rupee figure."""
+
+    currency: Mapped[str | None] = mapped_column(String(3), default=None)
+    unit: Mapped[str | None] = mapped_column(String(32), default=None)
+
+    calculation: Mapped[str] = mapped_column(String(128))
+    """The named calculation that produced it, e.g. ``share_of``."""
+
+    calculation_version: Mapped[str] = mapped_column(String(32))
+    produced_by: Mapped[str] = mapped_column(String(128))
+    """The module responsible, so a wrong value leads to the code that made it."""
+
+    expression: Mapped[str] = mapped_column(Text)
+    """The arithmetic in words, e.g. ``1693000 / 84649969``. What makes it redoable by hand."""
+
+    computed_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    inputs: Mapped[list[DerivedFactInput]] = relationship(
+        back_populates="derived_fact", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "(document_id IS NULL) <> (project_id IS NULL)",
+            name="derived_fact_scoped_to_exactly_one_subject",
+        ),
+        Index(
+            "uq_derived_facts_document",
+            "document_id",
+            "fact_type",
+            "calculation_version",
+            unique=True,
+            postgresql_where=text_clause("document_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_derived_facts_project",
+            "project_id",
+            "fact_type",
+            "calculation_version",
+            unique=True,
+            postgresql_where=text_clause("project_id IS NOT NULL"),
+        ),
+    )
+
+
+class DerivedFactInput(Base):
+    """One fact that fed one calculation, and the slot it filled.
+
+    Stored rather than implied, because "which numbers produced this" is the whole provenance of a
+    computed value. ``ON DELETE RESTRICT`` on the fact: a derived value must not outlive the
+    evidence it came from, and silently keeping it would leave a number with no origin.
+    """
+
+    __tablename__ = "derived_fact_inputs"
+
+    derived_fact_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("derived_facts.id", ondelete="CASCADE"), primary_key=True
+    )
+    role: Mapped[str] = mapped_column(String(64), primary_key=True)
+    fact_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("extracted_facts.id", ondelete="RESTRICT")
+    )
+
+    derived_fact: Mapped[DerivedFact] = relationship(back_populates="inputs")
+    fact: Mapped[ExtractedFact] = relationship()

@@ -161,6 +161,8 @@ class TestMigrations:
             "projects",
             "project_documents",
             "document_relationships",
+            "derived_facts",
+            "derived_fact_inputs",
         }
 
     def test_enum_columns_persist_lowercase_values(self, session: Session) -> None:

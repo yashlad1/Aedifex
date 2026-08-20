@@ -34,8 +34,10 @@ from aedifex.acquisition.catalog import (
 )
 from aedifex.acquisition.registry import SourceDefinition, SourceRegistry, get_registry
 from aedifex.config import Settings, get_settings
+from aedifex.domain.evidence import FactOrigin
 from aedifex.errors import SourceRegistryError
 from aedifex.infrastructure.database.models import (
+    DerivedFact,
     DocumentRelationship,
     ExtractedFact,
     Finding,
@@ -48,6 +50,12 @@ from aedifex.infrastructure.observability.logging import (
     configure_logging,
     get_logger,
     new_request_id,
+)
+from aedifex.knowledge.registry import (
+    FACT_TYPES,
+    FINDING_OUTCOMES,
+    RELATIONSHIP_TYPES,
+    RULE_TYPES,
 )
 
 API_PREFIX: Final[str] = "/v1"
@@ -371,16 +379,25 @@ class FactResponse(BaseModel):
 
 
 class EvidenceResponse(BaseModel):
-    """A finding's citation of one fact: which fact, in what role, and where it was found."""
+    """A finding's citation of one fact: which fact, in what role, and where it came from.
+
+    Covers both kinds. ``origin`` says whether a document stated the value or the calculation layer
+    computed it; ``page`` and ``snippet`` are present only for the former, and ``expression`` only
+    for the latter. A client must not present a computed value as something a document says.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     role: str
+    origin: str
     fact_id: str
     fact_type: str
     literal: str
-    page: int
-    snippet: str
+    page: int | None = None
+    snippet: str | None = None
+    value: str | None = None
+    expression: str | None = None
+    """For a derived fact, the arithmetic performed — so the number can be redone by hand."""
 
 
 class FindingResponse(BaseModel):
@@ -406,20 +423,43 @@ class FindingResponse(BaseModel):
     evidence: list[EvidenceResponse]
 
     @classmethod
-    def from_row(cls, row: Finding, facts: dict[uuid.UUID, ExtractedFact]) -> FindingResponse:
+    def from_row(
+        cls,
+        row: Finding,
+        facts: dict[uuid.UUID, ExtractedFact],
+        derived: dict[uuid.UUID, DerivedFact] | None = None,
+    ) -> FindingResponse:
         cited: list[EvidenceResponse] = []
         for link in sorted(row.evidence, key=lambda e: e.role):
-            fact = facts.get(link.fact_id)
-            if fact is None:
+            if link.fact_id is not None:
+                fact = facts.get(link.fact_id)
+                if fact is None:
+                    continue
+                cited.append(
+                    EvidenceResponse(
+                        role=link.role,
+                        origin=FactOrigin.EXTRACTED.value,
+                        fact_id=str(fact.id),
+                        fact_type=fact.fact_type,
+                        literal=fact.literal,
+                        page=fact.page,
+                        snippet=fact.snippet,
+                        value=None if fact.numeric_value is None else str(fact.numeric_value),
+                    )
+                )
+                continue
+            computed = (derived or {}).get(link.derived_fact_id) if link.derived_fact_id else None
+            if computed is None:
                 continue
             cited.append(
                 EvidenceResponse(
                     role=link.role,
-                    fact_id=str(fact.id),
-                    fact_type=fact.fact_type,
-                    literal=fact.literal,
-                    page=fact.page,
-                    snippet=fact.snippet,
+                    origin=FactOrigin.DERIVED.value,
+                    fact_id=str(computed.id),
+                    fact_type=computed.fact_type,
+                    literal=f"{computed.calculation} v{computed.calculation_version}",
+                    value=None if computed.numeric_value is None else str(computed.numeric_value),
+                    expression=computed.expression,
                 )
             )
         return cls(
@@ -761,7 +801,13 @@ def create_app() -> FastAPI:
                     select(ExtractedFact).where(ExtractedFact.document_id == document_id)
                 ).scalars()
             }
-            payload = [FindingResponse.from_row(row, facts) for row in rows]
+            computed = {
+                item.id: item
+                for item in session.execute(
+                    select(DerivedFact).where(DerivedFact.document_id == document_id)
+                ).scalars()
+            }
+            payload = [FindingResponse.from_row(row, facts, computed) for row in rows]
         return FindingListResponse(returned=len(payload), findings=payload)
 
     @app.get(f"{API_PREFIX}/projects", response_model=ProjectListResponse, tags=["projects"])
@@ -880,7 +926,13 @@ def create_app() -> FastAPI:
                     select(ExtractedFact).where(ExtractedFact.document_id.in_(member))
                 ).scalars()
             }
-            payload = [FindingResponse.from_row(row, facts) for row in rows]
+            computed = {
+                item.id: item
+                for item in session.execute(
+                    select(DerivedFact).where(DerivedFact.document_id.in_(member))
+                ).scalars()
+            }
+            payload = [FindingResponse.from_row(row, facts, computed) for row in rows]
         return FindingListResponse(returned=len(payload), findings=payload)
 
     @app.get(
@@ -900,6 +952,49 @@ def create_app() -> FastAPI:
             )
             payload = [RelationshipResponse.from_row(row) for row in rows]
         return RelationshipListResponse(returned=len(payload), relationships=payload)
+
+    @app.get(f"{API_PREFIX}/knowledge", tags=["knowledge"])
+    def get_knowledge() -> dict[str, object]:
+        """What Aedifex knows how to talk about: fact, relationship, rule and finding types.
+
+        Metadata, served from the registry rather than the database. It describes the vocabulary
+        the code implements, so it reads the same on an empty deployment as on a full one.
+        """
+        return {
+            "fact_types": [
+                {
+                    "fact_type": info.fact_type,
+                    "kind": info.kind.value,
+                    "origin": info.origin.value,
+                    "description": info.description,
+                    "produced_by": info.produced_by,
+                    "inputs": list(info.inputs),
+                }
+                for info in FACT_TYPES
+            ],
+            "relationship_types": [
+                {
+                    "relationship_type": info.relationship_type.value,
+                    "description": info.description,
+                    "derivable": info.derivable,
+                    "is_symmetric": info.relationship_type.is_symmetric,
+                }
+                for info in RELATIONSHIP_TYPES
+            ],
+            "rule_types": [
+                {
+                    "rule_id": info.rule_id,
+                    "scope": info.scope,
+                    "description": info.description,
+                    "consumes": list(info.consumes),
+                }
+                for info in RULE_TYPES
+            ],
+            "finding_outcomes": [
+                {"outcome": info.outcome.value, "description": info.description}
+                for info in FINDING_OUTCOMES
+            ],
+        }
 
     @app.get(f"{API_PREFIX}/corpus", response_model=CorpusSummaryResponse, tags=["corpus"])
     def get_corpus_summary() -> CorpusSummaryResponse:

@@ -26,6 +26,7 @@ import signal
 import sys
 import threading
 import uuid
+from datetime import date
 from decimal import Decimal
 from ipaddress import ip_address
 from pathlib import Path
@@ -62,7 +63,12 @@ from aedifex.extraction.runner import (
     analyse_document,
     analyse_project,
 )
-from aedifex.infrastructure.database.models import Document, ExtractedFact, Project
+from aedifex.infrastructure.database.models import (
+    DerivedFact,
+    Document,
+    ExtractedFact,
+    Project,
+)
 from aedifex.infrastructure.database.session import build_engine
 from aedifex.infrastructure.observability.logging import configure_logging, get_logger
 from aedifex.infrastructure.storage.objects import RawObjectStore
@@ -364,6 +370,24 @@ def _print_project(session: Session, analysis: ProjectAnalysis) -> None:
         )
         print(f"  {'':4}established by {link.established_by}")
 
+    dated = [fact for fact in analysis.facts if fact.date_value is not None]
+    if dated:
+        print("\nCHRONOLOGY")
+        for fact in sorted(dated, key=lambda f: (f.date_value or date.min, str(f.document_id))):
+            print(
+                f"  {fact.date_value}  {analysis.filename(fact.document_id):34} "
+                f"({fact.literal!r} p{fact.page})"
+            )
+
+    if analysis.derived:
+        print("\nDERIVED FACTS")
+        for derived in sorted(analysis.derived, key=lambda d: (d.fact_type, str(d.document_id))):
+            print(
+                f"  {derived.fact_type:32} {derived.numeric_value}  "
+                f"{analysis.filename(derived.document_id) if derived.document_id else 'project'}"
+            )
+            print(f"  {'':32} {derived.expression}")
+
     print("\nFACTS")
     for fact in sorted(analysis.facts, key=lambda f: (f.fact_type, str(f.document_id))):
         value = f"{fact.numeric_value:,}" if fact.numeric_value is not None else fact.literal
@@ -380,13 +404,26 @@ def _print_project(session: Session, analysis: ProjectAnalysis) -> None:
         print(f"    result    {finding.outcome.upper()}")
         print(f"    {finding.summary}")
         for citation in sorted(finding.evidence, key=lambda e: e.role):
-            cited = session.get(ExtractedFact, citation.fact_id)
-            if cited is None:
-                continue
-            print(
-                f"    evidence  {citation.role:26} {analysis.filename(cited.document_id)} "
-                f"p{cited.page}: {cited.snippet[:90]}"
-            )
+            if citation.fact_id is not None:
+                cited = session.get(ExtractedFact, citation.fact_id)
+                if cited is not None:
+                    print(
+                        f"    evidence  {citation.role:26} {analysis.filename(cited.document_id)} "
+                        f"p{cited.page}: {cited.snippet[:80]}"
+                    )
+            elif citation.derived_fact_id is not None:
+                computed = session.get(DerivedFact, citation.derived_fact_id)
+                if computed is not None:
+                    where = (
+                        analysis.filename(computed.document_id)
+                        if computed.document_id
+                        else "project"
+                    )
+                    # Marked as derived: it is evidence, but nobody wrote it down.
+                    print(
+                        f"    derived   {citation.role:26} {where} "
+                        f"= {computed.numeric_value} ({computed.expression})"
+                    )
 
 
 def _print_analysis(session: Session, outcome: AnalysisOutcome) -> None:
@@ -407,6 +444,15 @@ def _print_analysis(session: Session, outcome: AnalysisOutcome) -> None:
             print(f"  {fact.fact_type:32} {value}{unit}")
             print(f"  {'':32} literal {fact.literal!r}  page {fact.page}  [{fact.method}]")
 
+    if outcome.derived:
+        print("\nDERIVED FACTS")
+        for derived in sorted(outcome.derived, key=lambda d: d.fact_type):
+            print(f"  {derived.fact_type:32} {derived.numeric_value}")
+            print(
+                f"  {'':32} {derived.expression}   "
+                f"[{derived.calculation} v{derived.calculation_version}]"
+            )
+
     print("\nFINDINGS")
     for finding in outcome.findings:
         print(f"  {finding.rule_id} (v{finding.rule_version})")
@@ -415,9 +461,18 @@ def _print_analysis(session: Session, outcome: AnalysisOutcome) -> None:
         print(f"    result    {finding.outcome.upper()}")
         print(f"    {finding.summary}")
         for link in sorted(finding.evidence, key=lambda e: e.role):
-            cited = session.get(ExtractedFact, link.fact_id)
-            if cited is not None:
-                print(f"    evidence  {link.role} -> page {cited.page}: {cited.snippet[:140]}")
+            if link.fact_id is not None:
+                cited = session.get(ExtractedFact, link.fact_id)
+                if cited is not None:
+                    print(f"    evidence  {link.role} -> page {cited.page}: {cited.snippet[:130]}")
+            elif link.derived_fact_id is not None:
+                computed = session.get(DerivedFact, link.derived_fact_id)
+                if computed is not None:
+                    # Labelled "derived" rather than "evidence": citable, but no document states it.
+                    print(
+                        f"    derived   {link.role} = {computed.numeric_value} "
+                        f"({computed.expression})"
+                    )
 
     for note in outcome.unsupported:
         print(f"  not extracted: {note}")

@@ -26,12 +26,19 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from aedifex.calculation.engine import DERIVED_BID_SECURITY_SHARE, compute_for_document
 from aedifex.domain.documents import DocumentState, assert_transition_allowed
 from aedifex.errors import ExtractionError
 from aedifex.extraction.pdftext import extract_text
-from aedifex.extraction.store import persist_facts, persist_finding, persist_project_finding
+from aedifex.extraction.store import (
+    persist_derived_facts,
+    persist_facts,
+    persist_finding,
+    persist_project_finding,
+)
 from aedifex.extraction.tender_notice import TenderNotice, extract_tender_notice
 from aedifex.infrastructure.database.models import (
+    DerivedFact,
     Document,
     DocumentRelationship,
     ExtractedFact,
@@ -40,8 +47,8 @@ from aedifex.infrastructure.database.models import (
 )
 from aedifex.infrastructure.observability.logging import get_logger
 from aedifex.infrastructure.storage.objects import RawObjectStore
-from aedifex.verification import evaluate_all
-from aedifex.verification.cross_document import evaluate_fact_agreement, load_project_facts
+from aedifex.verification import evaluate_all, evaluate_project
+from aedifex.verification.cross_document import load_project_facts
 
 __all__ = ["AnalysisOutcome", "ProjectAnalysis", "analyse_document", "analyse_project"]
 
@@ -60,6 +67,7 @@ class AnalysisOutcome:
     document_id: uuid.UUID
     notice: TenderNotice
     facts: tuple[ExtractedFact, ...]
+    derived: tuple[DerivedFact, ...]
     findings: tuple[Finding, ...]
     pages_read: int
     page_count: int
@@ -104,9 +112,20 @@ def analyse_document(
     session.flush()
 
     facts = persist_facts(session, document_id, notice)
+
+    # Calculate, then judge. The order is the architecture: the calculation layer turns facts into
+    # reusable derived facts and knows nothing about thresholds, and the rules consume what it
+    # produced rather than dividing the same two numbers again.
+    calculated = compute_for_document(list(facts.values()))
+    derived = persist_derived_facts(session, calculated, document_id=document_id)
+
     findings = tuple(
         persist_finding(session, document_id, result, facts)
-        for result in evaluate_all(notice, prescribed_share=prescribed_share)
+        for result in evaluate_all(
+            notice,
+            prescribed_share=prescribed_share,
+            share=derived.get(DERIVED_BID_SECURITY_SHARE),
+        )
     )
 
     _advance(document, DocumentState.PROCESSED)
@@ -116,6 +135,7 @@ def analyse_document(
         "analysis.finished",
         document_id=str(document_id),
         facts=len(facts),
+        derived=len(derived),
         findings=len(findings),
         pages_read=text.pages_read,
         page_count=text.page_count,
@@ -127,6 +147,7 @@ def analyse_document(
         document_id=document_id,
         notice=notice,
         facts=tuple(facts.values()),
+        derived=tuple(derived.values()),
         findings=findings,
         pages_read=text.pages_read,
         page_count=text.page_count,
@@ -176,6 +197,7 @@ class ProjectAnalysis:
     project: Project
     documents: tuple[Document, ...]
     facts: tuple[ExtractedFact, ...]
+    derived: tuple[DerivedFact, ...]
     relationships: tuple[DocumentRelationship, ...]
     findings: tuple[Finding, ...]
 
@@ -201,8 +223,10 @@ def analyse_project(session: Session, project_id: uuid.UUID) -> ProjectAnalysis:
     if project_facts is None:
         raise ExtractionError(f"unknown project {project_id}")
 
-    result = evaluate_fact_agreement(project_facts)
-    finding = persist_project_finding(session, project_id, result)
+    findings = tuple(
+        persist_project_finding(session, project_id, result)
+        for result in evaluate_project(project_facts)
+    )
     session.flush()
 
     _log.info(
@@ -212,7 +236,8 @@ def analyse_project(session: Session, project_id: uuid.UUID) -> ProjectAnalysis:
         documents=len(project_facts.documents),
         facts=len(project_facts.facts),
         relationships=len(project_facts.relationships),
-        outcome=result.outcome.value,
+        derived=len(project_facts.derived),
+        outcomes=",".join(sorted({finding.outcome for finding in findings})),
     )
 
     return ProjectAnalysis(
@@ -221,6 +246,7 @@ def analyse_project(session: Session, project_id: uuid.UUID) -> ProjectAnalysis:
             project_facts.documents[key] for key in sorted(project_facts.documents, key=str)
         ),
         facts=project_facts.facts,
+        derived=project_facts.derived,
         relationships=project_facts.relationships,
-        findings=(finding,),
+        findings=findings,
     )

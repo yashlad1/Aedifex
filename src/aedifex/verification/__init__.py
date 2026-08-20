@@ -17,6 +17,15 @@ from decimal import Decimal
 from typing import Final
 
 from aedifex.extraction.tender_notice import TenderNotice
+from aedifex.infrastructure.database.models import DerivedFact
+from aedifex.verification.cross_document import (
+    AGREEMENT_RULE_ID,
+    SHARE_CONSISTENCY_RULE_ID,
+    ProjectFacts,
+    ProjectRuleResult,
+    evaluate_derived_share_consistency,
+    evaluate_fact_agreement,
+)
 from aedifex.verification.rules import (
     BID_SECURITY_RULE_ID,
     BID_SECURITY_RULE_VERSION,
@@ -27,15 +36,19 @@ from aedifex.verification.rules import (
 )
 
 __all__ = [
+    "AGREEMENT_RULE_ID",
     "BID_SECURITY_RULE_ID",
     "BID_SECURITY_RULE_VERSION",
     "NOT_SOURCED",
+    "PROJECT_RULES",
     "RULES",
+    "SHARE_CONSISTENCY_RULE_ID",
     "Outcome",
     "Rule",
     "RuleResult",
     "evaluate_all",
     "evaluate_bid_security",
+    "evaluate_project",
 ]
 
 # Rules take the notice plus keyword options. Only one option exists so far and only one rule reads
@@ -43,6 +56,7 @@ __all__ = [
 # a dispatch layer for options nobody has asked for yet would be the premature generality this
 # milestone is meant to avoid.
 Rule = Callable[..., RuleResult]
+ProjectRule = Callable[[ProjectFacts], ProjectRuleResult]
 
 RULES: Final[Mapping[str, Rule]] = {
     BID_SECURITY_RULE_ID: evaluate_bid_security,
@@ -50,7 +64,10 @@ RULES: Final[Mapping[str, Rule]] = {
 
 
 def evaluate_all(
-    notice: TenderNotice, *, prescribed_share: Decimal | None = None
+    notice: TenderNotice,
+    *,
+    prescribed_share: Decimal | None = None,
+    share: DerivedFact | None = None,
 ) -> tuple[RuleResult, ...]:
     """Run every registered rule over one document's facts, in a stable order.
 
@@ -61,7 +78,26 @@ def evaluate_all(
         notice: The extracted facts.
         prescribed_share: An externally sourced bid-security rate, forwarded to the rules. Left
             unset, each rule uses whatever the document states about itself.
+        share: The derived bid-security share for this document, produced by the calculation layer.
+            Rules consume it rather than dividing again.
     """
     return tuple(
-        RULES[rule_id](notice, prescribed_share=prescribed_share) for rule_id in sorted(RULES)
+        RULES[rule_id](notice, prescribed_share=prescribed_share, share=share)
+        for rule_id in sorted(RULES)
     )
+
+
+PROJECT_RULES: Final[Mapping[str, ProjectRule]] = {
+    AGREEMENT_RULE_ID: evaluate_fact_agreement,
+    SHARE_CONSISTENCY_RULE_ID: evaluate_derived_share_consistency,
+}
+
+
+def evaluate_project(project_facts: ProjectFacts) -> tuple[ProjectRuleResult, ...]:
+    """Run every registered project rule, in a stable order.
+
+    Both rules read the same project. One compares what the documents *state*, the other what the
+    calculation layer *derived* from those statements — and both cite the rows they used, so two
+    findings about one project never rest on different readings of it.
+    """
+    return tuple(PROJECT_RULES[rule_id](project_facts) for rule_id in sorted(PROJECT_RULES))

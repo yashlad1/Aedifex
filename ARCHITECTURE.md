@@ -91,6 +91,8 @@ Phase 0 is complete. Implemented and tested:
 | Shared fact model, relationship vocabulary | [domain/evidence.py](src/aedifex/domain/evidence.py) |
 | Projects, membership, document relationships | [extraction/projects.py](src/aedifex/extraction/projects.py), `projects` / `project_documents` / `document_relationships` |
 | Cross-document rules | [verification/cross_document.py](src/aedifex/verification/cross_document.py) |
+| Calculation layer, derived facts | [calculation/engine.py](src/aedifex/calculation/engine.py), `derived_facts` / `derived_fact_inputs` |
+| Knowledge registry | [knowledge/registry.py](src/aedifex/knowledge/registry.py), `GET /v1/knowledge` |
 
 The pipeline is complete end to end and has been run against a real portal. NHAI's terms were
 reviewed and recorded (ADR 0006, rule 60), its tender API was reverse-engineered from the portal's own
@@ -118,9 +120,21 @@ A disagreement is **reported, never resolved**. The rule has no basis for decidi
 right, so it states both values, cites both spans, and stops. And a project with nothing stated twice
 returns `INCONCLUSIVE`: nothing compared is not a pass.
 
+Between facts and rules sits a **calculation layer**, and the boundary around it is hard: it turns
+facts into derived facts and cannot produce a verdict, because `PASS`, `FAIL` and `INCONCLUSIVE` do
+not appear in it and its return type has nowhere to put them. That is what makes a derived fact
+reusable — `bid_security_share` is true whether the prescribed rate is 1%, 2%, or unsourced, and two
+rules already consume the same stored row to reach different kinds of conclusion. Each derived fact
+records its inputs, its calculation and version, and the arithmetic as text, so the number can be
+redone by hand from the row alone.
+
+Evidence therefore comes in two kinds, and they are never conflated: a finding cites exactly one of
+an extracted fact or a derived fact per slot, enforced by a check constraint. Both are citable, but
+nobody wrote the computed one down, so the CLI labels them `evidence` and `derived` and the API sets
+`origin`.
+
 Not yet built: OCR (one acquired document is image-only), classification, archive expansion, synthetic
-generation, derived facts as first-class rows, the entity layer above projects (Contract, BOQItem,
-Invoice), and the risk engine. Directories for those are created when their first real code lands,
+generation, the entity layer above projects (Contract, BOQItem, Invoice), and the risk engine. Directories for those are created when their first real code lands,
 rather than kept as empty scaffolding.
 
 ## Key decisions and their reasons

@@ -21,11 +21,12 @@ threshold nobody sourced.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from typing import Final
 
+from aedifex.calculation.engine import DERIVED_BID_SECURITY_SHARE
 from aedifex.extraction.tender_notice import (
     FIELD_BID_SECURITY,
     FIELD_ESTIMATED_COST,
@@ -33,6 +34,7 @@ from aedifex.extraction.tender_notice import (
     ExtractedField,
     TenderNotice,
 )
+from aedifex.infrastructure.database.models import DerivedFact
 
 __all__ = [
     "BID_SECURITY_RULE_ID",
@@ -86,6 +88,8 @@ class RuleResult:
     observed: str
     detail: dict[str, str]
     evidence: dict[str, ExtractedField]
+    derived_evidence: dict[str, DerivedFact] = field(default_factory=dict)
+    """Computed values the rule relied on. Cited alongside the facts, never instead of them."""
 
 
 def _percent(value: Decimal) -> Decimal:
@@ -99,8 +103,10 @@ def _inconclusive(
     observed: str,
     detail: dict[str, str],
     evidence: dict[str, ExtractedField],
+    derived_evidence: dict[str, DerivedFact] | None = None,
 ) -> RuleResult:
     return RuleResult(
+        derived_evidence=derived_evidence or {},
         rule_id=BID_SECURITY_RULE_ID,
         rule_version=BID_SECURITY_RULE_VERSION,
         outcome=Outcome.INCONCLUSIVE,
@@ -113,7 +119,10 @@ def _inconclusive(
 
 
 def evaluate_bid_security(
-    notice: TenderNotice, *, prescribed_share: Decimal | None = None
+    notice: TenderNotice,
+    *,
+    prescribed_share: Decimal | None = None,
+    share: DerivedFact | None = None,
 ) -> RuleResult:
     """Check a notice's bid security against the share it is required to be.
 
@@ -167,25 +176,32 @@ def evaluate_bid_security(
             evidence=evidence,
         )
 
-    try:
-        share = security.value / cost.value
-    except (InvalidOperation, ZeroDivisionError):  # pragma: no cover - guarded above
+    # The division used to happen here. It now belongs to the calculation layer, so that the same
+    # share can be consumed by the cross-document rule instead of being computed twice from the same
+    # two numbers -- and so that the arithmetic is stored once, with its inputs, rather than living
+    # only inside whichever rule needed it.
+    if share is None or share.numeric_value is None:
         return _inconclusive(
-            "The share could not be computed from the extracted amounts.",
+            "The bid-security share has not been calculated for this document, so there is nothing "
+            "to compare. Run the analysis so the calculation layer produces it.",
             expected=NOT_SOURCED,
             observed="not computable",
             detail={"estimated_cost": str(cost.value), "bid_security": str(security.value)},
             evidence=evidence,
         )
 
-    observed_percent = _percent(share)
+    observed_share = Decimal(share.numeric_value)
+    observed_percent = _percent(observed_share)
     detail = {
         "estimated_cost": str(cost.value),
         "bid_security": str(security.value),
-        "observed_share": str(share),
+        "observed_share": str(observed_share),
         "observed_percent": str(observed_percent),
         "estimated_cost_literal": cost.literal,
         "bid_security_literal": security.literal,
+        # The arithmetic, so the ratio can be redone by hand from the stored record alone.
+        "share_expression": share.expression,
+        "share_calculation": f"{share.calculation} v{share.calculation_version}",
     }
 
     required = (
@@ -200,6 +216,7 @@ def evaluate_bid_security(
             observed=f"{observed_percent}%",
             detail=detail,
             evidence=evidence,
+            derived_evidence={DERIVED_BID_SECURITY_SHARE: share},
         )
 
     source = (
@@ -211,7 +228,7 @@ def evaluate_bid_security(
             else "unknown"
         )
     )
-    deviation = abs(share - required)
+    deviation = abs(observed_share - required)
     agrees = deviation <= BID_SECURITY_TOLERANCE
     detail |= {
         "required_share": str(required),
@@ -240,4 +257,5 @@ def evaluate_bid_security(
         observed=f"{observed_percent}%",
         detail=detail,
         evidence=evidence,
+        derived_evidence={DERIVED_BID_SECURITY_SHARE: share},
     )
