@@ -57,7 +57,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from aedifex.domain.documents import DocumentCategory, DocumentState, DocumentType
-from aedifex.domain.evidence import DocumentRole, FactKind, RelationshipType
+from aedifex.domain.evidence import (
+    DocumentRole,
+    DocumentVersionState,
+    FactKind,
+    RelationshipType,
+)
 from aedifex.domain.files import FileFormat
 
 __all__ = [
@@ -114,6 +119,7 @@ _CRAWL_JOB_STATUS = _enum_column(CrawlJobStatus, length=16)
 _FACT_KIND = _enum_column(FactKind, length=24)
 _DOCUMENT_ROLE = _enum_column(DocumentRole, length=32)
 _RELATIONSHIP_TYPE = _enum_column(RelationshipType, length=24)
+_VERSION_STATE = _enum_column(DocumentVersionState, length=16)
 
 _SHA256_HEX = "~ '^[0-9a-f]{64}$'"
 
@@ -239,6 +245,26 @@ class Document(Base):
     state: Mapped[DocumentState] = mapped_column(
         _DOCUMENT_STATE, default=DocumentState.DOWNLOADED, index=True
     )
+
+    version_state: Mapped[DocumentVersionState] = mapped_column(
+        _VERSION_STATE,
+        default=DocumentVersionState.ACTIVE,
+        server_default=text_clause("'active'"),
+        index=True,
+    )
+    """Whether this is the current version of what it describes.
+
+    Distinct from :attr:`state`, which tracks *processing* — a document can be fully processed and
+    superseded at the same time. Defaults to active because absent evidence of supersession a
+    document is current; it is only ever changed by an explicit supersession or operator decision.
+    """
+
+    version_state_reason: Mapped[str | None] = mapped_column(Text, default=None)
+    """Why the state is what it is, e.g. ``superseded by <document id> (operator)``.
+
+    Stored because "why is this excluded from reconciliation?" is a question an auditor will ask,
+    and a state with no recorded reason is indistinguishable from a bug.
+    """
 
     first_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())

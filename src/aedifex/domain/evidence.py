@@ -15,7 +15,54 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-__all__ = ["DocumentRole", "FactKind", "FactOrigin", "RelationshipType"]
+__all__ = [
+    "DocumentRole",
+    "DocumentVersionState",
+    "FactKind",
+    "FactOrigin",
+    "RelationshipType",
+]
+
+
+class DocumentVersionState(StrEnum):
+    """Whether a document is the current version of what it describes.
+
+    Real projects hold revised bills of quantities, corrigenda, replacement bills and reissued
+    certificates. Reconciling against an arbitrary one of them is worse than reconciling against
+    none, because it produces a confident number from a stale source.
+
+    A state is only ever set from explicit evidence or an explicit operator decision. Nothing here
+    is inferred from a filename, a page count, a revision number found in text, or a timestamp — a
+    document called "BOQ_Rev2_final_FINAL.xlsx" tells you what someone hoped, not what supersedes
+    what.
+    """
+
+    ACTIVE = "active"
+    """No document is known to supersede this one. The default, and the honest one.
+
+    Absent evidence of supersession, a document *is* current — treating everything as unknown until
+    proven otherwise would make every reconciliation inconclusive on day one.
+    """
+
+    SUPERSEDED = "superseded"
+    """Another document explicitly supersedes it. Excluded from current-state reconciliation.
+
+    Never deleted. The raw object and its facts stay queryable, because a finding recorded against
+    this revision must remain explicable after the revision is replaced.
+    """
+
+    RETIRED = "retired"
+    """Withdrawn without a replacement, by explicit operator decision."""
+
+    UNKNOWN = "unknown"
+    """Set only when something is known to be wrong — e.g. two documents claim to supersede each
+    other. Participates in no reconciliation, and says so rather than guessing.
+    """
+
+    @property
+    def is_current(self) -> bool:
+        """Whether facts from this document may feed current-state reconciliation."""
+        return self is DocumentVersionState.ACTIVE
 
 
 class FactOrigin(StrEnum):
