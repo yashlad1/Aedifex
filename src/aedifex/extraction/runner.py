@@ -33,9 +33,21 @@ from aedifex.calculation.engine import (
 )
 from aedifex.domain.documents import DocumentState, assert_transition_allowed
 from aedifex.errors import ExtractionError
+from aedifex.extraction.pdf_boq import (
+    PdfBoq,
+    boq_fields,
+    currency_for,
+    fact_kinds,
+    read_pdf_boq,
+    value_of,
+)
 from aedifex.extraction.pdftext import extract_text
 from aedifex.extraction.selection import Selected, select_facts
-from aedifex.extraction.spreadsheet import SheetFact, read_construction_sheet
+from aedifex.extraction.spreadsheet import (
+    FIELD_CONTRACTED_QUANTITY,
+    SheetFact,
+    read_construction_sheet,
+)
 from aedifex.extraction.store import (
     persist_derived_facts,
     persist_facts,
@@ -134,6 +146,16 @@ def analyse_document(
 
     text = extract_text(data, max_pages=max_pages)
     notice = extract_tender_notice(text)
+
+    # A bid document can carry a priced bill of quantities as well as its notice, and on the one
+    # real example in this corpus it carries 34 line items worth 8.46 crore that the notice reader
+    # cannot see. Both readers run; the fields merge into one set of facts.
+    boq = read_pdf_boq(text)
+    if boq.rows:
+        notice = TenderNotice(
+            fields=notice.fields + _boq_fields(boq),
+            unsupported=notice.unsupported + boq.rejected,
+        )
 
     _advance(document, DocumentState.PROCESSING)
     session.flush()
@@ -329,6 +351,38 @@ def analyse_spreadsheet(
         page_count=len(sheet.rows),
         had_text_layer=bool(sheet.rows),
     )
+
+
+def _boq_fields(boq: PdfBoq) -> tuple[ExtractedField, ...]:
+    """Turn accepted BOQ rows into the same ExtractedField everything else produces.
+
+    ``sheet_row`` carries the row's position in the bill, because that is what work-item linking
+    groups on — a fact and its item identifier are related by sharing a row, whether that row came
+    from a spreadsheet or from a flattened page.
+    """
+    kinds = fact_kinds()
+    fields: list[ExtractedField] = []
+    for fact_type, row in boq_fields(boq):
+        literal, value = value_of(fact_type, row)
+        fields.append(
+            ExtractedField(
+                name=fact_type,
+                kind=kinds[fact_type],
+                literal=literal[:512],
+                value=value,
+                currency=currency_for(fact_type),
+                unit=row.unit if fact_type == FIELD_CONTRACTED_QUANTITY else None,
+                sheet_row=row.order,
+                evidence=Evidence(
+                    page=row.page,
+                    start=0,
+                    end=0,
+                    snippet=f"BOQ item {row.item_identifier}, page {row.page}",
+                ),
+                method=f"pdf_boq:item {row.item_identifier}",
+            )
+        )
+    return tuple(fields)
 
 
 def _field_from_cell(fact: SheetFact) -> ExtractedField:

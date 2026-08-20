@@ -10,6 +10,7 @@ of this folder still says when it was written and what its status was.
 
 | Created | Subject | Status |
 |---|---|---|
+| 2026-08-20 | [Real post-award data — findings](2026-08-20-real-data-findings.md) | Live record |
 | 2026-08-19 22:51 | [Reuse evaluation + finish the NHAI vertical slice](2026-08-19-2251-aedifex-reuse-evaluation-and-vertical-slice.md) | Approved for execution |
 
 ## How this folder relates to the planning tool

@@ -65,6 +65,7 @@ from aedifex.extraction.runner import (
     DEFAULT_MAX_PAGES,
     AnalysisOutcome,
     ProjectAnalysis,
+    WorkItemAnalysis,
     analyse_document,
     analyse_project,
     analyse_spreadsheet,
@@ -439,13 +440,19 @@ def _analyse_projects(args: argparse.Namespace, sessions: sessionmaker[Session])
                 print()
             try:
                 analysis = analyse_project(session, project_id)
+                # Reconciliation must happen inside the transaction that commits. It used to run in
+                # the printing path instead, which meant a project's work items and findings were
+                # only saved by the *next* iteration's commit -- and the last project's were lost
+                # every time. Real data surfaced it: the NHAI project sorts last, so its 32 work
+                # items were computed, displayed, and rolled back.
+                items = reconcile_work_items(session, project_id)
                 session.commit()
             except AedifexError as error:
                 session.rollback()
                 failures += 1
                 print(f"{project_id}  ERROR  {error}")
                 continue
-            _print_project(session, analysis)
+            _print_project(session, analysis, items)
 
     return 1 if failures else 0
 
@@ -462,7 +469,9 @@ def _plain(value: Decimal | None) -> str:
     return f"{value.normalize():f}"
 
 
-def _print_project(session: Session, analysis: ProjectAnalysis) -> None:
+def _print_project(
+    session: Session, analysis: ProjectAnalysis, items: tuple[WorkItemAnalysis, ...]
+) -> None:
     """Print a project's evidence chain: documents, relationships, compared facts, findings."""
     project = analysis.project
     print(f"PROJECT  {project.external_ref}")
@@ -524,7 +533,6 @@ def _print_project(session: Session, analysis: ProjectAnalysis) -> None:
             f"{analysis.filename(fact.document_id)} p{fact.page}"
         )
 
-    items = reconcile_work_items(session, project.id)
     if items:
         print("\nWORK ITEMS")
         for entry in items:
