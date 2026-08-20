@@ -11,7 +11,8 @@ of this folder still says when it was written and what its status was.
 | Created | Subject | Status |
 |---|---|---|
 | 2026-08-20 | [Real post-award data — findings](2026-08-20-real-data-findings.md) | Live record |
-| 2026-08-19 22:51 | [Reuse evaluation + finish the NHAI vertical slice](2026-08-19-2251-aedifex-reuse-evaluation-and-vertical-slice.md) | Approved for execution |
+| 2026-08-19 | [Vertical slice — known limitations](2026-08-19-vertical-slice-known-limitations.md) | Live record |
+| 2026-08-19 22:51 | [Reuse evaluation + finish the NHAI vertical slice](2026-08-19-2251-aedifex-reuse-evaluation-and-vertical-slice.md) | Executed |
 
 ## How this folder relates to the planning tool
 
@@ -31,3 +32,35 @@ including a spike that corrected an earlier wrong claim about what Twisted can e
 remaining work to drive one real NHAI tender PDF through text extraction, field extraction, facts, a
 deterministic rule, a persisted finding, and a CLI/API result whose evidence points back to a page
 span.
+
+**2026-08-19 — Vertical slice known limitations.** What the slice deliberately does not do, and the
+testing debt taken on to finish it. Kept as a live record rather than closed, because a limitation
+stops being one only when something replaces it.
+
+**2026-08-20 — Real post-award data findings.** The live record of running real construction records
+through the pipeline, classified BLOCKER / NEXT / DEFERRED. Started as an investigation of one real
+priced bill of quantities that had been sitting in the corpus unread; now the standing log for
+everything real data reveals.
+
+## How real documents enter the pipeline
+
+The operating rule for this phase, and the reason the findings document is a log rather than a plan:
+
+1. **Run a real document through the pipeline unchanged first.** No preparatory refactor, no
+   defensive parsing, no test written in advance of the failure. Let the document reveal the blocker.
+2. **Classify every issue.** BLOCKER — prevents a trustworthy result on the real document, fix now.
+   NEXT — a real improvement the current workflow can proceed without, record and continue. DEFERRED
+   — speculative, or unsupported by the evidence in hand, do not build.
+3. **Only a BLOCKER stops the flow.**
+
+What this rule forbids, explicitly, because each has been tempting at least once: new equivalence
+tables, identifier heuristics, document classifiers, parser abstractions and relationship types,
+unless a real document demonstrates the need. Probing a function with plausible-looking inputs is not
+such a demonstration — two normalisation gaps found that way (`21 (a)`, and a numeric spreadsheet
+cell giving `1.0`) are recorded in the findings document and deliberately unfixed.
+
+Raw evidence is preserved exactly. Normalisation is for comparison only, and any equivalence beyond
+trivial case-folding must be backed by a document that shows it.
+
+The goal is not a theoretically complete parser. It is for Aedifex to survive increasingly messy real
+construction records while every finding stays explainable.
