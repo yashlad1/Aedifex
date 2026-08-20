@@ -38,3 +38,7 @@ selftest.json
 .vscode/
 *.swp
 .DS_Store
+
+# Claude Code local settings: contains machine-absolute paths and a personal
+# contact address, so it is local configuration rather than shared project config.
+.claude/
