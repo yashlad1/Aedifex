@@ -117,11 +117,50 @@ precisely what happened here.
 
 ### ~~N2. Sub-item structure is unrepresented~~ — RESOLVED, see B6
 
-### N3. Units are corpus-specific and uncompared across sources
-The real BOQ uses `Cum`, `Sqm`, `Nos`, `Kg`, `Rm`. The synthetic set uses `m3`, `MT`. Nothing
-converts, which is correct — but nothing recognises `Cum` and `m3` as the same dimension either, so a
-real BOQ and a real measurement book using different spellings would be refused as a unit mismatch
-rather than reconciled.
+### ~~N3. Units are corpus-specific and uncompared across sources~~ — case fixed, equivalence not
+
+Recorded first as something a *second* real document would force. The one real document forces part
+of it on its own. Its unit spellings, straight from the database:
+
+| Spelling | Rows |
+| --- | --- |
+| `Nos` | 12 |
+| `Cum` | 9 |
+| `Sqm` | 8 |
+| `Rm` | 3 |
+| `Kg` | 1 |
+| `cum` | 1 |
+
+**One document spells cubic metres two ways.** `_comparable_pair` compared units with `!=`, so
+`Cum` against `cum` was refused — declining to reconcile a payment over a typist's shift key, and
+declining *silently*: the result is an INCONCLUSIVE where a discrepancy should have been found. That
+is a false negative in a payment audit, so it is fixed, narrowly: comparison is case-folded, stored
+evidence keeps the spelling the document used.
+
+**Deliberately still refused: `Cum` against `m3`, and `Nos` against `Nos.`** Those may well be the
+same unit and one document is no basis for saying so. Case-folding is safe because no construction
+unit differs from another by case alone; an equivalence table is a different claim, and building one
+from a single portal's spelling habits is the per-portal special case principle 10 names. A second
+real document can answer it.
+
+### N3b. An item number written `21 (a)` will not link to `21(a)`
+
+Probed rather than observed, and recorded on that basis. `normalise_item` unifies whitespace,
+hyphens, slashes and underscores to `.`, so:
+
+| Written | Normalised |
+| --- | --- |
+| `21(a)` | `21(A)` |
+| `21 (a)` | `21.(A)` |
+| `21-a` | `21.A` |
+
+The first two are the same item to any engineer and do not link. **Not fixed**, because no real
+document has been seen writing it the second way — the real bill puts `(a)` on its own line. If a
+measurement book turns out to write `21 (a)`, this is the first thing to check, and the failure will
+again be a silent INCONCLUSIVE rather than a wrong number.
+
+Same class: a spreadsheet whose item-number cell is numeric gives `1.0`, which does not normalise to
+`1`. Also unobserved, also silent.
 
 ### N4. Rounding differences of ₹10–13 exist between stated amounts and quantity × rate
 Two rows near ₹9,000,000 are out by ₹10.20 and ₹13.10. Absorbed by tolerance (`max(₹100, 0.05%)`).
@@ -130,6 +169,12 @@ Real, immaterial, and worth knowing when a rule eventually compares totals.
 ---
 
 ## DEFERRED
+
+- **A fact with no unit is compared against one that has a unit,** taking the other's. Not an
+  oversight and left alone: a document stating no unit is not a document stating a *different* one,
+  and refusing would make every record with an unlabelled column unreconcilable. It is the one place
+  in the calculation layer where absent evidence is read as agreement, and it is now documented in
+  the code as such rather than being an unremarked consequence of an `is not None` check.
 
 - **OCR.** Still one image-only PDF. No real post-award document encountered yet needs it.
 - **Multi-sheet and cross-sheet references.** Not present in either corpus.

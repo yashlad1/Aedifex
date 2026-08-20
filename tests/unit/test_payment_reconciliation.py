@@ -119,6 +119,39 @@ class TestArithmetic:
             is None
         )
 
+    def test_a_unit_spelled_in_two_cases_is_still_one_unit(self) -> None:
+        """The real NHAI bill spells cubic metres ``Cum`` on nine rows and ``cum`` on a tenth.
+
+        Refusing on case alone would decline to reconcile a payment over a typist's shift key, and
+        the refusal is silent — it produces an INCONCLUSIVE where a discrepancy should have been
+        found. Case-folding only: ``Cum`` against ``m3`` is still refused, because one document is
+        no basis for asserting two spellings mean the same thing.
+        """
+        folded = compute_quantity_variance(
+            {
+                "cumulative_claim_quantity": quantity(
+                    "cumulative_claim_quantity", Decimal("520"), "Cum"
+                ),
+                "measured_quantity": quantity("measured_quantity", Decimal("470"), "cum"),
+            }
+        )
+        assert folded is not None
+        assert folded.value == Decimal("50")
+        # Stored as one document actually wrote it. Comparison may normalise; evidence may not.
+        assert folded.unit == "Cum"
+
+        assert (
+            compute_quantity_variance(
+                {
+                    "cumulative_claim_quantity": quantity(
+                        "cumulative_claim_quantity", Decimal("520"), "Cum"
+                    ),
+                    "measured_quantity": quantity("measured_quantity", Decimal("470"), "m3"),
+                }
+            )
+            is None
+        )
+
     def test_exposure_is_floored_at_zero_and_priced_at_the_contract_rate(self) -> None:
         """Under-claiming creates no money owed back, so a negative variance is not exposure."""
         facts = {"contract_rate": money("contract_rate", Decimal("8000"))}

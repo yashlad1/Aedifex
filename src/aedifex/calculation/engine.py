@@ -275,6 +275,22 @@ def compute_unsupported_amount(
     )
 
 
+def _same_unit(left: str, right: str) -> bool:
+    """Whether two unit spellings are the same word.
+
+    Case-folded, and nothing more. One real bill of quantities spells cubic metres ``Cum`` on nine
+    rows and ``cum`` on a tenth, so refusing on case alone would decline to reconcile a payment over
+    a typist's shift key. No construction unit differs from another by case alone, which is what
+    makes this safe where an equivalence table would not be.
+
+    Deliberately *not* handled: ``Cum`` against ``m3``, or ``Nos`` against ``Nos.``. Those may well
+    be the same unit, and one document is no basis for saying so — a unit-equivalence policy built
+    from a single portal's spelling habits is exactly the per-portal special case this project is
+    meant to avoid. When a second real document forces the question, it can answer it.
+    """
+    return left.strip().casefold() == right.strip().casefold()
+
+
 def _comparable_pair(
     left: ExtractedFact | None, right: ExtractedFact | None
 ) -> tuple[Decimal, Decimal, str | None] | None:
@@ -283,13 +299,20 @@ def _comparable_pair(
     Mismatched units are refused rather than coerced. There is no conversion table here and there
     should not be one until a real document needs it — a silent tonne-to-cubic-metre conversion is a
     fabricated density.
+
+    A fact carrying no unit is compared, taking the other's. That is not an oversight: a document
+    that states no unit is not a document stating a *different* one, and refusing would make every
+    record with an unlabelled column unreconcilable. It is the one place here where absent evidence
+    is read as agreement, and it is recorded as such rather than hidden.
     """
     left_value = _numeric(left)
     right_value = _numeric(right)
     if left is None or right is None or left_value is None or right_value is None:
         return None
-    if left.unit is not None and right.unit is not None and left.unit != right.unit:
+    if left.unit is not None and right.unit is not None and not _same_unit(left.unit, right.unit):
         return None
+    # The unit as one document actually wrote it, never the folded form. Comparison may normalise;
+    # stored evidence may not.
     return left_value, right_value, left.unit or right.unit
 
 
