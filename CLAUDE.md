@@ -26,6 +26,7 @@ Then read, as the task requires:
 | [docs/research/CORPUS_ROADMAP.md](docs/research/CORPUS_ROADMAP.md) | Where construction evidence exists worldwide, and what we are missing |
 | [docs/research/INDIAN_POSTAWARD_SOURCES.md](docs/research/INDIAN_POSTAWARD_SOURCES.md) | Every Indian post-award source, ranked, and why almost none is usable |
 | [docs/research/REFERENCE_PROVISION_SECOND_SOURCE.md](docs/research/REFERENCE_PROVISION_SECOND_SOURCE.md) | Whether the Reference Provision model generalises to a second authority, and exactly where it does not |
+| [docs/research/POLICY_RULE_COVERAGE.md](docs/research/POLICY_RULE_COVERAGE.md) | Every rule derivable from the current corpus, and whether it is blocked by evidence or by architecture |
 | [docs/plans/](docs/plans/) | Implementation plans, newest first |
 | [docs/requirements/functional.md](docs/requirements/functional.md) | Numbered requirements and their status |
 
