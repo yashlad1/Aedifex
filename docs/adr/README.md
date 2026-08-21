@@ -19,6 +19,7 @@ supersedes the old one, so the reasoning history survives.
 | [0012](0012-postgresql-frontier-queue.md) | PostgreSQL as the frontier queue | Accepted |
 | [0013](0013-reuse-evaluation-kingfisher-scrapy-ocds.md) | Reuse evaluation: Kingfisher, Scrapy, OCDS | Accepted |
 | [0014](0014-reference-data-by-explicit-applicability.md) | Reference data by explicit applicability, not global scope | Accepted (pre-implementation) |
+| [0015](0015-ocr-execution-shape-on-apple-silicon.md) | OCR on three CPU threads with a bounded ONNX pool; CoreML rejected | Accepted |
 
 Write one when a change constrains future work, chooses between viable technologies,
 introduces or removes a boundary, or encodes a policy in code. See

@@ -17,6 +17,28 @@ the pipeline unchanged surfaced **seven issues, two of them BLOCKER**, and produ
 that had to be retracted**. The most important single finding is that the extractor-versioning
 mechanism cannot retract a fact, only correct one.
 
+## Correction, 2026-08-21
+
+**Two claims in this report were wrong and are corrected here rather than edited away.**
+
+**The four-part contract agreement is not ABP-III's.** It belongs to *Construction Package V-A on
+NH-2 in Bihar, Contract No. TNHP/7* — UPC `N/02005/21005/BR` — as page 2 of the document states
+plainly. It was recorded here as ABP-III because it sits next to the ABP-III entries in NHAI's flat
+legacy list, and adjacency was read as association without opening the document. The Allahabad Bypass
+package ABP-III owns the monthly IPC payment register and the project brief; Package V-A owns the
+contract agreement parts. **They are two different projects**, which also means no single project in
+the corpus has both a contract and a payment record.
+
+**The wrong Consumer Price Index was acquired.** MoSPI's CPI (Rural/Urban/Combined, base 2012) is
+here. The price-adjustment clause of the Package V-A contract requires the **Consumer Price Index for
+Industrial Workers, by centre, published by the Labour Bureau** — Gaya, specifically. Different
+series, different authority, and only one of them can settle a claim on this contract. The Labour
+Bureau releases were found during the Phase 1A review and not acquired, because the plan named MoSPI.
+
+Both were established by [the post-award bundle
+milestone](2026-08-21-nhai-post-award-bundle.md), which is also where the corrected
+document-to-project mapping is recorded.
+
 ---
 
 ## The discovery that changed Phase 1
@@ -111,7 +133,7 @@ content type, SHA-256 and retrieval timestamp in its upload note.
 | WPI | monthly index (base 2022-23, Jul-26), yearly index, Aug-2026 press release, WPI/PPI Manual | 4,266,690 |
 | CPI | one `getCpiIndex` response, 2,000 records | 395,733 |
 | CAG | Indo-Nepal Border Road PA ch. 3 and ch. 4, Polavaram Irrigation PA, Bangalore Metro Rail PA, Karnataka Compliance ch. II pt. I | 23,007,321 |
-| NHAI contract documents | Contract Agreement Part 1/4 (conditions + BOQ), ABP-III monthly IPC payment details, ABP-III project brief | 196,729,592 |
+| NHAI contract documents | Package V-A (TNHP/7) Contract Agreement Part 1/4 (conditions + BOQ) — *not ABP-III, see the correction above*; ABP-III monthly IPC payment details; ABP-III project brief | 196,729,592 |
 | Model Concession Agreements | ≥₹100 cr, ≤₹100 cr, annuity-based (Panagarh–Palsit) | 806,902 |
 | Executed concession agreement | Tada–Nellore, NH-5, Vols O–X | 2,914,328 |
 | Rajasthan PWFAR | Volume I, Volume III | 6,255,036 |
@@ -208,7 +230,7 @@ before any persona view or search index reads facts from the database.
 
 | Document | Pages | Text layer |
 | --- | --- | --- |
-| Contract Agreement Part 1/4 — conditions of contract **and bill of quantities** | 361 (260 read) | **none** |
+| Package V-A Contract Agreement Part 1/4 — conditions of contract **and bill of quantities** | 361 (260 read) | **none** |
 | ABP-III monthly IPC payment details | 2 | **none** |
 | ABP-III project brief | 2 | **none** |
 

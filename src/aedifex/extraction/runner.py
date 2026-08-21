@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import tempfile
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Final
@@ -38,6 +38,7 @@ from aedifex.calculation.engine import (
 from aedifex.domain.documents import DocumentState, DocumentType, assert_transition_allowed
 from aedifex.errors import ExtractionError
 from aedifex.extraction.applicability import ApplicableProvision, select_provision
+from aedifex.extraction.ocr import OCR_MAX_PAGES, default_engine, ocr_document, ocr_method
 from aedifex.extraction.pdf_boq import (
     FIELD_STATED_BILL_TOTAL,
     PdfBoq,
@@ -193,11 +194,21 @@ def analyse_document(
     *,
     max_pages: int = DEFAULT_MAX_PAGES,
     prescribed_share: Decimal | None = None,
+    ocr: bool = False,
+    ocr_max_pages: int = OCR_MAX_PAGES,
 ) -> AnalysisOutcome:
     """Take one already-acquired document through the whole analysis path.
 
     Safe to re-run: facts and findings are keyed by extractor and rule version, so a second pass
     updates rather than duplicates.
+
+    Args:
+        ocr: Transcribe the document if it has no text layer. Off by default and it should stay
+            that way: OCR costs seconds a page against milliseconds for a text layer, so a caller
+            that wants half an hour spent on a 361-page scan has to ask for it. A fact produced this
+            way records the engine and version in its ``method``, because a transcribed number is
+            this engine's reading of some pixels rather than something the document's text states.
+        ocr_max_pages: How far into a scan to transcribe.
 
     Raises:
         ExtractionError: if the document is unknown, its bytes do not match their digest, or the
@@ -213,6 +224,22 @@ def analyse_document(
     data = _read_verified_bytes(store, document)
 
     text = extract_text(data, max_pages=max_pages)
+    read_method: str | None = None
+    if ocr and not text.has_text_layer:
+        # Only as a fallback, and only for a document that genuinely has no text layer. Running OCR
+        # over a page whose text is already extractable would replace something the document states
+        # with a guess about its pixels, which is strictly worse evidence.
+        engine = default_engine()
+        text = ocr_document(data, engine=engine, max_pages=ocr_max_pages)
+        read_method = ocr_method(engine)
+        _log.info(
+            "extraction.ocr_used",
+            document_id=str(document_id),
+            method=read_method,
+            pages_read=text.pages_read,
+            truncated=text.truncated,
+        )
+
     notice = extract_tender_notice(text)
 
     # A bid document can carry a priced bill of quantities as well as its notice, and on the one
@@ -266,6 +293,9 @@ def analyse_document(
             fields=notice.fields + _boq_fields(boq),
             unsupported=notice.unsupported + boq.rejected,
         )
+
+    if read_method is not None:
+        notice = _stamp_transcription(notice, read_method)
 
     _advance(document, DocumentState.PROCESSING)
     session.flush()
@@ -339,6 +369,25 @@ def analyse_document(
         page_count=text.page_count,
         had_text_layer=text.has_text_layer,
         retracted=retracted,
+    )
+
+
+def _stamp_transcription(notice: TenderNotice, method: str) -> TenderNotice:
+    """Record on every field that its value was transcribed rather than read.
+
+    A number OCR produced is not a number the document's text layer states — it is an engine's
+    reading of some pixels, and on money that difference decides whether a finding can be defended.
+    So the engine and its version go into each fact's ``method``, where the API and the CLI already
+    surface it, rather than into a side table nobody queries.
+
+    Prefix, not replacement: the extraction rule that found the value is still worth knowing. A fact
+    ends up reading ``ocr:rapidocr-onnxruntime/1.4.4 | table:header-block``.
+    """
+    return TenderNotice(
+        fields=tuple(
+            replace(field, method=f"{method} | {field.method}") for field in notice.fields
+        ),
+        unsupported=notice.unsupported,
     )
 
 

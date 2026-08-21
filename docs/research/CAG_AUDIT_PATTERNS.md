@@ -178,10 +178,36 @@ the Economic Adviser. The reference half of this rule is in the corpus. The proj
 | Fact required | Status |
 | --- | --- |
 | WPI index for the applicable month | **PRESENT.** Held as reference evidence with authority, base year and provenance. |
-| The contract's price-adjustment formula and its named index | **Missing.** This is the blocker. |
-| Base index and base month | **Missing** — stated in the contract. |
+| The contract's price-adjustment formula and its named index | **PRESENT since 2026-08-21.** See below. |
+| Base index and base month | **PRESENT as a rule** — the contract defines both by reference, not by value. |
 | Index actually applied in the bill | **Missing** — stated in the RA bill. |
 | Quantity or value the adjustment applies to | **Missing** — stated in the RA bill. |
+
+**Update, 2026-08-21: the formula arrived.** Pages 298–305 of the Package V-A contract agreement
+(NH-2 Bihar, Contract No. TNHP/7, UPC `N/02005/21005/BR`) state the price-adjustment clause in full,
+across seven components — Labour, Cement, Steel, Bitumen, POL/Fuel, Plant & Machinery, Other
+Materials — each of the form:
+
+```text
+V_L = 0.85 × P_l/100 × R_l × (L_i − L_o)/L_o        (labour)
+V_c = 0.85 × P_c/100 × R_l × (C_i − C_o)/C_o        (cement)
+```
+
+and it names its indices precisely, which is the part that matters:
+
+* `C_o`, `C_i` — *"the all India average **wholesale price index for cement**"*, on the day 28 days
+  prior to the bid closing date and 28 days prior to the last day of the period *"to which a
+  particular interim payment certificate is related"*. **That series is in the corpus.**
+* `L_o`, `L_i` — *"the average **consumer price index for industrial workers** for **Gaya** centre"*,
+  and for **Gaya/Aurangabad**, *"as published by **Labour Bureau, Ministry of Labour**"*. **That
+  series is not** — Phase 1 acquired MoSPI's CPI, which is a different index from a different
+  authority. CPI-IW **by centre** is what an Indian construction contract actually adjusts against,
+  and this document is what established it.
+
+So the blocker has moved. It is no longer "no contract states a formula" — one does, and the
+representation gap the second-source study predicted is now demanded by real evidence rather than
+anticipated. What remains missing is the *applied* index and the value of work in the period, both of
+which live in a running account bill.
 
 The formula is the blocker, and it is a genuine representational gap, not just an evidence gap.
 `P = 0.85 × (Q × R) × (WPI_current − WPI_base) / WPI_base` is an **expression over named indices**,
@@ -305,7 +331,7 @@ in neither the original nor the revised DPR, yet appeared in the contract BOQ an
 | 1 | Extra item at the wrong rate | Evidence only | MB + RA bill + SOR |
 | 7 | Duplicate payment | Evidence only | Two RA bills for one project |
 | 3 | Advance recovery schedule | Evidence — needs a **series** | Consecutive IPCs for one contract |
-| 4 | Price adjustment from the wrong index | Evidence **and** formula representation | A contract stating a price-adjustment formula |
+| 4 | Price adjustment from the wrong index | **Formula representation**, plus the applied index from a bill | ~~A contract stating a price-adjustment formula~~ — acquired 2026-08-21. Now needs an RA bill |
 | 8b | Item paid but never sanctioned | Evidence, plus a new rule shape (set difference) | DPR + contract BOQ |
 | 6 | Material below specification | Evidence, plus two new fact types | Contract specification + material register |
 

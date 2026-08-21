@@ -60,6 +60,7 @@ from aedifex.domain.evidence import RelationshipType
 from aedifex.domain.files import FileFormat
 from aedifex.errors import AedifexError, ConfigurationError
 from aedifex.extraction.ingest import ingest_file
+from aedifex.extraction.ocr import OCR_MAX_PAGES
 from aedifex.extraction.projects import reconcile_projects
 from aedifex.extraction.runner import (
     DEFAULT_MAX_PAGES,
@@ -162,6 +163,23 @@ def _parser() -> argparse.ArgumentParser:
         help="Reconcile projects from extracted identifiers, then evaluate every one",
     )
     analyse.add_argument("--max-pages", type=int, default=DEFAULT_MAX_PAGES)
+    analyse.add_argument(
+        "--ocr",
+        action="store_true",
+        help=(
+            "Transcribe the document if it has no text layer. Off by default because OCR costs "
+            "seconds per page, not milliseconds: a 361-page scan is roughly half an hour. Facts "
+            "produced this way record the engine and version, because a transcribed number is a "
+            "reading of pixels rather than something the document's text states."
+        ),
+    )
+    analyse.add_argument(
+        "--ocr-max-pages",
+        type=int,
+        default=OCR_MAX_PAGES,
+        metavar="N",
+        help="How far into a scan to transcribe. Only meaningful with --ocr",
+    )
     analyse.add_argument(
         "--prescribed-share",
         type=Decimal,
@@ -424,6 +442,8 @@ def _analyse(args: argparse.Namespace, settings: Settings) -> int:
                         document_id,
                         max_pages=args.max_pages,
                         prescribed_share=args.prescribed_share,
+                        ocr=args.ocr,
+                        ocr_max_pages=args.ocr_max_pages,
                     )
                 session.commit()
             except AedifexError as error:

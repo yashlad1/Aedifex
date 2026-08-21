@@ -49,6 +49,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# OCR, and optional on purpose. Three of the corpus's most valuable primary documents are
+# image-only — the Package V-A contract agreement with its Priced Bill of Quantities, and the
+# ABP-III monthly IPC payment register — so this is required to read them and required by nothing
+# else. A deployment that never touches a scan should not carry an ONNX runtime.
+#
+# rapidocr-onnxruntime is Apache-2.0 and pip-installable with no system binary, which is why it was
+# chosen over Tesseract: Tesseract is equally well licensed but needs a system package on every
+# machine, container and CI runner. Pillow (HPND) decodes the page images that pypdf hands over,
+# including the CCITTFaxDecode fax scans.
+ocr = [
+    "rapidocr-onnxruntime>=1.2,<2",
+    "pillow>=11,<12",
+]
 dev = [
     "pytest>=9.0.3,<10",
     "pytest-cov>=6.0,<7",
@@ -148,6 +161,12 @@ plugins = ["pydantic.mypy"]
 # Alembic's generated env module is not typed and is not our code to fix.
 module = ["migrations.*"]
 ignore_errors = true
+
+[[tool.mypy.overrides]]
+# rapidocr-onnxruntime ships no py.typed marker. Imported in exactly one place, to bound ONNX
+# Runtime's thread pool, and behind the OcrEngine protocol everywhere else.
+module = ["rapidocr_onnxruntime.*"]
+ignore_missing_imports = true
 
 [tool.pydantic-mypy]
 init_typed = true
