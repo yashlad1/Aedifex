@@ -70,7 +70,17 @@ EXTRACTOR: Final[str] = "nhai_tender_notice"
 # stays — but selection takes the newest extractor version per document, so a corrected reading
 # supersedes a wrong one instead of sitting beside it. A fact the document never stated is not a
 # competing reading to be weighed; it is a value that must stop being selectable.
-EXTRACTOR_VERSION: Final[str] = "2"
+#
+# Bumped to "3" on 2026-08-21 for the same reason at larger scale. Version 2 fixed the reader; it
+# did not fix the *classification* the reader depends on. Five real documents from two newly
+# acquired sources fell outside the reference-document set and produced five more invented facts —
+# ₹13,262 crore from a CAG report on Polavaram R&R colonies, ₹140 crore from a metro car park,
+# ₹4 crore from a "design ecosystem", and two dates printed inside specimen forms in NHAI's model
+# concession agreements. Nothing about the parsing was wrong. What was wrong is that an audit report
+# had no document type of its own and a model contract was indistinguishable from a signed one; both
+# are fixed in `aedifex.domain.documents`, and this bump makes the corrected reading the selected
+# one while the false rows stay on the record where an auditor can still see them.
+EXTRACTOR_VERSION: Final[str] = "3"
 
 # How much surrounding text a snippet carries. Enough to read the value in its own sentence, so a
 # reviewer can judge it without opening the PDF; short enough to store per fact.

@@ -2,14 +2,17 @@
 
 ## Current status
 
-Three of nine sources are collectable; six remain **disabled and unverified**, with no crawler
+Six of twelve sources are collectable; six remain **disabled and unverified**, with no crawler
 written and no terms reviewed.
 
 | Source | Status | Acquired so far |
 | --- | --- | --- |
 | `nhai` | Approved, crawler registered | 4 tender documents with retrieval provenance, including a real 37-item priced BOQ |
 | `synthetic_projects` | Approved, generated here | 5 spreadsheets: BOQ revisions, a measurement book, an RA bill |
-| `india_official_publications` | **Approved 2026-08-20 under delegated review**, manual download only | NHAI Works Manual 2006 (297pp), the first real Indian reference document |
+| `india_official_publications` | **Approved 2026-08-20 under delegated review**, manual download only | NHAI Works Manual 2006 (297pp); Rajasthan PWFAR Volumes I, II and III |
+| `india_reference_indices` | **Approved 2026-08-21 under delegated review**, manual download only | WPI monthly and yearly index series (base 2022-23), WPI press release and manual, one CPI API response |
+| `india_audit_reports` | **Approved 2026-08-21 under delegated review**, manual download only | 5 CAG audit reports — Indo-Nepal Border Road, Polavaram Irrigation, Bangalore Metro Rail, Karnataka compliance |
+| `nhai_published_agreements` | **Approved 2026-08-21 under delegated review**, manual download only | 3 Model Concession Agreements, 1 executed concession agreement, a contract agreement with its BOQ, an IPC payment record |
 | `cppp_eprocure`, `cpwd`, `gem_marketplace`, `open_contracting_registry`, `ted_europa`, `world_bank_projects` | Unverified — cannot be collected from | — |
 
 `gem_marketplace` is `registration_required` and is therefore permanently out of scope rather than
@@ -25,13 +28,17 @@ SOURCE                       ENABLED  REVIEW       ACCESS                 RATE
 cppp_eprocure                no       unverified   public                 10/min
 cpwd                         no       unverified   public                 10/min
 gem_marketplace              no       unverified   registration_required  6/min
-nhai                         no       unverified   public                 10/min
+india_audit_reports          yes      approved     public                 6/min
+india_official_publications  yes      approved     public                 6/min
+india_reference_indices      yes      approved     public                 6/min
+nhai                         yes      approved     public                 10/min
+nhai_published_agreements    yes      approved     public                 6/min
 open_contracting_registry    no       unverified   public                 30/min
 synthetic_projects           yes      approved     public                 600/min
 ted_europa                   no       unverified   public                 20/min
 world_bank_projects          no       unverified   public                 20/min
 
-Collectable now: 1 of 8
+Collectable now: 6 of 12
 ```
 
 This is the honest state, and the schema enforces it: a source cannot be enabled while its
@@ -42,6 +49,11 @@ reachability and robots policy verified for 46 of them — is in
 [docs/research/CORPUS_ACQUISITION_STRATEGY.md](docs/research/CORPUS_ACQUISITION_STRATEGY.md). Two
 hard blockers found there: **`data.gov.in` and `ireps.gov.in` both declare `Disallow: /`**, so both
 are manual-download-only permanently, regardless of licence.
+
+Phase 1 of that plan was executed on 2026-08-21: all six highest-ROI sources approved and sampled,
+19 artifacts acquired, and the results — including six false facts the pipeline produced and the
+reason extractor versioning could not retract them — are in
+[docs/plans/2026-08-21-phase-1-acquisition.md](docs/plans/2026-08-21-phase-1-acquisition.md).
 
 ## Reviews performed under delegated authority
 
@@ -55,6 +67,24 @@ financial and accounts rules, standard specifications, schedules of rates, audit
 is registered; acquisition is one manual download at a time, and each upload records the exact source
 URL and download date. `reviewed_by` names the delegate rather than the owner, because an approval
 must say who actually made it.
+
+**Three further sources — APPROVED 2026-08-21, manual download only.** `india_reference_indices`
+(WPI from the Office of the Economic Adviser, CPI from the National Statistical Office),
+`india_audit_reports` (Comptroller and Auditor General of India) and `nhai_published_agreements`
+(NHAI's model and executed contract documents). Each entry records the robots finding, the terms
+position, and the personal-data scope commitment, verified by request rather than assumed. Three
+points from that review are worth carrying here:
+
+- **A `robots.txt` returning HTTP 200 is not a robots policy.** `eaindustry.nic.in/robots.txt`
+  answers 200 with the site's own ASP error page as the body. Read the body, not the status code.
+- **CAG is the only one whose terms and copyright policy could actually be retrieved**, and it grants
+  the most: material "may be reproduced free of charge", reproduced accurately, not used in a
+  derogatory or misleading context, with the source prominently acknowledged. Redistribution is
+  explicitly permitted with attribution; commercial use is unrestricted but unnamed; model-training
+  use is not addressed and is therefore not established.
+- **One access control was found and respected.** `www.mospi.gov.in/api/*` returns HTTP 403 to a
+  non-browser client and was not circumvented. A CAPTCHA on NHAI's document search was likewise left
+  alone; only the ungated listing was used.
 
 **`data.gov.in` — BLOCKED for automated access, and this is the one that matters.** Its `robots.txt`
 is real and reads `User-agent: * / Disallow: /`. That is honoured *despite* its datasets carrying the

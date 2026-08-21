@@ -108,16 +108,38 @@ DEFAULT_MAX_PAGES = 260
 # to the sheet reader versions independently of the notice reader.
 SPREADSHEET_EXTRACTOR = "construction_spreadsheet"
 
-# Document types whose content is *about other projects*: manuals, rate schedules, specifications.
-# The tender-notice reader must not emit document-scoped facts from these without positive evidence
-# that a value describes the document itself.
+# Document types whose content is *about other projects*: manuals, rate schedules, specifications,
+# model agreements, audit reports. The tender-notice reader must not emit document-scoped facts from
+# these without positive evidence that a value describes the document itself.
 #
 # Found the hard way. The NHAI Works Manual states "two percent of the estimated cost for works up
 # to Rs. 20 crore" and version 1 of the reader recorded `estimated_cost = Rs 20,00,00,000` as a fact
 # about a 297-page procedure manual — then cited it as evidence in a finding. A quoted amount inside
 # a reference document is not a fact about that document.
+#
+# Found the hard way a second time, on 2026-08-21, when five real documents from two new sources
+# landed outside this set and produced five false facts:
+#
+#   * three CAG audit reports, ingested as UNKNOWN because no audit type existed, each emitted an
+#     `estimated_cost` scraped from narrative about some other project — ₹13,262 crore of Polavaram
+#     R&R colonies, ₹140 crore of a metro station car park, ₹4 crore of a "design ecosystem" — and
+#     the Polavaram report also emitted `document_date = 27.07.1989`, a date it merely cites;
+#   * two NHAI Model Concession Agreements, ingested as CONTRACT because that is what they are
+#     shaped like, each emitted a `document_date` from a date printed inside a specimen form.
+#
+# The lesson is not "add more types". It is that **reference-versus-project is a property of a
+# document's role, not of its shape**, and the two contract-shaped cases prove it: a model
+# concession agreement and an executed one are the same clauses in the same order. So the role is
+# declared by the operator at ingest — MODEL_AGREEMENT or CONTRACT, AUDIT_REPORT or TENDER_NOTICE —
+# and never inferred from the text. An inferred role would fail silently, which is how all five of
+# these facts were created.
 _REFERENCE_DOCUMENT_TYPES: Final[frozenset[DocumentType]] = frozenset(
-    {DocumentType.TECHNICAL_SPECIFICATION, DocumentType.SCHEDULE_OF_RATES}
+    {
+        DocumentType.TECHNICAL_SPECIFICATION,
+        DocumentType.SCHEDULE_OF_RATES,
+        DocumentType.MODEL_AGREEMENT,
+        DocumentType.AUDIT_REPORT,
+    }
 )
 
 
@@ -190,10 +212,18 @@ def analyse_document(
     is_reference = document.document_type in _REFERENCE_DOCUMENT_TYPES
     suppressed: tuple[str, ...] = ()
     if is_reference and not _self_metadata_evidence(notice):
+        # Named by document type rather than lumped under "reference document", because the two
+        # cases read very differently to an operator: a manual quotes a *norm*, an audit report
+        # quotes a figure it found in *someone else's records*. Both are about another project;
+        # saying which one it is saves the reader from opening the PDF to find out.
+        because = (
+            "an audit report states what an auditor found in records it does not contain"
+            if document.document_type is DocumentType.AUDIT_REPORT
+            else "this is a reference document"
+        )
         suppressed = tuple(
-            f"{field.name}: suppressed — this is a reference document and states no tender "
-            f"identifier, so a quoted value is a norm about other projects rather than a fact "
-            f"about itself"
+            f"{field.name}: suppressed — {because}, and it states no tender identifier, so a "
+            f"quoted value is about another project rather than a fact about itself"
             for field in notice.fields
         )
         notice = TenderNotice(fields=(), unsupported=notice.unsupported + suppressed)

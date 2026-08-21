@@ -28,6 +28,7 @@ Then read, as the task requires:
 | [docs/research/REFERENCE_PROVISION_SECOND_SOURCE.md](docs/research/REFERENCE_PROVISION_SECOND_SOURCE.md) | Whether the Reference Provision model generalises to a second authority, and exactly where it does not |
 | [docs/research/POLICY_RULE_COVERAGE.md](docs/research/POLICY_RULE_COVERAGE.md) | Every rule derivable from the current corpus, and whether it is blocked by evidence or by architecture |
 | [docs/research/CORPUS_ACQUISITION_STRATEGY.md](docs/research/CORPUS_ACQUISITION_STRATEGY.md) | The multi-year acquisition plan: 60 India-specific sources catalogued, scored and ordered, with robots verified for 46 |
+| [docs/research/CAG_AUDIT_PATTERNS.md](docs/research/CAG_AUDIT_PATTERNS.md) | Eight real audit patterns read backwards from completed CAG findings to the evidence each needs, and which document is missing |
 | [docs/plans/](docs/plans/) | Implementation plans, newest first |
 | [docs/requirements/functional.md](docs/requirements/functional.md) | Numbered requirements and their status |
 

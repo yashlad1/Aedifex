@@ -32,7 +32,7 @@ from decimal import Decimal
 from ipaddress import ip_address
 from pathlib import Path
 from types import FrameType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import boto3
 from botocore.config import Config as BotoConfig
@@ -87,6 +87,12 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from mypy_boto3_s3.client import S3Client
 
 _log = get_logger(__name__)
+
+# The formats an extractor actually exists for. Storage accepts more — a JSON API response is
+# perfectly good evidence, and the Consumer Price Index arrives no other way — but acquiring an
+# artifact and being able to read it are separate capabilities, and conflating them produced a
+# nonsense error. Anything outside this set is stored, provenanced, and skipped by name.
+_READABLE_FORMATS: Final[frozenset[FileFormat]] = frozenset({FileFormat.PDF, FileFormat.XLSX})
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -302,7 +308,16 @@ def _ingest(args: argparse.Namespace, settings: Settings) -> int:
     store.ensure_bucket()
 
     document_type = DocumentType(args.type)
-    file_format_for = {".xlsx": FileFormat.XLSX, ".pdf": FileFormat.PDF}
+    # .json is here because a real approved source needed it and nothing else would do: MoSPI
+    # publishes the Consumer Price Index only through api.mospi.gov.in, so the artifact *is* a
+    # response body. Storage is format-blind — bytes and a digest — and refusing the extension was
+    # the only thing keeping an approved source out of the corpus. No JSON reader exists yet, and
+    # none is added here; the file is held as evidence with its request URL as provenance.
+    file_format_for = {
+        ".xlsx": FileFormat.XLSX,
+        ".pdf": FileFormat.PDF,
+        ".json": FileFormat.JSON,
+    }
 
     failures = 0
     with sessions() as session:
@@ -391,6 +406,14 @@ def _analyse(args: argparse.Namespace, settings: Settings) -> int:
                 print()
             try:
                 document = session.get(Document, document_id)
+                if document is not None and document.file_format not in _READABLE_FORMATS:
+                    # Refuse by name instead of falling through to the PDF reader. The MoSPI
+                    # Consumer Price Index response, stored as .json, came back as "PDF could not be
+                    # opened: Stream has ended unexpectedly" — which sends an operator hunting for a
+                    # corrupt download that does not exist. The artifact is stored and its
+                    # provenance is complete; what is missing is a reader, and that is what to say.
+                    print(f"{document_id}  SKIPPED  no reader for {document.file_format.value}")
+                    continue
                 if document is not None and document.file_format is FileFormat.XLSX:
                     # A construction spreadsheet, not prose. Different reader, same fact model.
                     outcome = analyse_spreadsheet(session, store, document_id)
@@ -618,10 +641,16 @@ def _print_analysis(session: Session, outcome: AnalysisOutcome) -> None:
     name = (document.original_filename if document else None) or str(outcome.document_id)
     print(f"DOCUMENT  {name}")
     print(f"  id {outcome.document_id}")
-    print(
-        f"  {outcome.page_count} pages, {outcome.pages_read} read"
-        f"{'' if outcome.had_text_layer else '  (NO TEXT LAYER - needs OCR)'}"
-    )
+    # A spreadsheet has rows, not pages, and no amount of OCR will help one whose rows simply did
+    # not match the reader. Printing "0 pages, 0 read (NO TEXT LAYER - needs OCR)" for the WPI index
+    # workbook told an operator to reach for the one tool that could not possibly work.
+    if document is not None and document.file_format is FileFormat.XLSX:
+        print(f"  {outcome.page_count} rows accepted")
+    else:
+        print(
+            f"  {outcome.page_count} pages, {outcome.pages_read} read"
+            f"{'' if outcome.had_text_layer else '  (NO TEXT LAYER - needs OCR)'}"
+        )
 
     if outcome.facts:
         print("\nFACTS")

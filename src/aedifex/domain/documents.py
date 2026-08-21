@@ -81,6 +81,31 @@ class DocumentType(StrEnum):
     """
     CHANGE_ORDER = "change_order"
 
+    MODEL_AGREEMENT = "model_agreement"
+    """A *template* contract an authority publishes for a class of project, not a signed one.
+
+    Separate from ``CONTRACT`` because the difference is not cosmetic: an executed contract states
+    facts about one project, while a model agreement states norms about every project of its class.
+    Nothing distinguishes them by shape — NHAI's Model Concession Agreement and its executed
+    Tada-Nellore concession agreement are both 100-plus pages of the same clauses — so the
+    distinction has to be *declared* at ingest and cannot be inferred.
+
+    It earns a type rather than a flag because the extractor already decides what to suppress by
+    document type, and because getting it wrong is silent. Both model concession agreements
+    acquired on 2026-08-21 emitted a ``document_date`` from a date printed inside a specimen form,
+    as a fact about the template itself.
+    """
+
+    AUDIT_REPORT = "audit_report"
+    """An external or internal audit report: what an auditor found, having examined other records.
+
+    The most quotation-dense document class in the corpus. A CAG performance audit is almost
+    entirely figures lifted from contracts, measurement books and bills that the report itself does
+    not contain — so a value found in one is evidence of the *audit finding*, and only rarely a fact
+    about the report. Three real CAG reports each produced a false ``estimated_cost`` before this
+    type existed to tell the extractor what it was reading.
+    """
+
     # --- Engineering and technical ----------------------------------------------
     TECHNICAL_SPECIFICATION = "technical_specification"
     DRAWING = "drawing"
@@ -120,6 +145,10 @@ DOCUMENT_TYPE_CATEGORY: Final[MappingProxyType[DocumentType, DocumentCategory]] 
         DocumentType.MATERIAL_TEST_CERTIFICATE: DocumentCategory.MATERIAL,
         DocumentType.INSPECTION_REPORT: DocumentCategory.ENGINEERING,
         DocumentType.CHANGE_ORDER: DocumentCategory.LEGAL,
+        # A model agreement is a legal instrument even though it binds nobody yet.
+        DocumentType.MODEL_AGREEMENT: DocumentCategory.LEGAL,
+        # An audit report's subject is money: excess payment, non-recovery, irregular expenditure.
+        DocumentType.AUDIT_REPORT: DocumentCategory.FINANCIAL,
         DocumentType.TENDER_NOTICE: DocumentCategory.PROCUREMENT,
         DocumentType.TECHNICAL_SPECIFICATION: DocumentCategory.ENGINEERING,
         DocumentType.AWARD_NOTICE: DocumentCategory.PROCUREMENT,

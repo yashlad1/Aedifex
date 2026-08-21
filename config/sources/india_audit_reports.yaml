@@ -1,0 +1,102 @@
+# Audit reports of the Comptroller and Auditor General of India, acquired by manual download.
+#
+# A third evidence class, and the reason it gets its own source entry rather than being folded into
+# the reference publications: an audit report is neither reference data nor project data.
+#
+#   REFERENCE DATA tells us what should happen.
+#   PROJECT DATA tells us what did happen.
+#   AUDIT DATA tells us what an auditor found went wrong.
+#
+# The distinction is not bookkeeping. A CAG report *quotes* quantities, rates and payments from
+# measurement books, running bills and contracts that Aedifex does not hold and cannot see. Those
+# quoted figures are the auditor's reading of a document, at the auditor's chosen precision, framed
+# by the point the auditor was making. Treating one as though it came from a measurement book would
+# manufacture primary evidence out of secondary evidence — the exact failure the provenance chain
+# exists to prevent.
+#
+# What a CAG report *is* primary evidence of is the audit finding itself: the rule the auditor
+# invoked, the comparison performed, the arithmetic, and the money consequence. That is the
+# valuable part, and it is why this source ranks at the top of the acquisition strategy.
+#
+# REVIEW AUTHORITY. Terms, licence, privacy and robots review was performed by Claude (Opus 5)
+# under authority explicitly delegated by the project owner on 2026-08-20.
+
+sources:
+  - id: india_audit_reports
+    name: Comptroller and Auditor General of India — audit reports
+    description: >
+      Performance and compliance audit reports of the Comptroller and Auditor General of India
+      covering public works, highways, irrigation, metro rail and state public works departments.
+      Laid before Parliament or a State Legislature and then published for public download.
+      Acquired by manual download of individual reports or report chapters.
+    country: IN
+    category: government_procurement
+    retrieval: manual_upload
+    base_url: null
+    robots_policy: respect
+    enabled: true
+    verification_status: approved
+    crawler: null
+    rate_limit:
+      requests_per_minute: 6
+      max_concurrency: 1
+      min_delay_seconds: 10.0
+      max_documents_per_run: 20
+    data_use:
+      # 200-character ceiling, so the grant is quoted in full in allowed_use and notes.
+      license: CAG copyright policy — reproduction free of charge with accurate use and acknowledgement
+      terms_url: https://cag.gov.in/en/page-terms-conditions
+      access: public
+      allowed_use: >
+        Manual download and reproduction of published audit reports, under the explicit grant on the
+        CAG copyright policy page: material "may be reproduced free of charge", provided it is
+        reproduced accurately, is not used in a derogatory manner or a misleading context, and the
+        source is prominently acknowledged wherever it is published or issued to others. The grant
+        does not extend to material identified in a report as third-party copyright. Redistribution
+        is therefore permitted with attribution; commercial use is not restricted by the text but is
+        not named either; model-training use is not addressed and is not established. Figures quoted
+        by an auditor are evidence of the audit finding, never of the underlying project record.
+      attribution_required: true
+      contains_personal_data: true
+      reviewed_by: >
+        Claude (Opus 5) under authority delegated by the project owner
+        (lad.yas@northeastern.edu) on 2026-08-20
+      reviewed_on: 2026-08-20T00:00:00Z
+    document_types:
+      - inspection_report
+      - unknown
+    file_formats: [pdf]
+    notes: >
+      REVIEW 2026-08-20, under delegated authority. This is the only Phase-1 source whose terms and
+      copyright policy were actually retrieved and read in full. Both are quoted below.
+
+      ROBOTS. cag.gov.in/robots.txt redirects to /en/robots.txt and returns HTTP 404. No policy is
+      declared, so nothing is disallowed.
+
+      COPYRIGHT POLICY (https://cag.gov.in/en/page-copyright), read in full and quoted verbatim:
+      "Material featured on CAG website may be reproduced free of charge. However, the material has
+      to be reproduced accurately and not to be used in a derogatory manner or in a misleading
+      context. Wherever the material is being published or issued to others, the source must be
+      prominently acknowledged. However, the permission to reproduce this material shall not extend
+      to any material which is identified as being copyright of a third party. Authorization to
+      reproduce such material must be obtained from the department/copyright holder concerned."
+
+      TERMS (https://cag.gov.in/en/page-terms-conditions), read in full. A liability disclaimer and
+      a governing-law clause, nothing more: the content is not to be construed as a statement of
+      law, the relevant Act or Rules prevail over the website where the two differ, CAG accepts no
+      liability, and Indian law and Indian courts govern. No payment obligation, no account
+      requirement, no restriction on downloading, reuse or automated access. Within the delegated
+      authority to accept, and accepted.
+
+      SEARCH IS OPEN, AND USEFUL. /en/audit-report accepts GET filters — sector (44 =
+      Transport & Infrastructure), report_type (54 = Performance, 52 = Compliance), state, year
+      range — and a full-text `title` query that searches report *content* and returns
+      paragraph-level snippets with paragraph numbers. No CAPTCHA, no login. 96 performance audits
+      in Transport & Infrastructure for 2015-2026 at the time of review. Reports are also published
+      as individual chapter PDFs, which is why a sample can be small.
+
+      PERSONAL DATA — TRUE, AND DELIBERATELY SO. Set true because it is a scope commitment, not an
+      observation about the five files acquired. Audit reports name contractors, firms and
+      occasionally individual officers, and a compliance paragraph can identify a named person's
+      decision. Nothing in this source may be used to build a profile of an individual, and any
+      downstream use must screen for personal data first.

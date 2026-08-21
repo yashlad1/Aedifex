@@ -39,6 +39,8 @@ _log = get_logger(__name__)
 _MEDIA_TYPES: dict[FileFormat, str] = {
     FileFormat.XLSX: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     FileFormat.PDF: "application/pdf",
+    # For an API response stored as evidence — the Consumer Price Index arrives no other way.
+    FileFormat.JSON: "application/json",
 }
 
 
@@ -140,6 +142,11 @@ def ingest_file(
 
     document = session.get(Document, document_id)
     already_present = document is not None
+    reclassified_from = (
+        document.document_type
+        if document is not None and document.document_type is not document_type
+        else None
+    )
     if document is None:
         document = Document(
             id=document_id,
@@ -153,6 +160,26 @@ def ingest_file(
             state=DocumentState.DOWNLOADED,
         )
         session.add(document)
+        session.flush()
+    elif reclassified_from is not None:
+        # The operator is the authority on the declared type, and until 2026-08-21 a re-ingest
+        # silently ignored them — which made a misclassification uncorrectable through the supported
+        # path. Five documents needed exactly this: three CAG reports ingested as UNKNOWN before an
+        # AUDIT_REPORT type existed, and two model concession agreements ingested as CONTRACT before
+        # MODEL_AGREEMENT did. The type decides whether the extractor treats a quoted amount as a
+        # fact about the document, so leaving it wrong keeps producing false facts.
+        #
+        # This is not a change to stored evidence. The bytes, the digest and the storage key are
+        # untouched and unreachable from here; only the operator's own classification of them moves,
+        # and the move is logged with both values so the record shows what was corrected.
+        _log.info(
+            "ingest.reclassified",
+            document_id=str(document_id),
+            source_id=source.id,
+            was=reclassified_from.value,
+            now=document_type.value,
+        )
+        document.document_type = document_type
         session.flush()
 
     upload = session.execute(
@@ -174,6 +201,21 @@ def ingest_file(
             software_version=software_version,
         )
         session.add(upload)
+        session.flush()
+    elif reclassified_from is not None:
+        # The note is where this upload's provenance is written in prose, and a reclassification is
+        # part of that story: someone decided this document is a different kind of thing than was
+        # first recorded, and a reader six months from now needs to see that without the log. Append
+        # rather than replace — the original note says how the bytes arrived, which has not changed.
+        entry = (
+            f"RECLASSIFIED {reclassified_from.value} -> {document_type.value} "
+            f"by {uploaded_by} (software {software_version})."
+        )
+        upload.note = (
+            f"{upload.note}\n\n{entry} {note}".strip()
+            if note
+            else (f"{upload.note}\n\n{entry}".strip())
+        )
         session.flush()
 
     _log.info(

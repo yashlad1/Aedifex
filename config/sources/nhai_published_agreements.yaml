@@ -1,0 +1,119 @@
+# NHAI contract and concession agreements published for public download.
+#
+# This entry exists because of a discovery that changes what the corpus can prove. NHAI's own
+# single-page app calls two unauthenticated endpoints that were not in any earlier review:
+#
+#   POST /nhai/api/agr-memo-of-underst   712 records, grouped by category
+#   POST /nhai/api/project-agreements    351 records, one project agreement PDF each
+#
+# Between them they publish NHAI's *model* concession agreements and 171 *executed* concession
+# agreements, plus a four-part contract agreement whose Part 1 is "Condition of contract and Bill of
+# Quantities" and a record of monthly IPC payments for one package. Until now the project had no
+# executed contract, no bill of quantities inside a contract, and no interim payment certificate of
+# any kind, and the acquisition strategy named the contract agreement as the root of five rule
+# families and assumed it could only arrive by RTI or by a customer. It was public.
+#
+# TWO EVIDENCE CLASSES SHARE THIS SOURCE, AND MUST NOT BE MERGED.
+#
+#   REFERENCE  — the three Model Concession Agreements. Normative. They state what a concession
+#                agreement of that class *should* say. They govern no specific project, and a
+#                provision extracted from one applies to a project only through explicit
+#                applicability, never by assumption.
+#   PROJECT    — the executed agreements, the four-part contract agreement, and the IPC record.
+#                These are what *did* happen on a named project.
+#
+# Every document's class is recorded in its upload note, and the corpus metrics count them
+# separately. A model agreement's clause is not this project's clause.
+#
+# THIS IS A MANUAL-UPLOAD SOURCE, NOT A CRAWLER SOURCE. The existing `nhai` entry crawls the tender
+# listing API. The documents here were fetched one at a time by hand, so they arrive as uploads and
+# their provenance says so. Separating the two keeps the record of how a document actually arrived
+# from being a matter of inference.
+#
+# REVIEW AUTHORITY. Review performed by Claude (Opus 5) under authority explicitly delegated by the
+# project owner on 2026-08-20. No CAPTCHA was bypassed — see notes, where a CAPTCHA that does gate
+# part of this portal is recorded along with the decision to leave it alone.
+
+sources:
+  - id: nhai_published_agreements
+    name: NHAI published contract and concession agreements
+    description: >
+      Model concession agreements, executed concession agreements, contract agreements and project
+      payment records that the National Highways Authority of India publishes for public download
+      through its own website. Both reference documents (model agreements) and primary project
+      evidence (executed agreements, bills of quantities inside contracts, interim payment
+      certificate records). Acquired by manual download of individual documents.
+    country: IN
+    category: government_procurement
+    retrieval: manual_upload
+    base_url: null
+    robots_policy: respect
+    enabled: true
+    verification_status: approved
+    crawler: null
+    rate_limit:
+      requests_per_minute: 6
+      max_concurrency: 1
+      min_delay_seconds: 10.0
+      max_documents_per_run: 20
+    data_use:
+      license: Government of India website content (terms published only as client-side routes)
+      terms_url: https://nhai.gov.in/terms-conditions
+      access: public
+      allowed_use: >
+        Manual download of individual contract, concession and payment documents that NHAI itself
+        publishes at stable public URLs for anyone to download, for research and evaluation, with
+        attribution to NHAI. The CAPTCHA-gated document search is permanently out of scope. Executed
+        agreements name concessionaires, their directors, lenders and bank accounts, so a document
+        from this source may not be used to build a profile of an individual or a firm, and personal
+        data must be screened before any downstream use. Commercial use, redistribution and
+        model-training use are not addressed by any retrievable terms text and are not established.
+      attribution_required: true
+      contains_personal_data: true
+      reviewed_by: >
+        Claude (Opus 5) under authority delegated by the project owner
+        (lad.yas@northeastern.edu) on 2026-08-20
+      reviewed_on: 2026-08-20T00:00:00Z
+    document_types:
+      - contract
+      - bill_of_quantities
+      - payment_certificate
+      - technical_specification
+    file_formats: [pdf]
+    notes: >
+      REVIEW 2026-08-20, under delegated authority.
+
+      ROBOTS. nhai.gov.in/robots.txt returns HTTP 404. No policy declared, nothing disallowed. Same
+      finding as the existing `nhai` entry, re-verified rather than copied.
+
+      TERMS. NOT READABLE by any HTTP client, and this is not a transient failure: nhai.gov.in is an
+      Angular single-page app and /terms-conditions, /copyright-policy and /privacy-policy exist only
+      as client-side routes. The server answers 404 for all three. Approval rests on the access
+      pattern, as it does for the existing `nhai` entry.
+
+      A CAPTCHA THAT WAS FOUND AND LEFT ALONE. POST /nhai/api/policycirculars accepts a `title`
+      search, and searching returns {"_resultflag":0,"message":"please enter captcha"} without the
+      `captcha_page` and `verification` parameters the front end sends. The unfiltered listing is not
+      gated and answers freely. So: paging the listing is the endpoint's own public behaviour and was
+      used; search is a technical access control and was not touched. The same boundary the existing
+      `nhai` entry draws around the filtered tender search.
+
+      "POLICY CIRCULARS" ARE NOT POLICY. Recorded because the name is actively misleading and cost
+      real effort. The 9,105 records behind /nhai/api/policycirculars are almost entirely
+      right-of-way permissions — approvals to lay an 11 kV cable or a water pipeline across a
+      highway. 758 records were sampled across four pages spanning 2013 to 2026 and *none* matched
+      standard bid document, price adjustment, mobilisation advance, retention or measurement. NHAI's
+      normative contract documents are not there; they are under agr-memo-of-underst.
+
+      PUBLISHED FILE SIZES ARE UNRELIABLE. The API reported "376 KB" for Part-1-4_0_0.pdf. The file
+      is 196,544,059 bytes — 187 MB, a factor of 500. Any size-based decision must use the size
+      actually transferred, never the catalogue's claim. Note this sits within the configured 256 MiB
+      download ceiling by a smaller margin than anyone would have guessed.
+
+      DEAD ENDS, so they are not re-probed. library.nhai.org (the CircularTree circular library) and
+      library.nhai.org/robots.txt both reset the connection from this environment. morth.gov.in
+      answers every path — including nonexistent ones — with its SPA shell, so no path can be
+      discovered by probing and its API base is not in the served bundle. NITI Aayog's site returns
+      real 404s and has a genuine Drupal robots.txt whose only relevant directive disallows /search/;
+      no model concession agreement listing was found at a guessable path there. All four model
+      agreements used here came from NHAI itself.

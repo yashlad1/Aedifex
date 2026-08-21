@@ -1,0 +1,114 @@
+# Indian official price index series, acquired by manual download.
+#
+# The first *structured* reference sources in the corpus. Everything acquired before this was a
+# document: a manual, a tender, a rulebook. A price index is a table of numbers with an authority
+# and a date attached, and it exists in the corpus for one reason — an Indian construction contract
+# with a price-adjustment clause computes money from it.
+#
+# Two authorities, one class:
+#
+#   * Wholesale Price Index (WPI) — Office of the Economic Adviser, Department for Promotion of
+#     Industry and Internal Trade, Ministry of Commerce & Industry. Base 2022-23.
+#   * Consumer Price Index (CPI) — National Statistical Office, Ministry of Statistics and
+#     Programme Implementation. Base 2012 and 2024.
+#
+# They are one source entry because they are one evidence class with one downstream use, not
+# because the ministries are related. Provenance records the issuing authority per document.
+#
+# REFERENCE DATA, NEVER PROJECT DATA. An index says what the market did, not what a project did.
+# It becomes a finding only in combination with a contract that names it, a base month and a current
+# month — and none of that is in this source. Aedifex holds no such contract clause today, so these
+# files are held as reference evidence and drive no rule. That is the honest position and it is
+# recorded here rather than in a commit message.
+#
+# REVIEW AUTHORITY. Terms, licence, privacy and robots review was performed by Claude (Opus 5)
+# under authority explicitly delegated by the project owner on 2026-08-20. No authentication,
+# CAPTCHA, paywall or access control was bypassed to reach anything listed here.
+
+sources:
+  - id: india_reference_indices
+    name: Indian official price index series (WPI, CPI)
+    description: >
+      Official price index series published by Indian statistical authorities: the Wholesale Price
+      Index published monthly by the Office of the Economic Adviser (base 2022-23), and the
+      Consumer Price Index published by the National Statistical Office. Reference data used by
+      contract price-adjustment clauses. Acquired by manual download of individual published files
+      and by single manual calls to the publisher's own public API.
+    country: IN
+    category: research_dataset
+    retrieval: manual_upload
+    base_url: null
+    robots_policy: respect
+    enabled: true
+    verification_status: approved
+    crawler: null
+    # Nothing automated runs against this source. The limits exist so the entry is well-formed.
+    rate_limit:
+      requests_per_minute: 6
+      max_concurrency: 1
+      min_delay_seconds: 10.0
+      max_documents_per_run: 20
+    data_use:
+      license: Government of India statistical publication (no licence text published; see notes)
+      access: public
+      allowed_use: >
+        Manual download of index series and their accompanying methodology and press-release
+        documents, published for public download by the issuing statistical authority, for research
+        and evaluation, with attribution to that authority. Commercial use, redistribution and
+        model-training use are not addressed by either publisher and are therefore not established:
+        treat redistribution of the raw series as unresolved until a licence is found. Automated
+        bulk collection is out of scope for this entry. Values must be carried forward exactly as
+        published — an index is evidence only at the precision the authority stated it.
+      attribution_required: true
+      contains_personal_data: false
+      reviewed_by: >
+        Claude (Opus 5) under authority delegated by the project owner
+        (lad.yas@northeastern.edu) on 2026-08-20
+      reviewed_on: 2026-08-20T00:00:00Z
+    document_types:
+      - schedule_of_rates
+      - technical_specification
+      - unknown
+    file_formats: [xlsx, pdf, json]
+    notes: >
+      REVIEW 2026-08-20, under delegated authority. Every finding below was verified by request
+      rather than assumed.
+
+      ROBOTS — WPI. eaindustry.nic.in/robots.txt answers HTTP 200, and that is the trap: the body
+      is the site's own ASP error page, not a robots policy. A 200 is not a policy. No directive
+      is declared and nothing is disallowed, so politeness rests on manual acquisition alone.
+
+      ROBOTS — CPI. mospi.gov.in/robots.txt answers HTTP 200 with the site's single-page-app HTML
+      shell; api.mospi.gov.in/robots.txt does the same. Neither declares a policy any client can
+      read. Not a permission, and not a prohibition.
+
+      TERMS — WPI. NOT READABLE. eaindustry.nic.in/disclaimer.asp returns the site's ERROR page
+      ("PLEASE TRY AFTER SOME TIME OR CONTACT WEBSITE ADMINISTRATOR"), as do home.asp and
+      display_data.asp. The site's data-download pages work; its policy pages do not. Approval
+      therefore rests on the access pattern — a statistical authority publishing its own official
+      series at a stable public URL for anyone to download — and not on retrieved terms text. This
+      is recorded as a gap, not glossed over.
+
+      TERMS — CPI. NOT READABLE by any HTTP client. mospi.gov.in serves a client-side shell for
+      every route. The ministry's own www.mospi.gov.in/api/ endpoints answer HTTP 403 to a
+      non-browser client; that is an access control and it was not circumvented. The public data
+      API on api.mospi.gov.in answers without credentials and was used as published.
+
+      ACQUISITION — CPI IS AN API, NOT A FILE. api.mospi.gov.in/api/cpi/getCpiIndex returns JSON,
+      paginated, 413,436 records at the time of review, and honours a `limit` parameter. The stored
+      artifact is the exact response body for one recorded request URL; the URL and the retrieval
+      timestamp are the provenance. A full time series would take 207 paged requests and is
+      deliberately not taken until a rule needs it.
+
+      FORMAT, MEASURED. WPI is .xlsx — a wide matrix, one row per commodity and one column per
+      month (1,138 rows x 44 columns, Apr-23 to Jul-26, hierarchical Level column from ALL down to
+      Item). CPI is .json — tall and normalised, one object per state/sector/group/month. Neither
+      is CSV. This matters because it settles an open question empirically: no CSV reader is needed
+      for the first structured sources in the corpus.
+
+      BASE-YEAR REVISION IS A REAL HAZARD. WPI now publishes base 2022-23 alongside the older
+      2011-12 series, with published linking factors; CPI carries base years 2010, 2012 and 2024.
+      A price-adjustment calculation that mixes bases is wrong by a large factor. The base year is
+      part of the fact, never an assumption.
+
+      PERSONAL DATA. None. Aggregate index numbers name no person.
