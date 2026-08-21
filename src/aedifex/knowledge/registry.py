@@ -54,6 +54,7 @@ from aedifex.extraction.tender_notice import (
     FIELD_NIT_NUMBER,
     FIELD_PRESCRIBED_BID_SECURITY_SHARE,
 )
+from aedifex.verification.bill_estimate import BILL_ESTIMATE_RULE_ID
 from aedifex.verification.bill_total import BILL_TOTAL_RULE_ID
 from aedifex.verification.cross_document import (
     AGREEMENT_RULE_ID,
@@ -366,8 +367,12 @@ RULE_TYPES: Final[tuple[RuleTypeInfo, ...]] = (
         rule_id=BID_SECURITY_RULE_ID,
         scope="document",
         description=(
-            "Compares a document's derived bid-security share against the rate it prescribes for "
-            "itself, or against a rate supplied by the caller. Inconclusive when neither exists."
+            "SUPERSEDED by bid_security_matches_reference_policy. Compares a document's derived "
+            "bid-security share against the rate it prescribes for itself, or against a rate "
+            "supplied by the caller; inconclusive when neither exists, which is the usual case "
+            "because a tender notice does not quote its own rate. Kept registered rather than "
+            "retired: stored findings cite it, and a rule that cannot be re-run cannot reproduce "
+            "them. Still the only answer for an authority whose rulebook has not been acquired."
         ),
         consumes=(DERIVED_BID_SECURITY_SHARE, FIELD_PRESCRIBED_BID_SECURITY_SHARE),
     ),
@@ -381,6 +386,19 @@ RULE_TYPES: Final[tuple[RuleTypeInfo, ...]] = (
             "as likely to mean the extraction is untrustworthy as that the document is."
         ),
         consumes=(DERIVED_BILL_ITEMS_TOTAL, FIELD_STATED_BILL_TOTAL),
+    ),
+    RuleTypeInfo(
+        rule_id=BILL_ESTIMATE_RULE_ID,
+        scope="document",
+        description=(
+            "Compares a priced bill of quantities' stated total against the estimated cost the "
+            "tender advertises, reporting the absolute and percentage difference. Always "
+            "INCONCLUSIVE: the difference is arithmetic, but no document in the corpus states how "
+            "far a bid may sit from the estimate, so it is measured and not judged. Agreement is "
+            "the informative case — it means the bill carries the authority's rates, not a "
+            "bidder's."
+        ),
+        consumes=(FIELD_STATED_BILL_TOTAL, FIELD_ESTIMATED_COST),
     ),
     RuleTypeInfo(
         rule_id=REFERENCE_BID_SECURITY_RULE_ID,

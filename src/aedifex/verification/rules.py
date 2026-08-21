@@ -143,6 +143,18 @@ def evaluate_bid_security(
 ) -> RuleResult:
     """Check a notice's bid security against the share it is required to be.
 
+    **SUPERSEDED by** ``bid_security_matches_reference_policy`` (2026-08-20), which answers the
+    same question against a threshold cited from an authority's own rulebook rather than one the
+    document must state about itself. On the real corpus this rule returns INCONCLUSIVE where that
+    one returns PASS, because a tender notice does not quote its own bid-security rate.
+
+    **Deliberately still registered, not retired.** Six stored findings cite it, and a rule removed
+    from the registry cannot re-derive the findings that reference it — which would break the
+    reproducibility the whole pipeline exists to provide (FR-087). It also remains the only answer
+    available for an authority whose rulebook has not been acquired: a document that states its own
+    rate can still be judged here. Retire it when every authority in the corpus has a rulebook, and
+    not before.
+
     Args:
         notice: The extracted facts.
         prescribed_share: The required share as a fraction, e.g. ``Decimal("0.01")`` for 1%.

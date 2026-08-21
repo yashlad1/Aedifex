@@ -108,7 +108,7 @@ not by the absence of a formula representation.
 | **R4** `bid_security_share_consistent_across_documents` | none | derived share in two documents | **✓ PASS** | — |
 | **R5** `work_item_evidence_unambiguous` | none | BOQ row facts | **✓ 37 PASS** | — |
 | **R6** `bid_security_share_of_estimated_cost` | none — threshold from caller | `estimated_cost`, `bid_security` | executes, INCONCLUSIVE | **Redundant.** R1 now answers the same question from a cited clause. Not a blockage — a duplication |
-| **R7** `priced_bill_matches_advertised_estimate` | none | `stated_bill_total`, `estimated_cost` | **✓ — NOT IMPLEMENTED** | Nothing missing. See §4 |
+| **R7** `priced_bill_matches_advertised_estimate` | none | `stated_bill_total`, `estimated_cost` | **✓ IMPLEMENTED 2026-08-20** | — |
 | **R8** `performance_security_matches_policy` | 4.34.1 *(unextracted)* | `performance_security` ✗, `contract_price` ✗ | **E** | No award-stage document exists. Also needs extraction and two fact types |
 | **R9** `performance_security_furnished_within_28_days` | 4.34.1 *(unextracted)* | LoA date ✗, PBG date ✗ | **E** | No Letter of Acceptance, no bank guarantee |
 | **R10** `mobilisation_advance_within_policy` | 4.36.1 *(unextracted)* | advance paid ✗, `contract_price` ✗ | **E** | No IPC, no contract |
@@ -199,8 +199,11 @@ bidder's quoted rates. A quantity surveyor reading a finding that says so learns
 the document is. On a real bid the same rule would measure the tender premium or discount — which is
 exactly what page 171 asks the bidder to quote.
 
-**Not implemented**, per the instruction to stop at the report. It needs a rule function and a
-registry line, and nothing else.
+**Implemented 2026-08-20** as `verification/bill_estimate.py`. Always INCONCLUSIVE with
+`expected = NOT SOURCED`: the difference is arithmetic, and whether it is acceptable is a question no
+document in the corpus answers. On the real tender the persisted detail reads
+`difference: 0.01, percentage_difference: 0.0000, within_tolerance: true`, and the summary says what
+agreement means rather than leaving it to be inferred.
 
 ## 5. The redundancy
 
@@ -209,9 +212,11 @@ share, and none was supplied"* — on the same two documents where R1 returns PA
 4.14.1. Both answer "is the bid security right?"; one now has a cited threshold and the other never
 will, because the tender documents do not state their own rate.
 
-Not a blockage, and not mine to resolve: retiring a rule changes what past findings mean. Recorded as
-a decision for the owner. Options are to retire R6, or to keep it as the fallback for authorities
-whose rulebook has not been acquired.
+**Resolved 2026-08-20: marked superseded, not retired.** Six stored findings cite R6, and a rule
+removed from the registry cannot re-derive the findings that reference it — which would break the
+reproducibility requirement (FR-087). It is also still the only answer available for an authority
+whose rulebook has not been acquired. The supersession is recorded in the rule's docstring and in the
+published vocabulary, with no new schema field.
 
 ## 6. Answering the question asked
 

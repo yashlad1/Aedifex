@@ -19,6 +19,11 @@ from typing import Final
 from aedifex.extraction.applicability import ApplicableProvision
 from aedifex.extraction.tender_notice import TenderNotice
 from aedifex.infrastructure.database.models import DerivedFact
+from aedifex.verification.bill_estimate import (
+    BILL_ESTIMATE_RULE_ID,
+    BILL_ESTIMATE_RULE_VERSION,
+    evaluate_bill_against_estimate,
+)
 from aedifex.verification.bill_total import (
     BILL_TOTAL_RULE_ID,
     BILL_TOTAL_RULE_VERSION,
@@ -50,6 +55,8 @@ __all__ = [
     "AGREEMENT_RULE_ID",
     "BID_SECURITY_RULE_ID",
     "BID_SECURITY_RULE_VERSION",
+    "BILL_ESTIMATE_RULE_ID",
+    "BILL_ESTIMATE_RULE_VERSION",
     "BILL_TOTAL_RULE_ID",
     "BILL_TOTAL_RULE_VERSION",
     "NOT_SOURCED",
@@ -64,6 +71,7 @@ __all__ = [
     "evaluate_all",
     "evaluate_bid_security",
     "evaluate_bid_security_against_policy",
+    "evaluate_bill_against_estimate",
     "evaluate_bill_total",
     "evaluate_project",
 ]
@@ -77,6 +85,7 @@ ProjectRule = Callable[[ProjectFacts], ProjectRuleResult]
 
 RULES: Final[Mapping[str, Rule]] = {
     BID_SECURITY_RULE_ID: evaluate_bid_security,
+    BILL_ESTIMATE_RULE_ID: evaluate_bill_against_estimate,
     BILL_TOTAL_RULE_ID: evaluate_bill_total,
     REFERENCE_BID_SECURITY_RULE_ID: evaluate_bid_security_against_policy,
 }
