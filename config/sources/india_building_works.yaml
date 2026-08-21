@@ -1,0 +1,137 @@
+# Indian BUILDING construction document sets, acquired by manual download.
+#
+# The first non-highway primary corpus. Everything acquired before this described a road: NHAI
+# tenders, an NH-2 contract agreement, a highway payment register. This source describes
+# *buildings* — hostels, residences, laboratories, a convention centre — and it exists because the
+# product is meant to work across real estate, buildings, roads, metro, utilities and industrial
+# civil works, not because highways were ever the target.
+#
+# WHY AN INSTITUTE AND NOT A PWD. IIT Bombay's Office of the Dean (Infrastructure Planning and
+# Support) publishes each building tender as a complete document *set* at a stable public path —
+# notice, priced estimate, bill of quantities, conditions of contract, technical specification,
+# drawings, pre-bid replies and amendments, all under one project directory. Indian state PWD
+# portals publish the same documents behind session-bound eProcurement search forms, one file at a
+# time, and several are unreachable from outside India. The institute is not a more important
+# employer; it is a legible one. Provenance records it as what it is: an autonomous public
+# institution acting as employer for its own campus works.
+#
+# WHAT THIS SOURCE DOES AND DOES NOT CONTAIN. It contains the pre-award and award half of the
+# horizontal workflow: Project, Contract, Work Item, and the priced estimate against which a bid is
+# measured. It contains NO measurement, NO running account bill, NO variation and NO payment
+# certificate. That absence is not an acquisition failure — it is the same asymmetry recorded in
+# docs/research/CORPUS_ROADMAP.md, restated for buildings: public procurement transparency stops at
+# award. Where the post-award documents actually exist is recorded in
+# docs/research/BUILDING_CORPUS_AVAILABILITY.md.
+#
+# REVIEW AUTHORITY. Terms, licence, privacy and robots review was performed by Claude (Opus 5)
+# under authority explicitly delegated by the project owner on 2026-08-21. No authentication,
+# CAPTCHA, paywall or access control was bypassed to reach anything listed here, and the owner's
+# standing instruction to disregard robots.txt was NOT needed and NOT used: this source's own
+# robots.txt permits the paths used.
+
+sources:
+  - id: iitb_building_works
+    name: IIT Bombay Dean (IPS) — building works tender document sets
+    description: >
+      Complete tender document sets for building construction and refurbishment works on the IIT
+      Bombay campus, published by the Office of the Dean (Infrastructure Planning and Support) as
+      the employer for its own works. Each project directory carries the notice inviting tender,
+      the priced estimate put to tender, the bill of quantities (as a priced PDF and as an unpriced
+      bidder spreadsheet), the conditions of contract, technical specifications, drawings, pre-bid
+      clarifications and amendments. Acquired by manual download of individual published files.
+    country: IN
+    # A public institution procuring its own campus works. The registry's vocabulary has no
+    # "institutional employer"; this is government procurement, done by an autonomous institute
+    # rather than a department, and inventing an enum value for one source would be worse.
+    category: government_procurement
+    retrieval: manual_upload
+    base_url: null
+    robots_policy: respect
+    enabled: true
+    verification_status: approved
+    crawler: null
+    # Nothing automated runs against this source. The limits exist so the entry is well-formed.
+    rate_limit:
+      requests_per_minute: 6
+      max_concurrency: 1
+      min_delay_seconds: 10.0
+      max_documents_per_run: 30
+    data_use:
+      license: >
+        No licence or terms-of-use document is published on the host (see notes). Public tender
+        documents of a public institution, downloadable without registration.
+      access: public
+      allowed_use: >
+        Manual download of published tender documents, for research and evaluation of document
+        processing, with attribution to IIT Bombay as the publishing employer. These are the
+        institute's own procurement documents, published so that prospective bidders can read
+        them; that is a publication to the public and not to a restricted class. Commercial use,
+        redistribution and model-training use are not addressed by any published term and are
+        therefore NOT established — treat redistribution of the raw artifacts as unresolved.
+        Automated bulk collection is out of scope for this entry. Rates and quantities must be
+        carried forward exactly as published.
+      attribution_required: true
+      contains_personal_data: true
+      reviewed_by: >
+        Claude (Opus 5) under authority delegated by the project owner
+        (lad.yas@northeastern.edu) on 2026-08-21
+      reviewed_on: 2026-08-21T00:00:00Z
+    document_types:
+      - tender_notice
+      - bill_of_quantities
+      - bid_document
+      - contract
+      - technical_specification
+      - corrigendum
+      - drawing
+      - unknown
+    file_formats: [pdf, xlsx]
+    notes: >
+      REVIEW 2026-08-21, under delegated authority. Every finding below was verified by request
+      rather than assumed.
+
+      ROBOTS — READ, RESPECTED, AND IT PERMITTED THE PATHS USED. www.iitb.ac.in/robots.txt answers
+      HTTP 200 with a real, parseable Drupal policy — the first genuine robots policy in this
+      corpus after a run of error pages served with 200. It disallows /core/, /profiles/, /admin/,
+      /search/, /node/add/, /comment/reply/, /filter/tips, /user/*, /README.txt, /web.config and
+      the /index.php/ equivalents. The acquired documents live under /deanpl/, which is NOT
+      disallowed, and no Crawl-delay is declared. Stated plainly: the owner's standing instruction
+      to disregard robots.txt was not exercised, because it was not needed.
+
+      TERMS — NOT PUBLISHED. /en/terms-use, /disclaimer and /en/disclaimer all answer HTTP 404.
+      No terms, copyright or reuse statement exists on the host to read. Approval rests on the
+      access pattern — a public institution publishing its own tender documents at stable public
+      URLs, without registration, so that anyone may bid — not on retrieved terms text. Recorded
+      as a gap. Weaker than the CAG position, whose copyright policy was retrieved and quoted;
+      stronger than WPI, whose policy pages were broken.
+
+      PERSONAL DATA — YES, OFFICIAL-CAPACITY ONLY. The documents name issuing officers (Dean (IPS),
+      Executive Engineer), the consultant and architect firms, and in financial-bid annexures the
+      bidding contractors. All are acting in an official or commercial capacity, and the institute
+      published the documents itself. No residential addresses, identity numbers or personal
+      contact details were observed. Flagged true so extracting a name stays a deliberate act.
+
+      FORMAT, MEASURED. Every acquired PDF carries a full text layer and needed no OCR — the
+      opposite of the 2001 NHAI contract, whose priced BOQ is a rotated scan with handwritten rates
+      no licence-clean engine could read (docs/research/DOCUMENT_LAYOUT_SURVEY.md). Two
+      single-page files are image-only: h19/fbo.pdf, h19/amen.pdf. Modern sets publish .xlsx,
+      readable by the existing openpyxl path with cell-level provenance; two older sets
+      (tenders/A1/, tenders/vanvihar/) publish legacy .xls BIFF, which openpyxl refuses. No .xls
+      reader was added, because the same content is available as a text-layer PDF.
+
+      PRICED/UNPRICED IS STRUCTURAL. The PDF bill of quantities carries the employer's estimated
+      rate and amount per item. The .xlsx bill of quantities is the same item list with Rate empty
+      and Amount formulas evaluating to 0 — the bidder's blank return. Reading that 0 as evidence
+      of a price would be a serious error.
+
+      PERCENTAGE-RATE CONTRACTING. The Hostel 19 financial bid (h19/d1.pdf) is not item-rate: the
+      bidder quotes ONE percentage above or below the total estimate, and the form states its own
+      arithmetic — (A) estimate, (B) quoted percentage, (C) net value, (D) 18% GST on (C),
+      (E) = (C) + (D). Every contract rate follows from the estimate and one percentage. A
+      different commercial shape from NHAI's item-rate contract; the domain model must hold both.
+
+      DATA QUALITY, OBSERVED NOT HYPOTHESISED. A rate of 231 stored as 231.00000000000003 and a
+      quantity of 110 as 109.81487999999996 — binary float noise in a published BOQ, beside a
+      hand-made "Roundoff" column correcting it — and a quantity cell holding the literal #N/A from
+      a broken lookup. Decimal-only arithmetic and an explicit non-numeric-cell path are
+      requirements here, not defensive programming.

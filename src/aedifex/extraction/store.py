@@ -175,15 +175,33 @@ def persist_retractions(
     as the newest one for its document and fact type, so it stays selected and stays served. This is
     what makes the decision explicit.
 
-    Scope is deliberately narrow in three ways, because a retraction removes evidence from view and
-    the blast radius of getting it wrong is high:
+    Scope is deliberately narrow, because a retraction removes evidence from view and the blast
+    radius of getting it wrong is high:
 
     * only document-scoped facts (``sheet_row IS NULL``). A suppressed bill line is not a thing that
       happens — suppression is about values quoted in prose.
-    * only *older* extractor versions. A fact written by this same version is not withdrawn by this
-      same version; that would be self-contradictory within one run.
     * only facts not already retracted, so re-running is idempotent rather than accumulating
       duplicate opinions.
+
+    **Version is deliberately not part of the filter, and it used to be.** The original rule
+    withdrew only *older* extractor versions, reasoning that a version cannot contradict itself
+    within one run. That reasoning holds for a re-run and fails for a *reclassification*: the
+    document's declared type is an input to extraction, so the same version reading a document
+    retyped from ``contract`` to ``model_agreement`` is a corrected reading of a corrected input,
+    not a self-contradiction.
+
+    A real document proved it. IIT Bombay's Hostel 19 general conditions of contract, ingested as
+    ``contract``, produced ``estimated_cost = Rs. 5 crores`` from the clause "shall not be
+    applicable for works with estimated cost put to tender being less than Rs. 5 crores", plus a
+    ``document_date`` of 31-12-1979 from another clause. Retyped to ``model_agreement`` the
+    extractor correctly emitted nothing — and both false facts stayed live and selectable, because
+    they carried the same version as the run withdrawing them.
+
+    Dropping the version clause is safe rather than merely convenient, and the invariant is worth
+    stating: this function is only ever called with the fact types the run has *decided to
+    suppress*, and the caller empties the notice before persisting anything, so no fact of a
+    suppressed type is written in the same run. Anything this query finds is necessarily from an
+    earlier one.
 
     Args:
         fact_types: The fact types this run suppressed.
@@ -205,7 +223,6 @@ def persist_retractions(
                 ExtractedFact.document_id == document_id,
                 ExtractedFact.fact_type.in_(list(fact_types)),
                 ExtractedFact.sheet_row.is_(None),
-                ExtractedFact.extractor_version != extractor_version,
                 FactRetraction.id.is_(None),
             )
         ).scalars()

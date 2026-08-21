@@ -80,7 +80,18 @@ EXTRACTOR: Final[str] = "nhai_tender_notice"
 # had no document type of its own and a model contract was indistinguishable from a signed one; both
 # are fixed in `aedifex.domain.documents`, and this bump makes the corrected reading the selected
 # one while the false rows stay on the record where an auditor can still see them.
-EXTRACTOR_VERSION: Final[str] = "3"
+#
+# Bumped to "4" on 2026-08-21, on the first building document in the corpus. Both defects it
+# corrects are of the same dangerous kind — a wrong value that reads as a right one:
+#
+#   * `estimated_cost` for IIT Bombay Hostel 19 was Rs.73.86 crore, the *civil component* of a
+#     two-part estimate whose stated total is Rs.85.39 crore. The derived bid-security share came
+#     out at 1.4996%, which looks like a 1.5% policy rule, and it was already cited as evidence in
+#     two findings. See `_stated_total`.
+#   * `nit_number` was "IITB/Dean", truncated from "IITB/Dean (IPS)/CACI/H-19/NIT/R1" at the space
+#     before a parenthesis. The third truncation of this identifier in the corpus, and the one that
+#     matters most, because a project workspace groups documents by this key.
+EXTRACTOR_VERSION: Final[str] = "4"
 
 # How much surrounding text a snippet carries. Enough to read the value in its own sentence, so a
 # reviewer can judge it without opening the PDF; short enough to store per fact.
@@ -90,16 +101,44 @@ _SNIPPET_RADIUS: Final[int] = 90
 # The value is a slash-separated reference, so it stops at whitespace that is not inside the
 # reference itself. Trailing "dated ..." is excluded by requiring at least one slash.
 _NIT_NUMBER: Final[re.Pattern[str]] = re.compile(
-    # The character class carries "&" and both apostrophes because real references do: one notice
-    # in the corpus is numbered NHAI/RO/MUM/A<U+2019>Nagar/NH-160/RC/2026/20, and a class lacking
-    # the typographic apostrophe truncated it to "NHAI/RO/MUM/A" -- a wrong identifier rather
-    # than a missing one, which is the worse of the two failures.
+    # Built from segments joined by slashes rather than one character class, because a reference
+    # segment can carry a parenthesised qualifier and the space before it:
+    #
+    #     IITB/Dean (IPS)/CACI/H-19/NIT/R1        IIT Bombay, Hostel 19
+    #     NHAI/RO/MUM/A<U+2019>Nagar/NH-160/RC/2026/20  NHAI, typographic apostrophe
+    #
+    # A flat class truncated the first to "IITB/Dean" and the second to "NHAI/RO/MUM/A" -- a wrong
+    # identifier rather than a missing one, which is the worse of the two failures, and worse still
+    # here because this value is the key a project workspace groups documents by.
+    #
+    # A space is allowed only immediately before "(", so the match still cannot run on into the
+    # prose that follows. "IITB/.../R1 dated 31.10.2022" stops at R1 because " dated" begins
+    # neither a slash-joined segment nor a parenthesis.
     r"(?:NIT|Tender|IFB)\s*No\.?\s*[:\-]?\s*"
-    r"(?P<value>[A-Za-z0-9][A-Za-z0-9/_.\-&'\u2019]*/[A-Za-z0-9/_.\-&'\u2019]+)",
+    r"(?P<value>"
+    r"[A-Za-z0-9][A-Za-z0-9_.\-&'\u2019]*(?: ?\([A-Za-z0-9 _.\-&'\u2019]*\))?"
+    r"(?:/[A-Za-z0-9_.\-&'\u2019]*(?: ?\([A-Za-z0-9 _.\-&'\u2019]*\))?)+"
+    r")",
     re.IGNORECASE,
 )
 
 _ESTIMATED_COST_HEADER: Final[re.Pattern[str]] = re.compile(r"Estimated\s+Cost", re.IGNORECASE)
+
+# The label that marks a breakdown's own total, and the qualifier that disqualifies one.
+#
+# A building notice states its estimate in parts before stating it whole, and the pre-tax total is
+# the figure a bid is measured against -- this document states both, so "including GST" has to be
+# recognised rather than hoped about.
+_TOTAL_LABEL: Final[re.Pattern[str]] = re.compile(r"\bTotals?\b", re.IGNORECASE)
+_TAX_INCLUSIVE: Final[re.Pattern[str]] = re.compile(
+    r"(?:incl(?:uding|usive|\.)?|with)\s+(?:of\s+)?(?:\d+(?:\.\d+)?\s*%\s*)?(?:GST|tax|VAT|cess)",
+    re.IGNORECASE,
+)
+
+# How far back from an amount to look for its own label. Wide enough to cross the run of spaces a
+# flattened table leaves between a label and its figure, narrow enough that the label belonging to
+# the row above cannot reach.
+_TOTAL_LABEL_WINDOW: Final[int] = 80
 _BID_SECURITY_HEADER: Final[re.Pattern[str]] = re.compile(
     r"Bid\s+Security|Earnest\s+Money|\bEMD\b", re.IGNORECASE
 )
@@ -348,6 +387,40 @@ def _amounts_after(text: str, offset: int, *, window: int) -> list[Amount]:
     return kept
 
 
+def _stated_total(candidates: list[Amount], text: str) -> Amount | None:
+    """The total a component breakdown states for itself, when the components prove it is one.
+
+    Real layout, IIT Bombay Hostel 19, a 1,052-bed building at Rs.85.39 crore::
+
+        Estimated cost: For civil components   Rs.73,86,43,489.22/-
+                        For MEP components     Rs.11,53,37,829.19/-
+                        Total                  Rs.85,39,81,318.41/-
+                Total (including 18% GST)      Rs.100,76,97,956.00/-
+
+    Taking the first amount after the label returns the civil component and calls it the estimate.
+    That is a wrong figure that looks entirely right, and here it produced a bid-security share of
+    1.4996% -- indistinguishable at a glance from a clean 1.5% rule, and cited as evidence in two
+    findings before anyone read page 2.
+
+    **The total is preferred only when the components add up to it.** That arithmetic is what makes
+    this safe rather than a guess about the word "Total", which appears above plenty of columns that
+    are not a breakdown of the figure below them. A total qualified by GST is refused outright: the
+    estimate a bid is measured against is the pre-tax one, and here both are printed together.
+
+    Returns ``None`` when nothing satisfies both tests, and the caller keeps the first amount. A
+    breakdown that does not reconcile is not silently reinterpreted.
+    """
+    for index in range(1, len(candidates)):
+        candidate = candidates[index]
+        label = text[max(0, candidate.start - _TOTAL_LABEL_WINDOW) : candidate.start]
+        if not _TOTAL_LABEL.search(label) or _TAX_INCLUSIVE.search(label):
+            continue
+        components = sum((item.rupees for item in candidates[:index]), Decimal("0"))
+        if components == candidate.rupees:
+            return candidate
+    return None
+
+
 def _find_table_amounts(
     pages: tuple[tuple[PageText, str], ...],
 ) -> tuple[ExtractedField | None, ExtractedField | None]:
@@ -393,7 +466,12 @@ def _find_table_amounts(
             security_amount = found[1] if len(found) > 1 else None
         else:
             cost_candidates = _amounts_after(text, cost_header.end(), window=_LABEL_WINDOW)
-            cost_amount = cost_candidates[0] if cost_candidates else None
+            # A stated total that its own components reconcile to, in preference to the first of
+            # those components. See _stated_total: the first amount alone was the civil half of a
+            # two-part building estimate.
+            cost_amount = _stated_total(cost_candidates, text) or (
+                cost_candidates[0] if cost_candidates else None
+            )
             security_amount = None
             if security_header is not None:
                 security_candidates = _amounts_after(

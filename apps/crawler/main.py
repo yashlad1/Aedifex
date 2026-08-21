@@ -675,7 +675,9 @@ def _print_analysis(session: Session, outcome: AnalysisOutcome) -> None:
     if outcome.retracted:
         # Loud on purpose. This line means the corpus previously held a value the document does not
         # state, and it is now out of circulation without being destroyed.
-        print(f"\nRETRACTED  {len(outcome.retracted)} fact(s) an earlier extractor version wrote")
+        # Not "an earlier extractor version": a reclassified document is re-read by the same
+        # version, and saying otherwise misdescribed the two facts that first exercised this path.
+        print(f"\nRETRACTED  {len(outcome.retracted)} fact(s) withdrawn by this run")
         for r in outcome.retracted:
             fact = r.fact
             print(

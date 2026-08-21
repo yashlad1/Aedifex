@@ -106,6 +106,30 @@ OCR_MAX_SECONDS: Final[float] = 900.0
 OCR_WORKERS: Final[int] = 3
 OCR_THREADS_PER_WORKER: Final[int] = 3
 
+# The bound that stops a *native crash*, which is a different problem from the three above.
+#
+# RapidOCR segfaulted the whole process on one real page — the 600 DPI Hostel 19 bid-opening notice,
+# 4964 x 7020 — while the same page resized to 4959 x 7012 read fine. Same pixel count to within
+# 0.2%, same dtype, both C-contiguous: the trigger is the exact dimensions, somewhere in native code
+# below Python, and **no ``except`` can catch it**. The page, char and time budgets are all useless
+# against it because the process dies mid-page and takes the run with it.
+#
+# So the dimensions handed to the engine are made predictable instead. 12 MP sits above 300 DPI A4
+# (8.7 MP), which is the standard for document scanning, and is a no-op for the entire existing
+# corpus: every page already stored is at most 3.8 MP with a longest side of 2336 px, so nothing
+# previously transcribed changes and no stored fact stops being reproducible. That was checked
+# rather than assumed, because silently re-scaling old evidence would break exactly the guarantee
+# this project sells.
+#
+# It costs no accuracy on the page that forced it: transcribed at every scale from 2.2 MP to 28 MP,
+# the text came back as the same 1030-1046 characters of identical content.
+#
+# Honest about what this is: it reduces an unpredictable native crash to a bounded input. It does
+# not make the engine crash-proof. If one recurs below this bound, the escalation is to run the
+# engine in a separate process — and that is a bigger change than it looks, because ADR 0015 chose
+# threads over processes on measured throughput.
+OCR_MAX_PIXELS: Final[int] = 12_000_000
+
 
 class OcrUnavailableError(ExtractionError):
     """Raised when OCR was asked for and its dependencies are not installed.
@@ -209,7 +233,7 @@ def _bound_ort_threads(threads: int) -> None:
     internals.SessionOptions = bounded
 
 
-def _as_rgb_array(image: bytes) -> Any:
+def _as_rgb_array(image: bytes, *, max_pixels: int = OCR_MAX_PIXELS) -> Any:
     """Decode a page image to the 8-bit RGB array the engine wants, with no PNG in between.
 
     The earlier implementation encoded a PNG and handed over the bytes, which RapidOCR then decoded
@@ -222,41 +246,35 @@ def _as_rgb_array(image: bytes) -> Any:
     arrive as 1-bit TIFFs and OpenCV inside RapidOCR rejects them outright — "Unsupported depth of
     input image ... 'depth' is 9 (CV_Bool)". Every page of the IPC payment register failed silently
     to the empty string before this existed.
+
+    Oversized pages are downscaled to ``max_pixels``, keeping the aspect ratio. See
+    ``OCR_MAX_PIXELS`` for why: one real page crashed the process outright, and the trigger was its
+    exact dimensions rather than anything a caller could inspect beforehand.
     """
     import numpy
     from PIL import Image
 
     try:
         with Image.open(io.BytesIO(image)) as opened:
-            return numpy.array(opened.convert("RGB"))
+            converted = opened.convert("RGB")
+            pixels = converted.width * converted.height
+            if pixels > max_pixels:
+                # sqrt because the budget is on area and the scale applies to both sides.
+                scale = (max_pixels / pixels) ** 0.5
+                width = max(1, int(converted.width * scale))
+                height = max(1, int(converted.height * scale))
+                _log.info(
+                    "ocr.page_downscaled",
+                    reason="page exceeds the pixel budget",
+                    original=f"{converted.width}x{converted.height}",
+                    scaled=f"{width}x{height}",
+                    max_pixels=max_pixels,
+                )
+                converted = converted.resize((width, height), Image.Resampling.LANCZOS)
+            return numpy.array(converted)
     except Exception as error:
         _log.warning("ocr.image_decode_failed", error=str(error))
         return numpy.zeros((1, 1, 3), dtype=numpy.uint8)
-
-
-def _as_rgb_png(image: bytes) -> bytes:
-    """Normalise a page image to 8-bit RGB PNG before it reaches the engine.
-
-    Not cosmetic. The ABP-III payment register is a ``CCITTFaxDecode`` fax scan, which pypdf hands
-    over as a 1-bit TIFF, and OpenCV inside RapidOCR rejects it outright: "Unsupported depth of
-    input image ... 'depth' is 9 (CV_Bool)". Every page of the only interim-payment evidence in the
-    corpus failed silently to the empty string until this existed.
-
-    Lossless with respect to the text: 1-bit to 8-bit grey to RGB adds no information and removes
-    none. Re-encoding to PNG rather than passing pixels through means one format crosses the
-    boundary, whatever the PDF happened to store.
-    """
-    from PIL import Image
-
-    try:
-        with Image.open(io.BytesIO(image)) as opened:
-            converted = opened.convert("RGB")
-            buffer = io.BytesIO()
-            converted.save(buffer, format="PNG")
-            return buffer.getvalue()
-    except Exception as error:
-        _log.warning("ocr.image_decode_failed", error=str(error))
-        return image
 
 
 def default_engine(threads_per_worker: int = OCR_THREADS_PER_WORKER) -> OcrEngine:

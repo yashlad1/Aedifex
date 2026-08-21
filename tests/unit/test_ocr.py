@@ -15,14 +15,19 @@ import base64
 import io
 import time
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
 
 import pypdf
 import pytest
 from pypdf.generic import DictionaryObject, NameObject, NumberObject, StreamObject
 
 from aedifex.errors import ExtractionError
-from aedifex.extraction.ocr import ocr_document, ocr_method
+from aedifex.extraction.ocr import (
+    OCR_MAX_PIXELS,
+    _as_rgb_array,
+    ocr_document,
+    ocr_method,
+)
 
 
 @dataclass
@@ -88,6 +93,51 @@ class TestBounds:
     def test_unopenable_pdf_raises(self) -> None:
         with pytest.raises(ExtractionError, match="could not be opened"):
             ocr_document(b"this is not a PDF", engine=StubEngine())
+
+
+class TestPixelBudget:
+    """Regression guard for a crash, not a wrong answer.
+
+    A real 600 DPI page (4964 x 7020) segfaulted the process inside the engine's native code, where
+    no ``except`` reaches and the page, char and time budgets are all irrelevant because the process
+    dies mid-page. Resized to 4959 x 7012 the same page read fine, so the trigger was the exact
+    dimensions. These pin the bound that makes the dimensions predictable.
+    """
+
+    def test_an_oversized_page_is_downscaled_within_the_budget(self) -> None:
+        image_module = pytest.importorskip("PIL.Image", reason="Pillow ships with the ocr extra")
+        oversized = _jpeg_bytes(image_module, 4964, 7020)
+
+        array = _as_rgb_array(oversized)
+
+        height, width, channels = array.shape
+        assert width * height <= OCR_MAX_PIXELS
+        assert channels == 3
+        # Aspect ratio survives, so nothing is stretched into unreadability.
+        assert abs((width / height) - (4964 / 7020)) < 0.01
+
+    def test_a_page_within_the_budget_is_untouched(self) -> None:
+        """The whole existing corpus is well under the bound; none of it may be re-scaled.
+
+        Every page already stored is at most 3.8 MP. If the bound moved them, every transcription
+        taken before it existed would stop being reproducible.
+        """
+        image_module = pytest.importorskip("PIL.Image", reason="Pillow ships with the ocr extra")
+
+        array = _as_rgb_array(_jpeg_bytes(image_module, 1646, 2331))
+
+        assert array.shape == (2331, 1646, 3)
+
+
+def _jpeg_bytes(image_module: Any, width: int, height: int) -> bytes:
+    """A plain grey JPEG of exactly the requested dimensions.
+
+    Grey rather than white so the encoder cannot collapse it to something degenerate, and JPEG
+    rather than PNG because that is what the scanners in the corpus actually embed.
+    """
+    buffer = io.BytesIO()
+    image_module.new("RGB", (width, height), (128, 128, 128)).save(buffer, format="JPEG")
+    return buffer.getvalue()
 
 
 class TestParallelism:
