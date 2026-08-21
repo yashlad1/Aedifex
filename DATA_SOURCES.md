@@ -37,6 +37,12 @@ Collectable now: 1 of 8
 This is the honest state, and the schema enforces it: a source cannot be enabled while its
 `verification_status` is `unverified`.
 
+The multi-year acquisition plan — 60 India-specific sources catalogued, scored and ordered, with
+reachability and robots policy verified for 46 of them — is in
+[docs/research/CORPUS_ACQUISITION_STRATEGY.md](docs/research/CORPUS_ACQUISITION_STRATEGY.md). Two
+hard blockers found there: **`data.gov.in` and `ireps.gov.in` both declare `Disallow: /`**, so both
+are manual-download-only permanently, regardless of licence.
+
 ## Reviews performed under delegated authority
 
 On 2026-08-20 the project owner delegated terms-of-use, licence, privacy and robots review, and the
