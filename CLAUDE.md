@@ -30,6 +30,7 @@ Then read, as the task requires:
 | [docs/research/CORPUS_ACQUISITION_STRATEGY.md](docs/research/CORPUS_ACQUISITION_STRATEGY.md) | The multi-year acquisition plan: 60 India-specific sources catalogued, scored and ordered, with robots verified for 46 |
 | [docs/research/CAG_AUDIT_PATTERNS.md](docs/research/CAG_AUDIT_PATTERNS.md) | Eight real audit patterns read backwards from completed CAG findings to the evidence each needs, and which document is missing |
 | [docs/research/NHAI_PUBLIC_DATA_ENDPOINTS.md](docs/research/NHAI_PUBLIC_DATA_ENDPOINTS.md) | Every ungated NHAI data endpoint, the 1,450-project static register, and the four identifiers that join documents to projects |
+| [docs/research/DOCUMENT_LAYOUT_SURVEY.md](docs/research/DOCUMENT_LAYOUT_SURVEY.md) | Layout and table-structure engines measured on the real corpus: what the licences allow, why per-cell OCR failed, and why RapidOCR stays |
 | [docs/plans/](docs/plans/) | Implementation plans, newest first |
 | [docs/requirements/functional.md](docs/requirements/functional.md) | Numbered requirements and their status |
 
