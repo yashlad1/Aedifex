@@ -115,7 +115,7 @@ Project data room  (contracts, BOQs, POs, invoices, challans, GRNs, MTCs, IRs, C
 Acquisition            crawl → download → validate → hash → deduplicate → store
         │
         ▼
-Document intelligence  parse → OCR → classify → extract (typed, with provenance)
+Document intelligence  classify → extract (typed, with provenance); OCR is one extractor
         │
         ▼
 Structured evidence    canonical entities: Vendor, PO, POLine, Invoice, GRN, Certificate…
@@ -127,11 +127,20 @@ Evidence graph         invoice →references→ PO, GRN →confirms→ challan, 
 Deterministic rules    versioned, testable, explainable comparisons
         │
         ▼
-Risk engine            findings → weighted, explainable score
+Findings               PASS / REVIEW / FAIL / INCONCLUSIVE, each citing its evidence
         │
         ▼
-Human auditor          PASS / REVIEW / FAIL, with clickable evidence
+Human review           accepted / rejected / needs_evidence, append-only and attributed
+        │
+        ▼
+Business decision      off-platform, and the only place judgement is final
 ```
+
+**There is no risk engine, and its absence is deliberate.** An earlier version of this diagram had
+one, producing a "weighted, explainable score". A score is the opposite of explainable: it collapses
+the five things a reviewer needs — what is wrong, which values were compared, under which rule, where
+each came from, what to look at next — into one number nobody can argue with. Findings carry those
+five; nothing multiplies them together.
 
 Data flows one way. A lower layer never imports from a higher one.
 
@@ -142,9 +151,19 @@ src/aedifex/
   config.py          typed settings; the only reader of the environment
   errors.py          exception hierarchy
   domain/            shared vocabulary. Imports nothing but errors.
-  acquisition/       registry, content validation; later crawlers and downloaders
+  acquisition/       registry, content validation, crawlers, downloaders
+  extraction/        classify → extract → persist facts; the analysis pipeline
+  calculation/       derived facts, precision-aware row arithmetic
+  verification/      deterministic rules, single- and cross-document
+  review/            what a person concluded about a finding
+  workspace/         the product surface: declare a project, attach documents, read state back
+  classification/    proposes a document type; never decides one
   infrastructure/    database, storage, observability adapters
 ```
+
+``workspace/`` sits above ``verification/`` and ``review/`` and is imported by nothing but
+``apps/``. It orchestrates and projects; it extracts nothing, judges nothing, and stores no fact of
+its own, which is what keeps "the product workflow" from becoming a second pipeline.
 
 Rules, enforced in review:
 
@@ -195,6 +214,10 @@ Phase 0 is complete. Implemented and tested:
 | Payment reconciliation rules | [verification/reconciliation.py](src/aedifex/verification/reconciliation.py) |
 | Document version state, supersession | [extraction/supersede.py](src/aedifex/extraction/supersede.py), `documents.version_state` |
 | Deterministic evidence selection | [extraction/selection.py](src/aedifex/extraction/selection.py) |
+| Human review of findings | [review/](src/aedifex/review/), `finding_reviews`, `POST /v1/findings/{id}/reviews` |
+| Project workspace: declare, upload, process, read back | [workspace/](src/aedifex/workspace/), `POST /v1/projects`, `POST /v1/projects/{id}/documents`, `/process`, `/summary` |
+| Deterministic document-type suggestion | [classification/](src/aedifex/classification/), `documents.suggested_document_type` |
+| Product-facing status and workflow categories | [domain/workflow.py](src/aedifex/domain/workflow.py) |
 
 The pipeline is complete end to end and has been run against a real portal. NHAI's terms were
 reviewed and recorded (ADR 0006, rule 60), its tender API was reverse-engineered from the portal's own
@@ -276,11 +299,17 @@ evidence is never deleted; a finding recorded against an old revision has to sta
 the revision is replaced, and "what did the original bill of quantities say?" is a legitimate
 question.
 
-Not yet built: OCR (one acquired document is image-only), classification, archive expansion, the
-entity layer between projects and work items (Contract, Invoice, PaymentCertificate), variation
-orders, automatic staleness detection for derived facts (the fingerprint makes it detectable; nothing
-sweeps for it yet), and the risk engine. Directories for those are created when their first real code lands,
-rather than kept as empty scaffolding.
+Not yet built: archive expansion, the entity layer between projects and work items (Contract,
+Invoice, PaymentCertificate), variation orders, automatic staleness detection for derived facts (the
+fingerprint makes it detectable; nothing sweeps for it yet), and any user interface. Directories for
+those are created when their first real code lands, rather than kept as empty scaffolding.
+
+**Known gap, measured:** `GET /v1/documents` and `GET /v1/documents/{id}` describe a document through
+its most recent *retrieval*, so every uploaded document is missing from them — 41 of 45 in the corpus,
+while `GET /v1/corpus` reports all 45 as held. The project workspace no longer depends on that query
+(`project_inventory` reads memberships), but the corpus catalog still needs its own fix, and it is not
+a one-line one: `CatalogEntry` has non-optional `requested_url`, `http_status` and `attempt_count`,
+and an upload has none of them.
 
 ## Key decisions and their reasons
 
@@ -324,6 +353,16 @@ Things a reader might expect that are absent on purpose:
   provider protocol with versioned prompts, never inline calls.
 - **No agent framework.** Deterministic workflows are sufficient for acquisition, and are
   easier to trust for anything financially consequential later.
+- **No job queue, and processing says so.** `POST /v1/projects/{id}/process` runs synchronously and
+  returns when the work is done — seven real documents including a 261-page agreement take 17
+  seconds. Returning `202 Accepted` with a status field would be a lie about work no worker is
+  doing ([0007](docs/adr/0007-defer-queue-infrastructure.md)). This is the endpoint a queue replaces
+  first.
+- **No authentication on the write API, and it refuses to serve production.** The first five write
+  endpoints exist behind a guard that returns 503 when the environment is production, because there
+  is no authorization and no tenancy and project ids are global UUIDs
+  ([0018](docs/adr/0018-declared-projects-and-product-intake.md)). The guard makes the gap loud; it
+  does not close it.
 - **No product-specific schema.** The product hypothesis is unvalidated (see
   [README](README.md) and [customer discovery](docs/research/CUSTOMER_DISCOVERY.md)), so the
   pipeline stores documents, provenance, and classification — never invoice-shaped or

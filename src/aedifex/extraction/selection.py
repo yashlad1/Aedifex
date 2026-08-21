@@ -11,6 +11,12 @@ authority.
 
 The policy, in order:
 
+0. **Retracted facts are excluded.** A retraction is a later extractor version saying the document
+   never stated this value, and a withdrawn value must never be selected as a current one. Added on
+   2026-08-21 after the first end-to-end product run cited one: a threshold quoted inside a model
+   agreement — "less than Rs. 5 crores", page 48 — had been correctly retracted weeks earlier and
+   was still being compared against the project's real estimated cost, producing a confident FAIL
+   from evidence the system itself had withdrawn.
 1. Facts from documents that are not ``ACTIVE`` are excluded. A superseded revision is still stored
    and still queryable; it just does not feed current-state reconciliation.
 2. Within one document, the newest extractor version wins. That is not ambiguity — it is us having
@@ -104,7 +110,12 @@ def select_one(
     active: list[ExtractedFact] = []
     for fact in facts:
         document = documents.get(fact.document_id)
-        if document is None or not document.version_state.is_current:
+        # Retracted rows join the excluded rather than being dropped: the row is history, and a
+        # caller reporting why nothing was selected should be able to say something was withdrawn
+        # rather than that nothing was ever stated.
+        withdrawn = fact.is_retracted
+        stale = document is None or not document.version_state.is_current
+        if withdrawn or stale:
             superseded.append(fact)
         else:
             active.append(fact)
@@ -115,9 +126,13 @@ def select_one(
         excluded_states = sorted(
             {
                 (
-                    documents[fact.document_id].version_state.value
-                    if fact.document_id in documents
-                    else "unknown provenance"
+                    "retracted"
+                    if fact.is_retracted
+                    else (
+                        documents[fact.document_id].version_state.value
+                        if fact.document_id in documents
+                        else "unknown provenance"
+                    )
                 )
                 for fact in superseded
             }

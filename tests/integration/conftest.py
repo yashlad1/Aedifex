@@ -143,8 +143,12 @@ def session(engine: Engine) -> Iterator[Session]:
     with factory() as active:
         yield active
         active.rollback()
+        # ``projects`` joined the list when projects became declarable: a test that creates one
+        # would otherwise leave the row behind, and the next test declaring the same identifier
+        # under the same source would fail on the unique constraint for reasons nothing in it
+        # explains. CASCADE takes the memberships, relationships, work items and findings with it.
         active.execute(
-            text("TRUNCATE TABLE document_retrievals, discovered_urls, documents CASCADE")
+            text("TRUNCATE TABLE document_retrievals, discovered_urls, documents, projects CASCADE")
         )
         active.commit()
 

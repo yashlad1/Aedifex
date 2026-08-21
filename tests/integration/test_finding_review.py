@@ -25,6 +25,16 @@ from aedifex.infrastructure.database.models import Document, Finding, FindingRev
 from aedifex.review import ReviewError, record_review
 
 
+def _current(finding: Finding) -> FindingReview | None:
+    """Read ``current_review`` through a function, so mypy cannot narrow it across assertions.
+
+    These tests deliberately assert that the same property is first non-``None`` and later ``None``
+    — that *is* staleness. Read directly, mypy narrows the first assertion and calls the second one
+    unreachable, which is a true statement about its own inference and a false one about the code.
+    """
+    return finding.current_review
+
+
 def _finding(session: Session, *, outcome: str = "review", rule_version: str = "1") -> Finding:
     """A document and one finding against it, persisted."""
     digest = f"{uuid.uuid4().hex}{uuid.uuid4().hex}"[:64]
@@ -142,14 +152,14 @@ class TestStaleness:
             note="Confirmed against the page.",
             reviewer="qs",
         )
-        assert finding.current_review is not None
+        assert _current(finding) is not None
 
         # Re-evaluation now says the bill is fine.
         finding.outcome = "pass"
         session.flush()
         session.expire(finding)
 
-        assert finding.current_review is None, "a review of a FAIL cannot speak for a PASS"
+        assert _current(finding) is None, "a review of a FAIL cannot speak for a PASS"
         assert len(finding.reviews) == 1, "and the review is kept, not deleted"
 
     def test_a_revised_rule_makes_a_review_stale(self, session: Session) -> None:

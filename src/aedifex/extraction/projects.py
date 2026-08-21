@@ -38,7 +38,12 @@ from aedifex.infrastructure.database.models import (
 )
 from aedifex.infrastructure.observability.logging import get_logger
 
-__all__ = ["ReconcileOutcome", "established_by", "reconcile_projects"]
+__all__ = [
+    "ReconcileOutcome",
+    "established_by",
+    "normalise_project_key",
+    "reconcile_projects",
+]
 
 _log = get_logger(__name__)
 
@@ -86,13 +91,18 @@ class ReconcileOutcome:
         )
 
 
-def _normalise_key(literal: str) -> str:
+def normalise_project_key(literal: str) -> str:
     """Canonical form of a tender identifier for grouping.
 
     Case and internal whitespace are normalised because the same reference appears as
     ``NHAI/RO/MUM/A'Nagar/...`` in one document and ``NHAI/RO/MUM/A'NAGAR/...`` in another: the
     same tender, shouted. Nothing else is altered — punctuation and separators are part of the
     identifier, and normalising them away would merge references a registry treats as distinct.
+
+    Public because a *declared* project has to be keyed the same way as a derived one. A user typing
+    ``IITB/Dean (IPS)/CACI/H-19/NIT/R1`` and an extractor reading ``IITB/DEAN (IPS)/...`` off page 1
+    mean one project, and if the two forms did not converge the declaration and the evidence would
+    end up in two rows, splitting one project's documents across both.
     """
     return " ".join(literal.split()).upper()
 
@@ -117,9 +127,17 @@ def reconcile_projects(session: Session, *, source_id: str | None = None) -> Rec
     origins = _document_origins()
 
     query = (
-        select(ExtractedFact, origins.c.source_id)
-        .join(origins, origins.c.document_id == ExtractedFact.document_id)
-        .where(ExtractedFact.fact_type.in_(_PROJECT_KEY_FACTS))
+        select(ExtractedFact, origins.c.source_id).join(
+            origins, origins.c.document_id == ExtractedFact.document_id
+        )
+        # A retracted identifier must not group anything. Membership is the root of every
+        # cross-document comparison, so a withdrawn tender number would put a document into a
+        # project on the strength of a reading we have already said was wrong -- and every finding
+        # built on that membership would inherit it.
+        .where(
+            ExtractedFact.fact_type.in_(_PROJECT_KEY_FACTS),
+            ~ExtractedFact.retraction.has(),
+        )
     )
     if source_id is not None:
         query = query.where(origins.c.source_id == source_id)
@@ -136,7 +154,7 @@ def reconcile_projects(session: Session, *, source_id: str | None = None) -> Rec
         if current is None or rank < current[0]:
             best[fact.document_id] = (rank, fact_source, fact)
     for document_id, (_, fact_source, fact) in best.items():
-        key = (fact_source, _normalise_key(fact.literal))
+        key = (fact_source, normalise_project_key(fact.literal))
         grouped[key][document_id] = fact
         keyed_by.setdefault(key, fact.fact_type)
 

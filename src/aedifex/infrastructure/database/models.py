@@ -56,7 +56,12 @@ from sqlalchemy import text as text_clause
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from aedifex.domain.documents import DocumentCategory, DocumentState, DocumentType
+from aedifex.domain.documents import (
+    ClassificationAuthority,
+    DocumentCategory,
+    DocumentState,
+    DocumentType,
+)
 from aedifex.domain.evidence import (
     DocumentRole,
     DocumentVersionState,
@@ -114,6 +119,7 @@ def _enum_column(python_enum: type[StrEnum], *, length: int) -> Enum:
 _DOCUMENT_STATE = _enum_column(DocumentState, length=32)
 _DOCUMENT_TYPE = _enum_column(DocumentType, length=48)
 _DOCUMENT_CATEGORY = _enum_column(DocumentCategory, length=32)
+_CLASSIFICATION_AUTHORITY = _enum_column(ClassificationAuthority, length=32)
 _FILE_FORMAT = _enum_column(FileFormat, length=16)
 _CRAWL_JOB_STATUS = _enum_column(CrawlJobStatus, length=16)
 _FACT_KIND = _enum_column(FactKind, length=24)
@@ -236,11 +242,43 @@ class Document(Base):
     document_type: Mapped[DocumentType] = mapped_column(
         _DOCUMENT_TYPE, default=DocumentType.UNKNOWN
     )
+    """What this document is, authoritatively. Read by the extractor to decide what to suppress."""
+
+    type_authority: Mapped[ClassificationAuthority] = mapped_column(
+        _CLASSIFICATION_AUTHORITY,
+        default=ClassificationAuthority.DECLARED,
+        server_default=text_clause("'declared'"),
+    )
+    """Who decided :attr:`document_type`, and therefore how much weight it carries.
+
+    Every row that existed before this column did was typed by an operator at ingest, which is
+    exactly ``declared`` — so the server default backfills the truth rather than a guess.
+    """
+
     document_category: Mapped[DocumentCategory] = mapped_column(
         _DOCUMENT_CATEGORY, default=DocumentCategory.UNKNOWN
     )
+
+    suggested_document_type: Mapped[DocumentType | None] = mapped_column(
+        _DOCUMENT_TYPE, default=None
+    )
+    """What a classifier thinks this is — in its own column, which is the entire point.
+
+    A suggestion cannot be stored in :attr:`document_type` without becoming a decision, and
+    ``document_type`` decides whether a quoted amount is treated as a fact about this document.
+    Keeping the proposal beside the decision lets a workspace show "you filed this as UNKNOWN; it
+    looks like a bill of quantities" without anything downstream acting on the guess.
+    """
+
     classification_confidence: Mapped[float | None] = mapped_column(default=None)
+    """How sure the classifier was about :attr:`suggested_document_type`, never the decision."""
+
     classifier_version: Mapped[str | None] = mapped_column(String(64), default=None)
+    """Which classifier proposed it, e.g. ``filename_keywords:1``.
+
+    Names the classifier as well as its version, so a deterministic proposal and a model's proposal
+    are distinguishable in the row itself rather than by knowing which one was deployed that week.
+    """
 
     state: Mapped[DocumentState] = mapped_column(
         _DOCUMENT_STATE, default=DocumentState.DOWNLOADED, index=True
@@ -851,12 +889,34 @@ class Project(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     source_id: Mapped[str] = mapped_column(String(64), index=True)
-    external_ref: Mapped[str] = mapped_column(String(256))
-    """The identifier the documents themselves use, e.g. a tender number. Never invented."""
+
+    external_ref: Mapped[str | None] = mapped_column(String(256), default=None)
+    """The identifier the documents themselves use, e.g. a tender number. Never invented.
+
+    Nullable since 2026-08-21, when projects became declarable by the person who owns the work
+    rather than only derivable from shared facts. A developer creating "Hostel 19" before uploading
+    anything may have no reference number to give, and the alternative — synthesising one from the
+    name — would put an invented identifier in the column whose whole contract is that it is never
+    invented. An absent identifier is recorded as absent.
+
+    Two consequences, both intended. Two declared projects with no identifier are two projects, even
+    if identically named, because ``NULL`` is distinct under the unique constraint and nothing
+    entitles us to merge them. And a declared project whose ``external_ref`` *does* match what the
+    documents state is found and reused by reconciliation instead of being duplicated, so a
+    declaration and the evidence converge on one row.
+    """
 
     name: Mapped[str | None] = mapped_column(Text, default=None)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    """What the project is, in the owner's words. Never parsed, never used by a rule."""
+
     established_by: Mapped[str] = mapped_column(String(128))
-    """How membership was determined, e.g. ``shared_fact:nit_number``. Never ``inferred``."""
+    """How the project came to exist, e.g. ``shared_fact:nit_number`` or ``declared:alice``.
+
+    Reused for declaration rather than given a second column, because the question is the same one:
+    what justifies this row? A derived project cites the fact that grouped it; a declared project
+    cites the person who said so. Never ``inferred``.
+    """
 
     first_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
@@ -871,6 +931,15 @@ class Project(Base):
     work_items: Mapped[list[WorkItem]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+
+    @property
+    def label(self) -> str:
+        """The project as a human refers to it: its identifier, else its name, else its id.
+
+        Exists because ``external_ref`` became nullable and every display path had been printing it
+        directly. A workspace listing "None" would be a formatting bug reported as missing data.
+        """
+        return self.external_ref or self.name or str(self.id)
 
     __table_args__ = (
         UniqueConstraint("source_id", "external_ref", name="one_project_per_source_reference"),

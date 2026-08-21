@@ -21,6 +21,8 @@ supersedes the old one, so the reasoning history survives.
 | [0014](0014-reference-data-by-explicit-applicability.md) | Reference data by explicit applicability, not global scope | Accepted (pre-implementation) |
 | [0015](0015-ocr-execution-shape-on-apple-silicon.md) | OCR on three CPU threads with a bounded ONNX pool; CoreML rejected | Accepted |
 | [0016](0016-ocr-gateway-not-an-ocr-engine.md) | Aedifex owns an OCR gateway and a trust boundary, not an OCR engine | Accepted as direction (nothing implemented) |
+| [0017](0017-document-understanding-gateway.md) | A Document Understanding Gateway with capabilities, not an OCR pipeline with a router | Accepted as direction (nothing implemented) |
+| [0018](0018-declared-projects-and-product-intake.md) | Declared projects, and intake that separates artifact identity from project membership | Accepted (implemented) |
 
 Write one when a change constrains future work, chooses between viable technologies,
 introduces or removes a boundary, or encodes a policy in code. See

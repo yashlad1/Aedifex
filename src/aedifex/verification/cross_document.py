@@ -118,6 +118,14 @@ class ProjectFacts:
         for fact in self.facts:
             if fact.work_item_id is not None:
                 continue
+            # A retracted fact is a value a later extractor version says the document never stated.
+            # Comparing it against a real one manufactures a disagreement out of a reading we have
+            # already withdrawn -- which is exactly what happened on the first product run, where a
+            # rupee threshold quoted inside a model agreement was reported as that document's own
+            # estimated cost disagreeing with the project's. Belt and braces with the query filter
+            # in load_project_facts: this method is also called on facts a caller assembled.
+            if fact.is_retracted:
+                continue
             key = (fact.fact_type, fact.document_id)
             current = newest.get(key)
             if current is None or fact.extractor_version > current.extractor_version:
@@ -155,8 +163,14 @@ def load_project_facts(session: Session, project_id: uuid.UUID) -> ProjectFacts 
     facts = tuple(
         session.execute(
             select(ExtractedFact)
-            .where(ExtractedFact.document_id.in_(document_ids))
-            .order_by(ExtractedFact.fact_type, ExtractedFact.document_id)
+            # Retracted facts are not loaded at all. They remain readable through the facts API,
+            # where they are labelled, and citable by the findings already computed from them -- but
+            # a rule must never compare one, because a withdrawn value is not something the document
+            # states. ``~...has()`` is a NOT EXISTS against fact_retractions.
+            .where(
+                ExtractedFact.document_id.in_(document_ids),
+                ~ExtractedFact.retraction.has(),
+            ).order_by(ExtractedFact.fact_type, ExtractedFact.document_id)
         ).scalars()
     )
     relationships = tuple(

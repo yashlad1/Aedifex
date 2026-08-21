@@ -78,20 +78,42 @@ No workflow engine, no assignment, no notifications, no SLA.
 the decision is durable and attributable, re-review appends rather than overwrites, and the
 traceability audit still passes.
 
-### 2. The write path — second
+### 2. The write path — second. **Done, 2026-08-21.**
 
-`POST /v1/projects`, `POST /v1/projects/{id}/documents` (upload → ingest → attach → queue), and
-processing status. This is what makes stages 1–2 real for someone who is not an operator with shell
-access.
+`POST /v1/projects`, `POST /v1/projects/{id}/documents`, `POST /v1/projects/{id}/process`,
+`GET /v1/projects/{id}/documents`, `GET /v1/projects/{id}/summary`,
+`POST /v1/documents/{id}/classification`. Recorded in
+[ADR 0018](../adr/0018-declared-projects-and-product-intake.md).
 
-### 3. Classification — third, and deliberately narrow
+Exercised over HTTP against the real IIT Bombay Hostel 19 project: seven documents attached, 3,311
+facts, 28 document findings, 2 project findings, 17 seconds; re-upload created neither a second
+artifact nor a second membership; a `needs_evidence` review named the two documents that would close
+the open finding.
 
-A **suggestion** with a confidence, written to the columns that already exist. It must **not** set
-the reference-versus-project role: `runner.py` requires that role to be declared and never inferred,
-because inferring it produced five false facts from real documents. Suggestion and authority stay
-separate fields.
+**What it found.** The first end-to-end run produced a `FAIL` from a fact that had already been
+retracted — a threshold quoted inside the general conditions of contract (`Rs. 5 crores`, page 48).
+`select_one` and `load_project_facts` both ignored retraction, so a withdrawn value was being
+compared and `scripts/audit_traceability.py` failed on it. Fixed at three layers, regressed at two.
+That defect is the milestone's own justification: no amount of parser work would have surfaced it.
 
-### 4. The viewer — fourth
+**Deliberate limitations, all recorded in ADR 0018:** processing is synchronous; the corpus catalog
+still hides uploaded documents; `document_uploads` records one row per (document, source), so a
+repeated upload to the same project is idempotent rather than append-only.
+
+### 3. Classification — third, and deliberately narrow. **Done, 2026-08-21.**
+
+A **suggestion** with a confidence, written to the columns that already existed and had never been
+written. It does **not** set the reference-versus-project role: `runner.py` requires that role to be
+declared and never inferred, because inferring it produced five false facts from real documents.
+Suggestion and authority are separate fields, and `documents.type_authority` records which of a
+declaration and a human confirmation set the type.
+
+The classifier reads the filename and nothing else — `aedifex.classification`, 23 ordered rules, no
+model. On the real project it agreed with five of six declarations and disputed one: the general
+conditions of contract, declared `model_agreement` and proposed `contract`, which is precisely the
+case a person has to settle because nothing in a filename can.
+
+### 4. The viewer — fourth. **Next.**
 
 The seven surfaces, against Tier 1 documents. Every finding answers the five questions. No risk
 scores.

@@ -17,7 +17,7 @@ from decimal import Decimal
 from aedifex.domain.evidence import DocumentVersionState, FactKind
 from aedifex.domain.files import FileFormat
 from aedifex.extraction.selection import select_facts, select_one
-from aedifex.infrastructure.database.models import Document, ExtractedFact
+from aedifex.infrastructure.database.models import Document, ExtractedFact, FactRetraction
 from aedifex.infrastructure.storage.keys import raw_key
 
 
@@ -154,3 +154,53 @@ def test_selection_reports_every_type_including_unresolved_ones() -> None:
     assert set(selections) == {"contracted_quantity", "measured_quantity"}
     assert selections["contracted_quantity"].conflicting
     assert selections["measured_quantity"].resolved
+
+
+def test_a_retracted_fact_is_never_selected() -> None:
+    """Policy step 0, added after a withdrawn value reached a conclusive finding.
+
+    A retraction is a later extractor version stating that the document never said this. Selection
+    is the one place that decides what a rule reasons over, so a withdrawn row must not survive it —
+    and the recorded reason has to say *withdrawn* rather than "no active document states it", or an
+    operator is told the document is silent when in fact we took the value back.
+    """
+    document = a_document()
+    fact = a_fact(document, Decimal("470"))
+    fact.retraction = FactRetraction(
+        fact_id=fact.id,
+        retracted_by_extractor="test",
+        retracted_by_version="2",
+        reason="quoted from another project's records",
+        software_version="0",
+    )
+
+    selected = select_one("contracted_quantity", [fact], {document.id: document})
+
+    assert selected.fact is None
+    assert not selected.resolved
+    assert "retracted" in selected.reason
+    assert selected.excluded == (fact,), "and it is reported as excluded, not silently dropped"
+
+
+def test_a_retracted_revision_does_not_hide_a_good_one() -> None:
+    """The other half: withdrawing one document's value leaves the remaining one selectable."""
+    withdrawn_document = a_document(name="draft-BOQ.xlsx")
+    withdrawn = a_fact(withdrawn_document, Decimal("999"))
+    withdrawn.retraction = FactRetraction(
+        fact_id=withdrawn.id,
+        retracted_by_extractor="test",
+        retracted_by_version="2",
+        reason="misread column",
+        software_version="0",
+    )
+    good_document = a_document()
+    good = a_fact(good_document, Decimal("470"))
+
+    selected = select_one(
+        "contracted_quantity",
+        [withdrawn, good],
+        {withdrawn_document.id: withdrawn_document, good_document.id: good_document},
+    )
+
+    assert selected.fact is good
+    assert selected.resolved

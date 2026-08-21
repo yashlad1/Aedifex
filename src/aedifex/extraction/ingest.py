@@ -93,6 +93,7 @@ def ingest_file(
     software_version: str,
     is_synthetic: bool = False,
     note: str | None = None,
+    original_path: str | None = None,
 ) -> IngestOutcome:
     """Store a local file as an immutable artifact and record how it got here.
 
@@ -103,6 +104,11 @@ def ingest_file(
             would be worse than a declared one.
         is_synthetic: Recorded on the upload so a query for real evidence can exclude generated data
             without knowing which sources happen to be synthetic today.
+        original_path: What to record as where the file came from, when ``path`` is not it. An HTTP
+            upload has no filesystem path — the bytes arrive in a request and are written to a
+            temporary file purely so this function can hash and store them — so recording that
+            temporary path would be a true statement about nothing. The caller passes what it
+            actually knows, which is the name the client stated.
 
     Raises:
         SourceNotCollectableError: if the source is not an approved manual-upload source.
@@ -191,7 +197,7 @@ def ingest_file(
         upload = DocumentUpload(
             document_id=document_id,
             source_id=source.id,
-            original_path=str(path),
+            original_path=original_path or str(path),
             is_synthetic=is_synthetic,
             note=note,
             uploaded_by=uploaded_by,

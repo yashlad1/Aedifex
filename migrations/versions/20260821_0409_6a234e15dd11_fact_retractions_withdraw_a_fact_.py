@@ -13,9 +13,9 @@ selected. Six real facts sat in that state on 2026-08-21 — three CAG audit rep
 about other people's projects became their own estimated cost, and two model concession agreements
 dated from a specimen form — and the facts API was serving all six.
 
-Deleting them was rejected: a finding computed from a fact has to remain explainable against the fact
-that produced it, so history is not negotiable. The retraction is therefore a new append-only row
-that points at the fact, names the extractor version that withdrew it, and states why.
+Deleting them was rejected: a finding computed from a fact must remain explainable against the
+fact that produced it, so history is not negotiable. The retraction is therefore a new,
+append-only row that points at the fact, names the extractor version that withdrew it, and says why.
 
 Downgrade drops the table, which loses the retractions and restores the previous ambiguity. That is
 the honest reversal — the false facts themselves are untouched by both directions, because this

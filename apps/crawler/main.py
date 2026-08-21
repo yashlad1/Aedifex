@@ -32,10 +32,8 @@ from decimal import Decimal
 from ipaddress import ip_address
 from pathlib import Path
 from types import FrameType
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
-import boto3
-from botocore.config import Config as BotoConfig
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -61,6 +59,7 @@ from aedifex.domain.evidence import RelationshipType
 from aedifex.domain.files import FileFormat
 from aedifex.domain.review import ReviewDecision
 from aedifex.errors import AedifexError, ConfigurationError
+from aedifex.extraction import READABLE_FORMATS
 from aedifex.extraction.ingest import ingest_file
 from aedifex.extraction.ocr import OCR_MAX_PAGES
 from aedifex.extraction.projects import reconcile_projects
@@ -84,20 +83,11 @@ from aedifex.infrastructure.database.models import (
 )
 from aedifex.infrastructure.database.session import build_engine
 from aedifex.infrastructure.observability.logging import configure_logging, get_logger
+from aedifex.infrastructure.storage.client import build_s3_client
 from aedifex.infrastructure.storage.objects import RawObjectStore
 from aedifex.review import ReviewError, record_review
 
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from mypy_boto3_s3.client import S3Client
-
 _log = get_logger(__name__)
-
-# The formats an extractor actually exists for. Storage accepts more — a JSON API response is
-# perfectly good evidence, and the Consumer Price Index arrives no other way — but acquiring an
-# artifact and being able to read it are separate capabilities, and conflating them produced a
-# nonsense error. Anything outside this set is stored, provenanced, and skipped by name.
-_READABLE_FORMATS: Final[frozenset[FileFormat]] = frozenset({FileFormat.PDF, FileFormat.XLSX})
-
 
 # A derived fact's expression is its whole derivation, and for a bill that is every row: the
 # 661-row Hostel 19 bill produces a 7,590-character addition. Stored in full, because reproducing a
@@ -321,7 +311,7 @@ def _crawl(args: argparse.Namespace, settings: Settings) -> int:
 
     engine = build_engine(settings)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
-    store = RawObjectStore(_s3(settings), bucket=settings.storage_bucket)
+    store = RawObjectStore(build_s3_client(settings), bucket=settings.storage_bucket)
     if not args.dry_run:
         # Idempotent, and an operator starting a crawl should not have to create a bucket by hand.
         # Skipped for a dry run, which stores nothing and should need no write permission at all.
@@ -360,7 +350,7 @@ def _ingest(args: argparse.Namespace, settings: Settings) -> int:
     source = get_registry(settings).get(args.source)
     engine = build_engine(settings)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
-    store = RawObjectStore(_s3(settings), bucket=settings.storage_bucket)
+    store = RawObjectStore(build_s3_client(settings), bucket=settings.storage_bucket)
     store.ensure_bucket()
 
     document_type = DocumentType(args.type)
@@ -442,7 +432,7 @@ def _analyse(args: argparse.Namespace, settings: Settings) -> int:
     if args.project or args.all_projects:
         return _analyse_projects(args, sessions)
 
-    store = RawObjectStore(_s3(settings), bucket=settings.storage_bucket)
+    store = RawObjectStore(build_s3_client(settings), bucket=settings.storage_bucket)
 
     with sessions() as session:
         if args.all:
@@ -462,7 +452,7 @@ def _analyse(args: argparse.Namespace, settings: Settings) -> int:
                 print()
             try:
                 document = session.get(Document, document_id)
-                if document is not None and document.file_format not in _READABLE_FORMATS:
+                if document is not None and document.file_format not in READABLE_FORMATS:
                     # Refuse by name instead of falling through to the PDF reader. The MoSPI
                     # Consumer Price Index response, stored as .json, came back as "PDF could not be
                     # opened: Stream has ended unexpectedly" — which sends an operator hunting for a
@@ -868,26 +858,6 @@ def _status(args: argparse.Namespace, settings: Settings) -> int:
             f"bytes={run.bytes_downloaded:<12} {duration}"
         )
     return 0
-
-
-def _s3(settings: Settings) -> S3Client:
-    client: S3Client = boto3.client(
-        "s3",
-        endpoint_url=settings.storage_endpoint_url,
-        aws_access_key_id=(
-            settings.storage_access_key_id.get_secret_value()
-            if settings.storage_access_key_id
-            else None
-        ),
-        aws_secret_access_key=(
-            settings.storage_secret_access_key.get_secret_value()
-            if settings.storage_secret_access_key
-            else None
-        ),
-        region_name=settings.storage_region,
-        config=BotoConfig(signature_version="s3v4", retries={"max_attempts": 3}),
-    )
-    return client
 
 
 def _shutdown_signal() -> threading.Event:

@@ -99,11 +99,33 @@ An unrecognised `AEDIFEX_*` environment variable is also a hard error. A typo su
 - **Inbound `X-Request-ID` is truncated to 64 characters.** It is attacker-controlled and
   lands in every log line for the request.
 
-### Not yet built
+### The write API is not publicly deployable
 
-No authentication, authorisation, or RBAC. The API is read-only metadata and is not intended
-to be internet-facing yet. This must be in place before any write endpoint or any deployment
-beyond a private network — tracked for Phase 10.
+**As of 2026-08-21 the API has five write endpoints and still has no authentication, no
+authorization and no tenancy.** They exist because the first product workflow needed a beginning:
+declare a project, upload a document into it, process it, confirm a document's type, record a
+review. Project identifiers are global UUIDs with nothing scoping them to an owner, so any caller
+who can reach the port can write into any project.
+
+Two controls stand in the meantime, and neither is a substitute for authorization:
+
+- **Writes are refused when the environment is `production`.** `require_write_access` returns 503,
+  and a test enumerates the application's own `POST` routes so a write endpoint added later cannot
+  escape the guard. The check is on the environment rather than a feature flag, because a flag is
+  something an operator can switch on without deciding anything — turning this off means deleting
+  the dependency, which means replacing it.
+- **Uploads are bounded and format-checked before they are stored.** The body is read in chunks to a
+  64 MiB ceiling rather than by an unbounded `read()`, which would size an allocation from a
+  client-controlled header. The declared format is then checked against the content's leading bytes,
+  and a contradiction is refused — an archive named `.pdf` reaching the PDF reader is untrusted input
+  arriving at a parser under a false description. A filename never reaches a storage key; those come
+  from the content digest.
+
+What is still missing, and must exist before any deployment beyond a private network: an
+authenticated identity, a project that belongs to an organisation or tenant, and authorization on
+every read as well as every write — the read endpoints already expose a corpus whose licence terms
+differ per source. Tracked for Phase 10. See
+[ADR 0018](docs/adr/0018-declared-projects-and-product-intake.md).
 
 ### Known gaps: controls that need GitHub Advanced Security
 

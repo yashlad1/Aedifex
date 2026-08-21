@@ -1,0 +1,145 @@
+# 18. Declared projects, and an intake path that separates identity from membership
+
+Date: 2026-08-21
+
+## Status
+
+Accepted, and implemented. Unlike [ADR 0016](0016-ocr-gateway-not-an-ocr-engine.md) and
+[ADR 0017](0017-document-understanding-gateway.md), which record direction, this one records code
+that exists: `aedifex.workspace`, `aedifex.classification`, five write endpoints, and migration
+`4a4f930da9cd`.
+
+## Context
+
+The middle of the pipeline was built first. Facts, calculations, rules, findings, evidence and human
+review all worked, and both ends were missing:
+
+* a project could only come into existence by being **derived** — reconciliation found two documents
+  quoting an identical identifier and created the row. The real building project this milestone was
+  built against has seven documents and **one** of them states the tender number, so it had no
+  project at all;
+* documents could only arrive through a shell command run by someone holding the object-store
+  credentials.
+
+And one measured defect made the gap worse than it looked. `catalog_entry` inner-joins
+`document_retrievals`, so **every uploaded document was invisible** to `GET /v1/documents`,
+`GET /v1/documents/{id}` and `GET /v1/projects/{id}/documents` — 41 of 45 documents in the corpus,
+while `GET /v1/corpus` reported all 45 as held.
+
+## Decisions
+
+### 1. A project can be declared, and declaration converges with derivation
+
+`projects.external_ref` becomes nullable and `established_by` carries either `declared:alice` or
+`shared_fact:nit_number`. A declared identifier is normalised by the *same* function reconciliation
+uses (`normalise_project_key`), so a project declared as `IITB/Dean (IPS)/CACI/H-19/NIT/R1` is the
+row reconciliation finds when it reads `IITB/DEAN (IPS)/...` off page 1. Without that, one building
+would end up as two projects and every cross-document rule would see half the evidence.
+
+**Rejected:** synthesising an identifier from the project name. `external_ref`'s entire contract is
+that it is never invented, and a slug in that column would be an invented identifier in the one
+place the schema promises there are none.
+
+### 2. Artifact identity is not project membership
+
+The deduplication rules, stated because they are easy to get subtly wrong:
+
+| Case | Artifact | Membership | Upload row |
+| --- | --- | --- | --- |
+| same bytes, same project | reused | reused | reused |
+| same bytes, two projects | **reused** | **new, per project** | reused |
+| same bytes, second source | reused | per project | **new** |
+
+The second row is the point. One schedule of rates governs many projects; one bill can be given to
+an auditor and to a PMC. The membership row carries its own `established_by` and `linked_at`, which
+is where the second upload *event* is recorded — `document_uploads` is unique per
+(document, source) by design, so a repeated upload is idempotent rather than append-only. That is a
+deliberate limitation and it is the one thing here a future provenance change may want to revisit: a
+second upload of identical bytes to the *same* project by a different person is visible only in the
+log.
+
+### 3. A classifier proposes; only a person decides
+
+`documents.suggested_document_type` is a new column, and nothing promotes it. `document_type` gates
+whether the extractor treats a quoted amount as a fact about the document, and inferring that role
+has already produced five false facts from real documents.
+
+`documents.type_authority` records who decided, with four values of which **two may appear today** —
+`declared` and `human_confirmed`. `deterministic_classifier` and `model_suggestion` exist so that a
+future policy of adopting a proposal has an honest place to record itself instead of being
+indistinguishable from a person's judgement.
+
+The classifier itself reads **only the filename**, which is not a placeholder for something better:
+the names customers actually upload — `BOQ.xlsx`, `RA_Bill_17.xlsx`, `JMR_17.jpg`,
+`Architect Certificate.pdf` — are written by someone who knew what the document was.
+
+The most valuable output is *disagreement*. On the real project, the general conditions of contract
+are declared `model_agreement` and the classifier proposes `contract`; both readings are defensible,
+which is exactly why a person resolves it.
+
+### 4. Processing is synchronous, and says so
+
+`POST /v1/projects/{id}/process` runs the existing `analyse_document` / `analyse_spreadsheet` /
+`analyse_project` and returns when they are done. Seven real documents, including a 261-page
+agreement and a 5 MB specification, take 17 seconds.
+
+**Rejected:** `202 Accepted` with a status field. There is no worker, so the status would be a lie
+about work nobody is doing — and per [ADR 0007](0007-defer-queue-infrastructure.md) the queue arrives
+when there are tasks, not when an endpoint would look nicer. This is the endpoint a queue replaces
+first.
+
+**Rejected:** running analysis inside the upload request. Upload stays fast and returns a status of
+`uploaded`; a caller uploading twelve documents should not have the twelfth request carry the cost of
+the first eleven.
+
+### 5. Reconciliation is not run from the product path
+
+Membership was declared by the person who owns the work. Re-deriving it from shared identifier facts
+could only agree with that or invent a second project for the same documents.
+
+### 6. The write API is not publicly deployable
+
+`require_write_access` refuses every write when the environment is `production`, enumerated by a test
+over the application's own routes so a new write endpoint cannot escape it. This is a stopgap that
+makes the gap loud, not a control that closes it: there is no authentication, no authorization and no
+tenancy, and project ids are global UUIDs with nothing scoping them to an owner.
+
+## The defect this milestone found
+
+The first end-to-end run produced a **FAIL** on the real project: three documents stating an
+`estimated_cost`, two at ₹85,39,81,318.41 and one at ₹5,00,00,000. The third was a threshold quoted
+inside the general conditions of contract — *"works with an estimated cost put to tender of less than
+Rs. 5 crores"*, page 48 — and it had already been **retracted** weeks earlier, correctly, by
+extractor version 4.
+
+`load_project_facts` did not filter retracted facts, and neither did `select_one`, whose entire job
+is choosing what a rule reasons over. So a value the system had formally withdrawn was still being
+compared, and produced a confident verdict. `scripts/audit_traceability.py` caught it independently
+(*"conclusive finding cites a retracted fact"*), which is the guard working as designed.
+
+Fixed in three places — the selection policy, the cross-document loader, and project membership
+grouping (a retracted identifier must not group anything) — and the finding is now a **PASS** on the
+two values that stand. Regression tests at both layers.
+
+**This is the milestone's strongest argument.** No amount of parser work would have surfaced it; a
+product workflow surfaced it on its first run.
+
+## Consequences
+
+**Good.** A real building project moves create → upload → process → findings → evidence → review
+through HTTP alone. Uploaded documents are visible for the first time. `needs_evidence` reviews now
+name missing documents in a reviewer's own words, which is a better corpus roadmap than anything
+public.
+
+**Costs.**
+
+- `GET /v1/documents` still hides uploads. The project workspace no longer depends on it, but the
+  corpus catalog needs its own fix and `CatalogEntry` has non-optional HTTP fields.
+- Two document classes on the product's own priority list — material reconciliation statement,
+  completion certificate — have no `DocumentType`, so they file as `unknown`. The classifier
+  correctly proposes nothing rather than the nearest available label.
+- `documents.document_category` remains unwritten on every row. It is derivable from
+  `document_type`, nothing reads it, and the workspace derives a `WorkflowCategory` instead.
+- Uploading the same bytes under a *second* source writes a redundant object under a second storage
+  key, because `raw_key` includes the source id. Content-addressed and verified, so nothing is
+  corrupted; it is wasted bytes.

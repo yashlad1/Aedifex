@@ -91,9 +91,9 @@ stays visible that they were not foreseen.
 
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
-| FR-060 | The system shall classify documents into the predefined taxonomy. | Partial | Taxonomy and storage implemented (`test_domain_documents.py`); no classifier yet |
-| FR-061 | The system shall record classification confidence and classifier version. | Partial | Schema implemented; no classifier yet |
-| FR-062 | The system shall report `unknown` rather than guess when classification is uncertain. | Partial | Vocabulary implemented; no classifier yet |
+| FR-060 | The system shall classify documents into the predefined taxonomy. | Partial | `aedifex.classification` proposes a type from the filename, deterministically. Partial because it is a *proposal*: it lands in `documents.suggested_document_type` and nothing promotes it. The names customers upload — `BOQ.xlsx`, `RA_Bill_17.xlsx`, `JMR_17.jpg` — are written by someone who knew what the document was, which is why a filename beats a model that has to recover the same information from pixels |
+| FR-061 | The system shall record classification confidence and classifier version. | Implemented | `classification_confidence` and `classifier_version` are written for the first time, the latter naming the classifier as well as its version (`filename_keywords:1`) so a deterministic proposal and a model's are distinguishable in the row. The confidence is a phrase's specificity, not a probability, and no rule may read it |
+| FR-062 | The system shall report `unknown` rather than guess when classification is uncertain. | Implemented | `suggest_document_type` returns `None` for `scan0007.pdf` or `document (1).pdf`, and no suggestion is deliberately distinct from a weak one: silence means the declared type stands unchallenged, a suggestion means something disagrees with it. Two classes on the product's priority list — material reconciliation, completion certificate — have no `DocumentType`, and get no suggestion rather than the nearest label |
 | FR-063 | The system shall extract typed structured fields from each document type. | Planned | — |
 | FR-064 | The system shall record page, bounding box, extraction method, and confidence for every extracted fact. | Planned | — |
 
@@ -171,6 +171,27 @@ stays visible that they were not foreseen.
 | FR-086 | The system shall route findings to human review based on confidence thresholds. | Planned |
 | FR-087 | The system shall make every finding reproducible from stored evidence, given the same dataset, code, model, prompt, and rule versions. | Planned |
 
+## Project workspace
+
+The first product workflow: `create project → attach documents → process → findings → evidence →
+human review`. See [ADR 0018](../adr/0018-declared-projects-and-product-intake.md).
+
+| ID | Requirement | Status | Evidence |
+| --- | --- | --- | --- |
+| FR-137 | The system shall let a user declare a project before it holds any document. | Implemented | `POST /v1/projects`, `workspace.create_project`. Until now a project could only be *derived* from two documents quoting the same identifier — and the real building project this was built against has seven documents of which one states the tender number, so it had no project at all. `established_by` records `declared:<who>` where a derived project records `shared_fact:<type>` |
+| FR-138 | A declared identifier and an extracted one shall resolve to one project. | Implemented | `normalise_project_key`, shared by `create_project` and `reconcile_projects`. A project declared `IITB/Dean (IPS)/CACI/H-19/NIT/R1` is the row reconciliation finds reading `IITB/DEAN (IPS)/...` off page 1. Otherwise one building becomes two projects and every cross-document rule sees half the evidence |
+| FR-139 | An uploaded document shall carry upload provenance and never a fabricated retrieval. | Implemented | `attach_upload` records a `document_uploads` row whose `original_path` is `upload:<client filename>`; the test asserts zero `document_retrievals` rows. An upload has no HTTP status, no requested URL and no response headers, and inventing them to reuse the crawl path would be fabricating provenance |
+| FR-140 | Identical bytes shall not create a second artifact, and project membership shall remain distinct from artifact identity. | Implemented | Same bytes to one project: nothing new. Same bytes to two projects: one artifact, two memberships, each with its own `established_by` and `linked_at`. Documented limitation: `document_uploads` is unique per (document, source), so a repeated upload to the same project is idempotent and the second event is visible only in the log |
+| FR-141 | The system shall refuse content that contradicts its declared format. | Implemented | `sniff_format` plus `formats_are_compatible` in `_refuse_content_that_contradicts_its_name`; for a format with a signature, its absence is evidence too. The format decides which extractor runs, so an archive named `.pdf` is untrusted input arriving at a parser under a false description |
+| FR-142 | A document that cannot be read shall remain stored and visible. | Implemented | `ProcessingStatus.UNSUPPORTED`, derived from `READABLE_FORMATS`. `unsupported` and `failed` are distinct: one means no extractor exists, the other that one ran and could not finish. Both are listed in the inventory with their digest, never dropped |
+| FR-143 | A classifier's proposal shall never set a document's type or its evidence role. | Implemented | `documents.suggested_document_type` is a separate column and nothing promotes it. Only `confirm_document_type`, which requires a named person, changes `document_type`. The role that gates fact suppression is declared at ingest and never inferred (FR-129) |
+| FR-144 | The system shall record who decided a document's type. | Implemented | `documents.type_authority`, backfilled to `declared` because every pre-existing row was typed by an operator at ingest. Four values, of which two may appear today; the reserved pair exists so a future policy of adopting a proposal cannot be mistaken for a person's judgement |
+| FR-145 | The system shall expose one project read model rather than requiring a client to reassemble state. | Implemented | `GET /v1/projects/{id}/documents` and `/summary`, both built on `project_inventory` so they cannot disagree. Reads memberships, not retrievals — the previous version described documents through the corpus catalog, which inner-joins `document_retrievals` and therefore hid 41 of 45 documents while `/v1/corpus` reported all 45 |
+| FR-146 | The product workflow shall exercise the existing analysis pipeline, not a parallel one. | Implemented | `process_project` dispatches to `analyse_document`, `analyse_spreadsheet` and `analyse_project` — the same functions the CLI calls — and stores no fact of its own. Verified on seven real documents: 3,311 facts, 28 document findings, 2 project findings, 17 seconds |
+| FR-147 | Write endpoints shall be refused while the deployment has no authorization. | Implemented | `require_write_access` returns 503 when the environment is production, asserted by a test that enumerates the application's own POST routes so a new write endpoint cannot escape it. A stopgap that makes the gap loud: there is no authentication, no authorization and no tenancy, and project ids are global UUIDs |
+| FR-148 | A retracted fact shall never be selected, compared, or used to group documents. | Implemented | Found by the first end-to-end run: a threshold quoted inside a model agreement (`Rs. 5 crores`, p48), retracted weeks earlier, was still compared against the project's real estimated cost and produced a FAIL. Fixed in `select_one`, `load_project_facts`/`latest_by_type`, and `reconcile_projects`; `scripts/audit_traceability.py` had caught it independently |
+| FR-149 | Human review shall close a finding for the workspace, and a revised rule shall re-open it. | Implemented | `ProcessingStatus.NEEDS_ATTENTION` and `ProjectSummary.review_needed` count findings that are not a pass and have no *current* review, so accepting the last open finding clears the document and revising the rule brings it back with the earlier decision kept and counted as stale |
+
 ## API
 
 | ID | Requirement | Status | Evidence |
@@ -180,4 +201,4 @@ stays visible that they were not foreseen.
 | FR-092 | The system shall correlate every request with an ID, propagated to logs and returned to the caller. | Implemented | `TestRequestCorrelation` |
 | FR-093 | The system shall version its API paths. | Implemented | `TestOpenApi` |
 | FR-094 | The system shall not expose internal connection details in error responses. | Implemented | `test_readiness_does_not_leak_connection_details` |
-| FR-095 | The system shall accept document uploads and trigger audits. | Planned | — |
+| FR-095 | The system shall accept document uploads and trigger audits. | Implemented | `POST /v1/projects/{id}/documents` and `POST /v1/projects/{id}/process`. Upload is multipart and returns immediately with a status of `uploaded`; processing is a separate, synchronous call that runs the existing pipeline. Not publicly deployable — see FR-147 |

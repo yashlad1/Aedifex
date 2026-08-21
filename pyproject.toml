@@ -23,6 +23,13 @@ dependencies = [
     "psycopg[binary]>=3.2,<4",
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.34,<1",
+    # Multipart parsing, required by FastAPI the moment a form or a file upload exists — and a
+    # document upload has to be multipart, because the alternative is base64 in JSON, which inflates
+    # every artifact by a third and puts the bytes through a text codec on the way to a hash.
+    # Declared rather than left as a FastAPI extra so that `import` and `pyproject` agree: without
+    # it the application does not start, which is a runtime dependency by any definition.
+    # Apache-2.0.
+    "python-multipart>=0.0.20,<0.1",
     # Runtime as of the transport layer. It was previously dev-only, for the FastAPI test client.
     # Chosen because httpcore exposes the one thing this design requires: connecting to an address
     # while presenting a different name for TLS SNI and certificate verification, via the
@@ -59,7 +66,14 @@ dependencies = [
 # machine, container and CI runner. Pillow (HPND) decodes the page images that pypdf hands over,
 # including the CCITTFaxDecode fax scans.
 ocr = [
-    "rapidocr-onnxruntime>=1.2,<2",
+    # Pinned to the minor that every OCR measurement in this repository was taken on. The range was
+    # `>=1.2,<2`, and adding an unrelated dependency on 2026-08-21 caused a re-resolve that would
+    # have silently moved the engine to 1.4.4 — changing the transcription of every scanned page
+    # while the recorded benchmarks, the page-count limits and the SIGSEGV pixel budget all still
+    # described 1.2.3. An OCR upgrade is a decision with evidence behind it, not a side effect of
+    # locking. Exact rather than a range because 1.2.13 is equally untested; widen this
+    # deliberately, and re-measure when you do.
+    "rapidocr-onnxruntime==1.2.3",
     "pillow>=11,<12",
 ]
 dev = [

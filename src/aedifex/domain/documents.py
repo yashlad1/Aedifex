@@ -17,6 +17,7 @@ from aedifex.errors import InvalidStateTransitionError
 __all__ = [
     "DOCUMENT_TYPE_CATEGORY",
     "STATE_TRANSITIONS",
+    "ClassificationAuthority",
     "DocumentCategory",
     "DocumentState",
     "DocumentType",
@@ -165,6 +166,39 @@ DOCUMENT_TYPE_CATEGORY: Final[MappingProxyType[DocumentType, DocumentCategory]] 
 def category_for(document_type: DocumentType) -> DocumentCategory:
     """Return the business domain for ``document_type``."""
     return DOCUMENT_TYPE_CATEGORY[document_type]
+
+
+class ClassificationAuthority(StrEnum):
+    """Who decided a document's type. The column that stops a suggestion becoming a decision.
+
+    ``document_type`` gates real behaviour: the analysis runner suppresses document-scoped facts for
+    reference types, because a value quoted in a manual or an audit report is about somebody else's
+    project. Getting that wrong is silent, and it has already produced five false facts from real
+    documents. So the type has to carry *who said so*, and the values below are ordered by the
+    authority they represent rather than by how they arrived.
+
+    Only ``DECLARED`` and ``HUMAN_CONFIRMED`` may appear on a stored document today. The other two
+    exist so that a future policy of adopting a suggestion has an honest place to record itself
+    instead of being indistinguishable from a person's decision — which is the whole risk. A
+    classifier's *proposal* lives in ``suggested_document_type`` and never in ``document_type``.
+    """
+
+    DECLARED = "declared"
+    """Stated by whoever supplied the document. The default, and the strongest signal available."""
+
+    HUMAN_CONFIRMED = "human_confirmed"
+    """A person looked at the document — usually at a suggestion — and decided.
+
+    Distinct from ``DECLARED`` because the two are answerable in different ways: a declaration is
+    what the uploader believed, a confirmation is what a reviewer concluded after seeing the
+    contents. Collapsing them would lose the difference between a filing habit and a judgement.
+    """
+
+    DETERMINISTIC_CLASSIFIER = "deterministic_classifier"
+    """Reserved. A rule-based classifier's proposal, if one is ever adopted automatically."""
+
+    MODEL_SUGGESTION = "model_suggestion"
+    """Reserved. A model's proposal, which must never reach ``document_type`` unaided."""
 
 
 class DocumentState(StrEnum):

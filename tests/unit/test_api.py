@@ -284,3 +284,157 @@ class TestFindingReviewContract:
             json={"decision": "accepted", "note": "checked"},
         )
         assert response.status_code == 422
+
+
+@pytest.fixture
+def production_client() -> Iterator[TestClient]:
+    """A client whose settings say production, to prove the write endpoints refuse to serve.
+
+    Real-looking values throughout, because ``Settings`` refuses a production environment that still
+    carries development placeholders — which is itself the control being relied on here.
+    """
+    app = create_app()
+    # model_validate rather than the constructor: the DSN field is a PostgresDsn, and handing it the
+    # string form is exactly what a deployment does.
+    settings = Settings.model_validate(
+        {
+            "environment": Environment.PRODUCTION,
+            "database_url": (
+                "postgresql+psycopg://aedifex_app:s3cret-not-a-placeholder@db.internal:5432/aedifex"
+            ),
+            "storage_bucket": "aedifex-prod-raw",
+            "user_agent": "AedifexBot/0.1 (+https://aedifex.test/bot; contact: ops@aedifex.test)",
+            "source_registry_dir": str(REGISTRY_DIR),
+        }
+    )
+    registry = load_registry(REGISTRY_DIR)
+    app.dependency_overrides[settings_dependency] = lambda: settings
+    app.dependency_overrides[registry_dependency] = lambda: registry
+    app.dependency_overrides[database_probe_dependency] = _healthy_probe
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+class TestWriteBoundary:
+    """The API has no authentication, and every write endpoint refuses in production.
+
+    This is a stopgap and is documented as one: it makes the gap loud instead of closing it. The
+    test exists because the failure it prevents is silent and total: an unauthenticated write API
+    on a network lets any caller create projects and upload documents into anyone else's.
+
+    Enumerated from the application's own routes rather than listed by hand, so a write endpoint
+    added later cannot quietly escape the guard.
+    """
+
+    def test_every_write_endpoint_is_guarded(self, production_client: TestClient) -> None:
+        posts: list[str] = []
+        for route in create_app().routes:
+            path = getattr(route, "path", None)
+            if isinstance(path, str) and "POST" in (getattr(route, "methods", None) or set()):
+                posts.append(path)
+        assert posts, "the write surface should not be empty"
+        unguarded: list[str] = []
+        for path in posts:
+            url = (
+                path.replace("{project_id}", "00000000-0000-0000-0000-000000000000")
+                .replace("{document_id}", "00000000-0000-0000-0000-000000000000")
+                .replace("{finding_id}", "00000000-0000-0000-0000-000000000000")
+            )
+            response = production_client.post(url, json={})
+            if response.status_code != 503:
+                unguarded.append(f"{path} -> {response.status_code}")
+        assert unguarded == [], "a write endpoint served a request in production"
+
+    def test_the_refusal_says_why(self, production_client: TestClient) -> None:
+        response = production_client.post("/v1/projects", json={})
+        assert response.status_code == 503
+        assert "authorization" in response.json()["detail"]
+
+    def test_reads_are_unaffected(self, production_client: TestClient) -> None:
+        """The corpus catalog is read-only and stays available. This guard is about writes."""
+        assert production_client.get("/v1/sources").status_code == 200
+
+
+class TestProjectIntakeContract:
+    """The request contract for intake, enforced before any database is touched.
+
+    Deliberately not a round trip: creating a project, storing bytes and reading an inventory back
+    are database and object-store properties, and they are exercised in
+    ``tests/integration/test_project_intake.py``. What belongs here is that a malformed request
+    cannot reach the service layer at all.
+    """
+
+    def test_a_project_needs_a_known_source(self, client: TestClient) -> None:
+        """Checked against the registry before anything is written.
+
+        A project's source carries a real invariant — two authorities can issue the same reference
+        and they are not one project — so an unknown one is a 404 rather than a row with a
+        meaningless string in it.
+        """
+        response = client.post(
+            "/v1/projects",
+            json={"name": "Hostel 19", "source_id": "not_a_source", "created_by": "qs"},
+        )
+        assert response.status_code == 404
+        assert "unknown source" in response.json()["detail"]
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"source_id": "iitb_building_works", "created_by": "qs"},
+            {"name": "", "source_id": "iitb_building_works", "created_by": "qs"},
+            {"name": "Hostel 19", "source_id": "iitb_building_works"},
+            {"name": "Hostel 19", "created_by": "qs"},
+        ],
+    )
+    def test_an_incomplete_declaration_is_refused(
+        self, client: TestClient, body: dict[str, str]
+    ) -> None:
+        """A name and an author are both required: a project nobody declared has no provenance."""
+        assert client.post("/v1/projects", json=body).status_code == 422
+
+    def test_an_upload_needs_a_file(self, client: TestClient) -> None:
+        response = client.post(
+            "/v1/projects/00000000-0000-0000-0000-000000000000/documents",
+            data={"source_id": "iitb_building_works", "uploaded_by": "qs"},
+        )
+        assert response.status_code == 422
+
+    def test_an_upload_names_a_known_source_before_its_body_is_read(
+        self, client: TestClient
+    ) -> None:
+        """Refused on the source, before the bytes are read and before the database is opened.
+
+        The order matters for more than tidiness: reading the body first would mean accepting an
+        upload of arbitrary size on behalf of a source that does not exist.
+        """
+        response = client.post(
+            "/v1/projects/00000000-0000-0000-0000-000000000000/documents",
+            data={"source_id": "not_a_source", "uploaded_by": "qs"},
+            files={"file": ("boq.pdf", b"%PDF-1.7 not really", "application/pdf")},
+        )
+        assert response.status_code == 404
+
+    def test_an_unknown_document_type_is_refused(self, client: TestClient) -> None:
+        """The vocabulary of what a document *is* is a domain decision, not free text."""
+        response = client.post(
+            "/v1/projects/00000000-0000-0000-0000-000000000000/documents",
+            data={
+                "source_id": "iitb_building_works",
+                "uploaded_by": "qs",
+                "document_type": "probably_a_boq",
+            },
+            files={"file": ("boq.pdf", b"%PDF-1.7", "application/pdf")},
+        )
+        assert response.status_code == 422
+
+    def test_a_classification_needs_a_known_type_and_an_author(self, client: TestClient) -> None:
+        target = "/v1/documents/00000000-0000-0000-0000-000000000000/classification"
+        assert (
+            client.post(
+                target, json={"document_type": "not_a_type", "confirmed_by": "qs"}
+            ).status_code
+            == 422
+        )
+        assert client.post(target, json={"document_type": "bill_of_quantities"}).status_code == 422

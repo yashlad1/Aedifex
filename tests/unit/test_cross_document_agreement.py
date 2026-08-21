@@ -16,7 +16,12 @@ import uuid
 from decimal import Decimal
 
 from aedifex.domain.evidence import FactKind
-from aedifex.infrastructure.database.models import Document, ExtractedFact, Project
+from aedifex.infrastructure.database.models import (
+    Document,
+    ExtractedFact,
+    FactRetraction,
+    Project,
+)
 from aedifex.verification.cross_document import ProjectFacts, evaluate_fact_agreement
 from aedifex.verification.rules import NOT_SOURCED, Outcome
 
@@ -123,3 +128,45 @@ def test_matching_identifiers_alone_do_not_constitute_agreement() -> None:
 
     assert result.outcome is Outcome.INCONCLUSIVE
     assert result.observed == "nothing compared"
+
+
+def test_a_retracted_fact_is_not_compared() -> None:
+    """The defect the first end-to-end product run found, pinned so it cannot come back.
+
+    Real case: the Hostel 19 general conditions of contract quote a threshold — "works with an
+    estimated cost put to tender of less than Rs. 5 crores", page 48 — and version 4 of the
+    extractor had already retracted it, because a value quoted inside a model agreement is about
+    other people's projects. The rule loaded it anyway and reported ₹5,00,00,000 as this project's
+    estimated cost disagreeing with ₹85,39,81,318.41, producing a confident FAIL from evidence the
+    system itself had withdrawn.
+
+    Two things are asserted, and the second is the one that matters: the outcome is PASS, and the
+    retracted row is not cited. A finding may cite a fact it was computed from; it may never be
+    computed from a fact that no longer stands.
+    """
+    withdrawn = a_fact(
+        uuid.UUID("33333333-3333-3333-3333-333333333333"),
+        "estimated_cost",
+        Decimal("50000000"),
+        page=48,
+    )
+    withdrawn.retraction = FactRetraction(
+        fact_id=withdrawn.id,
+        retracted_by_extractor="test",
+        retracted_by_version="4",
+        reason="quoted inside a model agreement, so it is not a fact about this document",
+        software_version="0",
+    )
+
+    result = evaluate_fact_agreement(
+        project_of(
+            a_fact(NIT, "estimated_cost", Decimal("853981318.41")),
+            a_fact(RFP, "estimated_cost", Decimal("853981318.41"), page=2),
+            withdrawn,
+        )
+    )
+
+    assert result.outcome is Outcome.PASS
+    assert all(
+        fact.numeric_value == Decimal("853981318.41") for fact in result.evidence.values()
+    ), "a withdrawn value must not appear as evidence for anything"
