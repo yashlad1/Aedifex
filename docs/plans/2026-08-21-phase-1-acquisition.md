@@ -185,9 +185,19 @@ records that version 3 deliberately declined to emit them.
 documents, dropped every evidence link, and every outcome is `INCONCLUSIVE`. The traceability audit
 passes. No rule reads historical facts from the database.
 
-**What is not safe.** `GET /v1/documents/{id}/facts` selects every fact row for a document with no
-version filter, so it will serve `estimated_cost = ₹13,262 crore` as a fact of a CAG audit report.
-Filtering to the newest version would not help — the false rows *are* the newest.
+**What is not safe, verified by request rather than by reading the code:**
+
+```text
+GET /v1/documents/4367a0b9-a460-572a-a89d-b12992e6434f/facts   ->  HTTP 200
+  document_date    v2  dated 27.07.1989
+  estimated_cost   v2  ₹13,262 crore
+```
+
+The API serves both retracted facts for the Polavaram audit report with nothing marking them as
+withdrawn. Its docstring explains why it returns superseded versions — "they are what older findings
+were computed from, so hiding them would make a stored verdict unexplainable" — and that reasoning is
+right for a *correction* and exactly wrong for a *retraction*. Filtering to the newest version would
+not help either: the false rows **are** the newest.
 
 **Deliberately not fixed here.** Representing a retraction is a design decision — a tombstone row, a
 `retracted_at` column, a selection view — and guessing at it against a six-row sample is how you
