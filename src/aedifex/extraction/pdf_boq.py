@@ -21,20 +21,34 @@ number. The header is no help: it arrives split across eight fragments — ``Sr`
 column names merged onto one line, and it appears on the first page only. Continuation pages have no
 header at all.
 
-**Every row is checked arithmetically before it is emitted.** ``quantity x rate`` must reproduce the
-stated amount, and a row that fails is reported rather than returned. That single rule is what makes
-positional parsing of a flattened table safe: a misread row almost never satisfies it, and it caught
-two of the four money defects found in this module.
+**Arithmetic is no longer an admission criterion, and that is the most important thing about this
+module.** It used to be: ``quantity x rate`` had to reproduce the stated amount within a tolerance,
+or the row was refused. That invariant does not hold for commercial bills — the printed rate is
+rounded for display while the printed amount was computed from the unrounded one — and it is why
+three real IIT Bombay building bills, holding 2,309 priced rows between them, yielded **nothing at
+all**. Worse, the rows it refused included the ones most worth having: a bill whose arithmetic
+genuinely does not close is a finding, not a parse to discard.
 
-It is not sufficient on its own, and the two it missed say why. A block can hold another item's
+So the responsibilities split. This module answers *can I reliably identify the row and its three
+stated values?*, and :mod:`aedifex.calculation.row_arithmetic` answers *do those values agree, given
+the precision they are printed at?* Every row is classified ``EXACT``,
+``CONSISTENT_WITH_DISPLAY_ROUNDING`` or ``REVIEW``, and all three are returned.
+
+Two layouts are read, both from real documents:
+
+* **vertically exploded** — the NHAI bill above, one field per line, anchored on a heading plus the
+  column headers and parsed positionally within an item block.
+* **one row per line** — every IIT Bombay bill, ``3.6.1.1 M-25 Grade Cum 115 8,556.65  984,014.26``,
+  anchored on the row's own shape because no page carries the words "Bill of Quantities" at all.
+
+Row-level arithmetic is not sufficient on its own, and never was. A block can hold another item's
 figures and close perfectly (see ``_sequential_item_starts``), and a row can be dropped entirely
 without any surviving row noticing. The complement is the bill's own total, checked by
-:mod:`aedifex.verification.bill_total` over what this module returns — arithmetic within a row here,
-arithmetic across the bill there.
+:mod:`aedifex.verification.bill_total` over what this module returns — arithmetic within a row
+there, arithmetic across the bill there too.
 
-Deliberately narrow. This reads the layout in front of it and refuses everything else; it is not a
-general PDF table framework, and the next real document is expected to need changes here rather than
-to fit.
+Deliberately narrow. This reads the two layouts in front of it and nothing else; it is not a general
+PDF table framework, and the next real document is expected to need changes here rather than to fit.
 """
 
 from __future__ import annotations
@@ -44,6 +58,11 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Final
 
+from aedifex.calculation.row_arithmetic import (
+    ArithmeticConsistency,
+    RowArithmetic,
+    classify_row_arithmetic,
+)
 from aedifex.domain.evidence import FactKind
 from aedifex.extraction.pdftext import DocumentText
 from aedifex.extraction.spreadsheet import (
@@ -78,10 +97,21 @@ _BOQ_HEADING: Final[re.Pattern[str]] = re.compile(
 # Units as this corpus spells them. Recorded exactly as written and never converted — Cum and m3 may
 # mean the same thing to an engineer, and asserting that is a judgement this module has no business
 # making.
-_UNIT: Final[re.Pattern[str]] = re.compile(
-    r"^(?:Cum|Sqm|Sqmt|Rmt?|Km|MT|Nos?|Each|Kg|Quintal|Tonne|Ltr|Litre|Set|Job|LS)$",
-    re.IGNORECASE,
+#
+# The IIT Bombay bills needed three additions, every one of which had been a silent miss: a trailing
+# period (``Cum.``, ``Sqm.``, ``Nos.``), the metric forms (``m2``, ``m3``, ``CUMT``, ``SQMT``), and
+# the many spellings of a metre (``Rmtr``, ``Mtr``, ``Mtrs.``, ``Metre``, ``meter``). Measured: the
+# metre spellings alone were 104 unparsed rows across two bills, and adding them moved the civil+MEP
+# bill from 5.7% short of its own stated total to 0.47%.
+# Longer spellings first: with IGNORECASE, "MT" would otherwise claim the first two characters of
+# "Mtrs" and the match would depend on backtracking to recover.
+_UNIT_NAMES: Final[str] = (
+    r"Cumt|Cum|Sqmt|SQMT|Sqm|Rmtr|Rmt|Mtrs|Metre|Meter|Mtr|Litres|Litre|Ltr|"
+    r"Quintal|Tonne|Km|MT|Nos|No|Each|Kg|Set|Job|LS|Pair|Point|Joint|Month|Day|CM|m2|m3"
 )
+# Bare "m" is deliberately absent. It would make any description line ending in the letter m look
+# like a unit to _unit_in, and no observed priced row needs it.
+_UNIT: Final[re.Pattern[str]] = re.compile(rf"^(?:{_UNIT_NAMES})\.?$", re.IGNORECASE)
 
 # An item row starts either with the number alone on a line, or -- when the description is short
 # enough to fit on one line -- with the number, the description and even the unit run together:
@@ -122,20 +152,22 @@ _SUB_ITEM: Final[re.Pattern[str]] = re.compile(r"^\(([a-z])\)$", re.IGNORECASE)
 # A page marker such as "VII-5" sits at the top of every page in this volume.
 _PAGE_MARKER: Final[re.Pattern[str]] = re.compile(r"^[IVXL]+-\d+$")
 
-# Rows whose stated amount disagrees with quantity x rate by more than this are refused. Relative,
-# with an absolute floor, because the real document rounds: two of its rows are out by ₹10-13 on
-# figures near ₹9,000,000, which is a rounding artefact rather than a parse error. The grand-total
-# row it needs to reject is out by a factor of four.
-_RELATIVE_TOLERANCE: Final[Decimal] = Decimal("0.0005")
-_ABSOLUTE_TOLERANCE: Final[Decimal] = Decimal("100")
-
 # Description lines longer than this are almost certainly prose that has run past the table.
 _MAX_DESCRIPTION_LINES: Final[int] = 40
 
 
 @dataclass(frozen=True, slots=True)
 class BoqRow:
-    """One priced line item, and the page it was read from."""
+    """One priced line item, its three stated values, and where each was read from.
+
+    The three values are kept as **independent evidence**: each carries the literal the document
+    printed alongside the parsed ``Decimal``, because ``8,556.65`` and ``8556.65`` are the same
+    number but only one of them is what the page says, and because the literal is what shows the
+    precision the bill chose to print at.
+
+    Whether the three agree is :attr:`arithmetic`, and it is a classification rather than a filter.
+    A row that does not add up is kept.
+    """
 
     item_identifier: str
     description: str
@@ -146,6 +178,19 @@ class BoqRow:
     page: int
     order: int
     """Position within the bill, used as the row locator in place of a spreadsheet cell."""
+
+    quantity_literal: str = ""
+    rate_literal: str = ""
+    amount_literal: str = ""
+    quantity_page: int = 0
+    rate_page: int = 0
+    amount_page: int = 0
+    """Per-value provenance. Separate pages because a row can straddle a page break in the
+    vertically-exploded layout, where the three figures are three lines rather than one."""
+
+    arithmetic: RowArithmetic | None = None
+    """How the stated amount relates to quantity x rate. ``None`` only for rows built by a caller
+    that predates the classification."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,12 +236,19 @@ def _to_decimal(text: str) -> Decimal | None:
     return -value if negative else value
 
 
-def _agrees(quantity: Decimal, rate: Decimal, amount: Decimal) -> bool:
-    """Whether ``quantity x rate`` reproduces the stated amount within tolerance."""
-    expected = quantity * rate
-    difference = abs(expected - amount)
-    allowed = max(_ABSOLUTE_TOLERANCE, abs(amount) * _RELATIVE_TOLERANCE)
-    return difference <= allowed
+def _closes(quantity: Decimal, rate: Decimal, amount: Decimal) -> bool:
+    """Whether three figures plausibly form one priced row, for *structural* disambiguation only.
+
+    Not an admission test. This module no longer decides whether a row is worth reporting on its
+    arithmetic — see :mod:`aedifex.calculation.row_arithmetic` — and the one question left that
+    arithmetic can answer is how many rows a block contains. A block holding two complete triples is
+    a block this reader has misread, and telling that apart from a single row with figures in its
+    description needs to know whether the earlier triple closes.
+    """
+    return (
+        classify_row_arithmetic(quantity, rate, amount).consistency
+        is not ArithmeticConsistency.REVIEW
+    )
 
 
 def _find_table_page(document: DocumentText) -> int | None:
@@ -267,11 +319,12 @@ def _build_row(
     The last three figures are quantity, rate and amount; anything earlier belongs to the
     description, which quotes figures constantly ("not exceeding 25 mm", "1:4", "clause 601").
     """
-    values = [
-        parsed
-        for _, line in block
+    figures = [
+        (line, figure_page, parsed)
+        for figure_page, line in block
         if _MONEY_LINE.match(line) and (parsed := _to_decimal(line)) is not None
     ]
+    values = [parsed for _, _, parsed in figures]
     if len(values) < 3:
         return None, None
 
@@ -280,7 +333,7 @@ def _build_row(
     # Sub-items are handled before this point by splitting on their own markers; anything still
     # holding two triples here is a block this reader has misread, and refusing is the honest
     # answer.
-    if len(values) >= 6 and _agrees(values[-6], values[-5], values[-4]):
+    if len(values) >= 6 and _closes(values[-6], values[-5], values[-4]):
         return None, (
             f"item {identifier} (page {page_number}): the block contains more than one priced "
             f"row — {values[-6]} x {values[-5]} = {values[-4]} and {values[-3]} x "
@@ -288,18 +341,16 @@ def _build_row(
             f"wrong, and this block is not the sub-item layout the reader knows"
         )
 
-    quantity, rate, amount = values[-3], values[-2], values[-1]
+    quantity_cell, rate_cell, amount_cell = figures[-3], figures[-2], figures[-1]
+    quantity, rate, amount = quantity_cell[2], rate_cell[2], amount_cell[2]
     description = " ".join(
         line for _, line in block if not _MONEY_LINE.match(line) and not _UNIT.match(line)
     ).strip()
 
-    if not _agrees(quantity, rate, amount):
-        return None, (
-            f"item {identifier} (page {page_number}): {quantity} x {rate} = {quantity * rate} "
-            f"but the amount is stated as {amount}; refused rather than reported, because a "
-            f"row whose arithmetic does not close was probably not read correctly"
-        )
-
+    # No arithmetic gate. A row whose amount disagrees with quantity x rate is classified and
+    # returned, because that disagreement is a finding rather than a parse to be thrown away -- and
+    # because "refused because the arithmetic did not close" was the reason five real building bills
+    # produced nothing at all.
     return (
         BoqRow(
             item_identifier=identifier,
@@ -310,9 +361,153 @@ def _build_row(
             amount=amount,
             page=page_number,
             order=order,
+            quantity_literal=quantity_cell[0],
+            rate_literal=rate_cell[0],
+            amount_literal=amount_cell[0],
+            quantity_page=quantity_cell[1],
+            rate_page=rate_cell[1],
+            amount_page=amount_cell[1],
+            arithmetic=classify_row_arithmetic(quantity, rate, amount),
         ),
         None,
     )
+
+
+# --------------------------------------------------------------------------------------------
+# The second observed layout: one priced row per line.
+#
+# The NHAI bill above explodes a row down the page -- item number, description, unit, quantity,
+# rate, amount, each on its own line. Every IIT Bombay building bill puts the whole row on one
+# line instead:
+#
+#     3.6.1.1 M-25 Grade Cum 115 8,556.65       984,014.26
+#     4.2.1 Above Floor VI up to Floor IX Cum. 1900 139.92          265,849.40
+#     Rmt 6500 56.00            364,000.00
+#     Nos.30 498.00                  14,940.00
+#
+# Nothing about the vertical reader can be stretched to fit that, and three of its assumptions are
+# actively wrong here: item numbers are hierarchical (``3.6.1.1``), so the strict 1,2,3 sequence
+# never advances; quantities are printed as bare integers, so _MONEY_LINE's mandatory two decimals
+# never match them; and no page carries the string "Bill of Quantities" at all.
+#
+# So the anchor is the row's own shape rather than a heading: a unit token followed by three
+# numbers at the end of a line, where rate and amount both carry exactly two decimals. That is
+# specific enough to need no heading -- section totals ("Total for RCC Work 392,522,415.84") carry
+# one number, section headings carry none, and prose does not end in unit-then-three-figures.
+_QUANTITY_FIGURE: Final[str] = r"\(?\d[\d,]*(?:\.\d+)?\)?"
+_MONEY_FIGURE: Final[str] = r"\(?\d[\d,]*\.\d{2}\)?"
+
+# ``Nos.30`` really occurs, so the gap between unit and quantity is optional.
+_ROW_LINE: Final[re.Pattern[str]] = re.compile(
+    rf"(?P<head>.*?)(?P<unit>{_UNIT_NAMES})\.?\s*"
+    rf"(?P<quantity>{_QUANTITY_FIGURE})\s+"
+    rf"(?P<rate>{_MONEY_FIGURE})\s+"
+    rf"(?P<amount>{_MONEY_FIGURE})\s*$",
+    re.IGNORECASE,
+)
+
+# One VMCC row prints its unit on its own line and its three figures on the next. Supported only in
+# exactly that shape -- a bare triple with a unit immediately above it -- because three unanchored
+# numbers at the end of a line are common in prose and a unit line above them is not.
+_BARE_TRIPLE: Final[re.Pattern[str]] = re.compile(
+    rf"^(?P<quantity>{_QUANTITY_FIGURE})\s+(?P<rate>{_MONEY_FIGURE})\s+"
+    rf"(?P<amount>{_MONEY_FIGURE})\s*$"
+)
+
+# A hierarchical item number leading a line: 3.6.1.1, 4.2.1, 25.
+#
+# The space after the number is optional because the flattened text loses it: one page reads
+# "4.26.1.1Exterior Grade - I MDF Board 6 mm thick". Requiring whitespace made that line match
+# nothing, so the row silently inherited its parent's identifier 4.26 -- and three sibling rows then
+# shared one identifier, which is a wrong work-item key rather than a missing one.
+_HIERARCHICAL_ITEM: Final[re.Pattern[str]] = re.compile(r"^(\d+(?:\.\d+)*)(?=\s|[A-Za-z])\s*(.*)$")
+
+# A section subtotal, which states an amount and is not a row. Excluded explicitly because it would
+# otherwise be picked up by nothing -- it has one figure, not three -- but naming it documents that
+# the omission is deliberate and that these bills state no single total of their own.
+_SECTION_TOTAL: Final[re.Pattern[str]] = re.compile(
+    r"^(?:Sub-?)?Total\b.*?[\d,]+\.\d{2}\s*$", re.IGNORECASE
+)
+
+
+def _read_line_layout(document: DocumentText) -> PdfBoq:
+    """Read a bill whose every priced row occupies one line.
+
+    Rows carry the nearest preceding item number when they do not state one themselves, which is how
+    these bills are written: item 3.9 describes the work over six lines and then prices it on a
+    seventh that begins with the unit.
+    """
+    rows: list[BoqRow] = []
+    context: list[str] = []
+    identifier = ""
+    previous_unit: str | None = None
+
+    for page in document.pages:
+        for raw in page.text.splitlines():
+            line = raw.strip()
+            if not line or _PAGE_MARKER.match(line) or _SECTION_TOTAL.match(line):
+                previous_unit = None
+                continue
+
+            numbered = _HIERARCHICAL_ITEM.match(line)
+            match = _ROW_LINE.match(line)
+            bare = _BARE_TRIPLE.match(line) if previous_unit else None
+
+            if match is None and bare is None:
+                # Not a priced row. Remember it as description context, and remember it as a unit
+                # if that is all it is, so the next line can be a bare triple.
+                if numbered is not None:
+                    identifier = numbered.group(1)
+                    context = [numbered.group(2).strip()] if numbered.group(2).strip() else []
+                elif len(context) <= _MAX_DESCRIPTION_LINES:
+                    context.append(line)
+                previous_unit = line if _UNIT.match(line) else None
+                continue
+
+            if match is not None:
+                head = match.group("head").strip()
+                unit = match.group("unit")
+                inline = _HIERARCHICAL_ITEM.match(head)
+                if inline is not None:
+                    identifier = inline.group(1)
+                    description = inline.group(2).strip()
+                else:
+                    description = " ".join([*context, head]).strip() if head else " ".join(context)
+            else:
+                assert bare is not None  # noqa: S101 - narrowing for the type checker
+                match = bare
+                unit = previous_unit or ""
+                description = " ".join(context).strip()
+
+            quantity = _to_decimal(match.group("quantity"))
+            rate = _to_decimal(match.group("rate"))
+            amount = _to_decimal(match.group("amount"))
+            previous_unit = None
+            if quantity is None or rate is None or amount is None:
+                continue
+
+            rows.append(
+                BoqRow(
+                    item_identifier=identifier or f"row {len(rows) + 1}",
+                    description=description[:2000],
+                    unit=unit.rstrip(".") or None,
+                    quantity=quantity,
+                    rate=rate,
+                    amount=amount,
+                    page=page.number,
+                    order=len(rows) + 1,
+                    quantity_literal=match.group("quantity"),
+                    rate_literal=match.group("rate"),
+                    amount_literal=match.group("amount"),
+                    quantity_page=page.number,
+                    rate_page=page.number,
+                    amount_page=page.number,
+                    arithmetic=classify_row_arithmetic(quantity, rate, amount),
+                )
+            )
+            context = []
+
+    return PdfBoq(rows=tuple(rows), first_page=rows[0].page if rows else None, rejected=())
 
 
 def _stated_total(
@@ -333,7 +528,10 @@ def read_pdf_boq(document: DocumentText) -> PdfBoq:
     """
     start_page = _find_table_page(document)
     if start_page is None:
-        return PdfBoq(rows=(), first_page=None, rejected=())
+        # No heading-anchored table. Try the one-row-per-line layout, which needs no heading because
+        # the row shape is its own anchor. Ordered this way rather than by document inspection so
+        # that the vertical reader's behaviour on the bill it was written against cannot change.
+        return _read_line_layout(document)
 
     # Lines from the heading onwards, remembering which page each came from so a fact can cite one.
     numbered: list[tuple[int, str]] = []
@@ -473,13 +671,19 @@ def boq_fields(boq: PdfBoq) -> list[tuple[str, BoqRow]]:
 
 
 def value_of(fact_type: str, row: BoqRow) -> tuple[str, Decimal | None]:
-    """The literal and numeric value for one fact of ``row``."""
+    """The literal and numeric value for one fact of ``row``.
+
+    The literal is what the bill *printed* where the reader captured it — ``8,556.65``, thousands
+    separators and all — falling back to the parsed form only for rows built before literals were
+    recorded. Storing the printed form matters twice over: it is the evidence a reviewer checks
+    against the page, and its decimal places are what the arithmetic classification is derived from.
+    """
     if fact_type == FIELD_ITEM_IDENTIFIER:
         return row.item_identifier, None
     if fact_type == FIELD_ITEM_DESCRIPTION:
         return row.description, None
     if fact_type == FIELD_CONTRACTED_QUANTITY:
-        return f"{row.quantity}", row.quantity
+        return row.quantity_literal or f"{row.quantity}", row.quantity
     if fact_type == FIELD_CONTRACT_RATE:
-        return f"{row.rate}", row.rate
-    return f"{row.amount}", row.amount
+        return row.rate_literal or f"{row.rate}", row.rate
+    return row.amount_literal or f"{row.amount}", row.amount

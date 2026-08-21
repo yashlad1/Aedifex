@@ -19,6 +19,8 @@ from __future__ import annotations
 import hashlib
 import tempfile
 import uuid
+from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from pathlib import Path
@@ -35,6 +37,7 @@ from aedifex.calculation.engine import (
     compute_for_work_item,
     compute_required_bid_security,
 )
+from aedifex.calculation.row_arithmetic import ArithmeticConsistency
 from aedifex.domain.documents import DocumentState, DocumentType, assert_transition_allowed
 from aedifex.errors import ExtractionError
 from aedifex.extraction.applicability import ApplicableProvision, select_provision
@@ -181,6 +184,14 @@ class AnalysisOutcome:
     worrying about.
     """
 
+    bill_arithmetic: Mapping[ArithmeticConsistency, int] = field(default_factory=dict)
+    """How many priced rows fell into each arithmetic class, when the document held a bill.
+
+    A count rather than the rows themselves: the largest bill in the corpus has 1,193 of them, and
+    the operator's question is "does this bill add up, and how many rows need a person?" — not a
+    listing. The rows are facts, and the REVIEW ones are found by querying them.
+    """
+
     @property
     def unsupported(self) -> tuple[str, ...]:
         """Why any field is missing. Empty means everything the extractor looks for was found."""
@@ -287,7 +298,12 @@ def analyse_document(
         session, document_id, read_bid_security_policy(text) if is_reference else ()
     )
 
-    boq = read_pdf_boq(text)
+    # Not from a reference document. The same rule that stops an audit report emitting an
+    # `estimated_cost` about itself applies to its tables: a CAG report's figures are quantities and
+    # rates from someone else's bill, quoted as findings. Measured after the one-row-per-line reader
+    # landed — it found 1 row in the Polavaram report and 6 in the Bangalore Metro report, all of
+    # them audit-table rows that happened to share the shape of a priced row.
+    boq = PdfBoq(rows=(), first_page=None, rejected=()) if is_reference else read_pdf_boq(text)
     if boq.rows:
         notice = TenderNotice(
             fields=notice.fields + _boq_fields(boq),
@@ -369,6 +385,9 @@ def analyse_document(
         page_count=text.page_count,
         had_text_layer=text.has_text_layer,
         retracted=retracted,
+        bill_arithmetic=Counter(
+            row.arithmetic.consistency for row in boq.rows if row.arithmetic is not None
+        ),
     )
 
 

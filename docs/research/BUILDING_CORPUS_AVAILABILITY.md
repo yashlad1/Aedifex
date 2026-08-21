@@ -167,38 +167,46 @@ Extractor v4 prefers a stated `Total` over the first component **only when the c
 it** — arithmetic, not label-guessing — and refuses a total qualified by GST. The identifier pattern
 now allows a parenthesised segment.
 
-### BLOCKER, open — the priced BOQ reader does not read building BOQs
+### BLOCKER, closed 2026-08-21 — the priced BOQ reader now reads building BOQs
 
-**This is the most important finding in this document and it is not fixed.** A 75-page priced BOQ
-with `Sr.No | Description | Unit | Qty | Rate | Amount` on every page yields **zero rows**, and
-`bill_items_reconcile_to_stated_total` reports "no priced bill of quantities, so there is nothing to
-add up."
+Was open when this document was written. The parser required `quantity x rate == amount` exactly as
+its **admission criterion**, and that invariant does not hold for commercial bills: the printed rate
+is rounded for display while the printed amount was computed from the unrounded one. Three real
+bills holding 2,309 priced rows yielded nothing at all.
 
-Three independent causes, each verified:
+Fixed by splitting the responsibility. `pdf_boq.py` answers *can I identify the row and its three
+stated values?*; `aedifex/calculation/row_arithmetic.py` answers *do those values agree, given the
+precision they are printed at?* The permissible difference is **derived, never chosen** — from the
+quantity, the rate's displayed decimals and the amount's displayed decimals, because those are
+evidence. The old `_RELATIVE_TOLERANCE = 0.0005` with a Rs.100 absolute floor is gone.
 
-1. **The heading anchor cannot fire.** `_BOQ_HEADING` requires "Bill of Quantities (BOQ)" or
-   "Priced Bill of Quantit". The document contains the string `"Bill of Quantities"` **zero times**.
-2. **The unit vocabulary does not cover it.** `_UNIT` knows `Cum|Sqm|Sqmt|Rmt|…`; these documents
-   write `m3`, `m2`, `CUMT`, `SQMT`, `Sqm.`, `sqm`, `each`.
-3. **The arithmetic guard would reject the rows even so.** `quantity × rate == amount` exactly is
-   what makes positional parsing safe on the NHAI bill. In these documents the **displayed rate is
-   rounded to 2 dp while the amount is computed from more precision**:
+| Bill | Rows | EXACT | CONSISTENT | REVIEW | Rejected | Row sum vs document total |
+| --- | --- | --- | --- | --- | --- | --- |
+| Hostel 19 | 661 | 141 | 508 | 12 | 0 | -1.25% |
+| VMCC renovation | 455 | 433 | 21 | 1 | 0 | states no total |
+| civil+MEP package | 1,193 | 1,059 | 129 | 5 | 0 | **-0.47%** |
+| H1 60 flats (unpriced) | 0 | — | — | — | 0 | correct: rates blank |
+| sports cladding (unpriced) | 0 | — | — | — | 0 | correct: quantities only |
+| **NHAI bill (regression)** | **37** | 35 | 1 | 1 | 0 | **0.00** |
 
-   | Qty | Rate shown | Amount stated | Qty × Rate |
-   | --- | --- | --- | --- |
-   | 115 | 8,556.65 | 984,014.26 | 984,014.75 |
-   | 1300 | 8,835.65 | 11,486,344.53 | 11,486,345.00 |
-   | 1125 | 5,528.09 | 6,219,105.75 | 6,219,101.25 |
-   | 215 | 654.00 | 1,40,610.00 | 1,40,610.00 ✓ |
+Two documents previously described here as priced are in fact **unpriced bidder returns**, so zero
+rows is the correct answer for them and not a failure.
 
-   Some rows are exact; most are off by cents to a few rupees. **A tolerance is a money-semantics
-   decision and is deliberately not being taken unilaterally.** The options are a relative epsilon,
-   reconstructing the unrounded rate from `amount / quantity`, or treating a near-miss as `REVIEW`
-   rather than a rejected row.
+**The REVIEW rows are real bill errors, not parse errors**, verified against the pages: the civil+MEP
+bill states `Sqm 86 631.00 54,518.40` where 86 x 631 = 54,266.00, and Hostel 19 states
+`Rmt. 766 478.10 366,125.43` where 766 x 478.10 = 366,224.60. The old parser discarded every one of
+these silently. They are now kept, classified, and carry `implied_rate` and `rate_difference` as
+derived facts — offered alongside the stated rate, never substituted for it.
 
-This is the spine of the horizontal model — Work Item is what Measurement, Claim and Certification
-all attach to — and it is the one link where abundant class-A building evidence now exists and
-cannot be read.
+Two further things the real documents required, both vocabulary rather than abstraction: a second
+row layout (one row per line, hierarchical item numbers like `3.6.1.1`, no "Bill of Quantities"
+heading anywhere), and the many spellings of a metre (`Rmtr`, `Mtr`, `Mtrs.`, `Metre`), which alone
+accounted for 104 unparsed rows and moved the civil+MEP bill from 5.7% short to 0.47%.
+
+**Known limitation, not chased:** Hostel 19 is still 1.25% (Rs.1.07 crore) short of its own stated
+total. Reference documents are excluded from bill reading entirely, after the line reader found 7
+spurious rows in two CAG audit reports — an audit report's tables are figures from someone else's
+bill.
 
 ### NEXT
 

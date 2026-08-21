@@ -54,6 +54,7 @@ from aedifex.acquisition.fetch.resolver import SystemResolver
 from aedifex.acquisition.pipeline import Acquirer
 from aedifex.acquisition.registry import get_registry
 from aedifex.acquisition.registry.models import SourceDefinition
+from aedifex.calculation.row_arithmetic import ArithmeticConsistency
 from aedifex.config import Settings, get_settings
 from aedifex.domain.documents import DocumentType
 from aedifex.domain.evidence import RelationshipType
@@ -94,6 +95,21 @@ _log = get_logger(__name__)
 # artifact and being able to read it are separate capabilities, and conflating them produced a
 # nonsense error. Anything outside this set is stored, provenanced, and skipped by name.
 _READABLE_FORMATS: Final[frozenset[FileFormat]] = frozenset({FileFormat.PDF, FileFormat.XLSX})
+
+
+# A derived fact's expression is its whole derivation, and for a bill that is every row: the
+# 661-row Hostel 19 bill produces a 7,590-character addition. Stored in full, because reproducing a
+# derived value is the point -- but printed abbreviated, because printing it twice per document
+# buried every finding under 30 KB of arithmetic.
+_MAX_EXPRESSION_CHARS: Final[int] = 160
+
+
+def _short_expression(expression: str) -> str:
+    """An expression an operator can read, with the full one still in the database."""
+    if len(expression) <= _MAX_EXPRESSION_CHARS:
+        return expression
+    terms = expression.count("+") + 1
+    return f"{expression[:_MAX_EXPRESSION_CHARS]}... ({terms} terms, full derivation stored)"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -567,7 +583,7 @@ def _print_project(
                 f"  {derived.fact_type:32} {derived.numeric_value}  "
                 f"{analysis.filename(derived.document_id) if derived.document_id else 'project'}"
             )
-            print(f"  {'':32} {derived.expression}")
+            print(f"  {'':32} {_short_expression(derived.expression)}")
 
     print("\nFACTS")
     for fact in sorted(analysis.facts, key=lambda f: (f.fact_type, str(f.document_id))):
@@ -620,7 +636,8 @@ def _print_project(
                 name = derived.fact_type.split(":", 1)[-1]
                 print(
                     f"    {name:22} {_plain(derived.numeric_value):>12} "
-                    f"{(derived.unit or derived.currency or ''):5}  ({derived.expression})"
+                    f"{(derived.unit or derived.currency or ''):5}  "
+                    f"({_short_expression(derived.expression)})"
                 )
             for finding in entry.findings:
                 print(f"    {finding.outcome.upper():13} {finding.rule_id}")
@@ -652,7 +669,7 @@ def _print_project(
                     # Marked as derived: it is evidence, but nobody wrote it down.
                     print(
                         f"    derived   {citation.role:26} {where} "
-                        f"= {computed.numeric_value} ({computed.expression})"
+                        f"= {computed.numeric_value} ({_short_expression(computed.expression)})"
                     )
 
 
@@ -686,9 +703,31 @@ def _print_analysis(session: Session, outcome: AnalysisOutcome) -> None:
             )
         print("  the rows remain readable, so any finding computed from them is still explainable")
 
+    if outcome.bill_arithmetic:
+        # A bill, not a notice. Counts rather than rows: the largest in the corpus has 1,193 priced
+        # rows and printing five facts each would bury everything else in 6,000 lines.
+        total = sum(outcome.bill_arithmetic.values())
+        print(f"\nPRICED BILL  {total} row(s)")
+        for consistency in ArithmeticConsistency:
+            count = outcome.bill_arithmetic.get(consistency, 0)
+            if count:
+                print(f"  {consistency.value:34} {count}")
+        needs_review = outcome.bill_arithmetic.get(ArithmeticConsistency.REVIEW, 0)
+        if needs_review:
+            print(
+                f"  {needs_review} row(s) state an amount that display rounding cannot explain. "
+                "Kept, not discarded"
+            )
+
     if outcome.facts:
-        print("\nFACTS")
-        for fact in sorted(outcome.facts, key=lambda f: f.fact_type):
+        # Row-scoped facts are the bill, already summarised above. Printing them here as well told
+        # an operator nothing and cost thousands of lines.
+        document_facts = [fact for fact in outcome.facts if fact.sheet_row is None]
+        if len(document_facts) < len(outcome.facts):
+            print(f"  {len(outcome.facts) - len(document_facts)} row-scoped fact(s) not listed")
+        if document_facts:
+            print("\nFACTS")
+        for fact in sorted(document_facts, key=lambda f: f.fact_type):
             value = f"{fact.numeric_value:,}" if fact.numeric_value is not None else fact.literal
             unit = f" {fact.currency}" if fact.currency else ""
             print(f"  {fact.fact_type:32} {value}{unit}")
@@ -699,7 +738,7 @@ def _print_analysis(session: Session, outcome: AnalysisOutcome) -> None:
         for derived in sorted(outcome.derived, key=lambda d: d.fact_type):
             print(f"  {derived.fact_type:32} {derived.numeric_value}")
             print(
-                f"  {'':32} {derived.expression}   "
+                f"  {'':32} {_short_expression(derived.expression)}   "
                 f"[{derived.calculation} v{derived.calculation_version}]"
             )
 
@@ -721,7 +760,7 @@ def _print_analysis(session: Session, outcome: AnalysisOutcome) -> None:
                     # Labelled "derived" rather than "evidence": citable, but no document states it.
                     print(
                         f"    derived   {link.role} = {computed.numeric_value} "
-                        f"({computed.expression})"
+                        f"({_short_expression(computed.expression)})"
                     )
             elif link.provision_id is not None:
                 clause = session.get(PolicyProvision, link.provision_id)
