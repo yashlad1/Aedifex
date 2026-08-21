@@ -61,7 +61,16 @@ CURRENCY_INR: Final[str] = "INR"
 # and the unique constraint on (document, fact_type, extractor_version) makes a bump a new row
 # rather than a silent overwrite of evidence.
 EXTRACTOR: Final[str] = "nhai_tender_notice"
-EXTRACTOR_VERSION: Final[str] = "1"
+
+# Bumped to "2" on 2026-08-20, when a real reference document showed the reader inventing a fact.
+# The NHAI Works Manual states "two percent of the estimated cost for works up to Rs. 20 crore",
+# and version 1 recorded `estimated_cost = Rs 20,00,00,000` as a fact about a procedure manual.
+#
+# The version bump is the point, not housekeeping. Evidence is never deleted here, so the false row
+# stays — but selection takes the newest extractor version per document, so a corrected reading
+# supersedes a wrong one instead of sitting beside it. A fact the document never stated is not a
+# competing reading to be weighed; it is a value that must stop being selectable.
+EXTRACTOR_VERSION: Final[str] = "2"
 
 # How much surrounding text a snippet carries. Enough to read the value in its own sentence, so a
 # reviewer can judge it without opening the PDF; short enough to store per fact.
@@ -91,6 +100,27 @@ _BID_SECURITY_HEADER: Final[re.Pattern[str]] = re.compile(
 _DOCUMENT_FEE: Final[re.Pattern[str]] = re.compile(
     r"Cost\s+of\s+Bid\s+Document|Tender\s+Fee|Document\s+Fee|Non-?Refundable", re.IGNORECASE
 )
+
+# "Estimated cost" as the object of a rate rule, not as this document's own figure. The NHAI Works
+# Manual states policy rather than a tender: clause 4.14.1 reads "two percent of the estimated cost
+# for works up to Rs. 20 crore", and reading the label positionally produced
+# `estimated_cost = Rs 20,00,00,000` as a fact about a 297-page procedure manual -- which then went
+# on to be cited as evidence in a finding.
+#
+# The discriminator is what sits *before* the label. A document stating its own cost writes
+# "Estimated Cost (in Rs.)" or "Estimated Cost ... Rs. 13,28,04,915/-"; a document stating a rule
+# writes "N percent of the estimated cost". Neither real tender layout in the corpus is preceded by
+# a percentage, so this refuses the policy sentence without touching them.
+_RATE_OF_COST: Final[re.Pattern[str]] = re.compile(
+    r"(?:\d+(?:\.\d+)?\s*(?:%|per\s?cent)|"
+    r"(?:one|two|three|four|five|half|quarter)(?:[\s\-]and[\s\-]\w+)?[\s\-]*"
+    r"(?:%|per\s?cent))\w*\s+of\s+(?:the\s+)?$",
+    re.IGNORECASE,
+)
+
+# How far back to look for that construction. Long enough for "one and one-half percent of the",
+# short enough that an unrelated percentage earlier in a table cannot reach the label.
+_RATE_PREFIX_WINDOW: Final[int] = 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,7 +356,18 @@ def _find_table_amounts(
     figure for the cost -- which it did, on a real document, before this distinction existed.
     """
     for page, text in pages:
-        cost_header = _ESTIMATED_COST_HEADER.search(text)
+        # Every occurrence, not the first. A page can state a rule and a value, and taking only the
+        # first match let one policy sentence hide a genuine figure further down.
+        cost_header = next(
+            (
+                match
+                for match in _ESTIMATED_COST_HEADER.finditer(text)
+                if not _RATE_OF_COST.search(
+                    text[max(0, match.start() - _RATE_PREFIX_WINDOW) : match.start()]
+                )
+            ),
+            None,
+        )
         if cost_header is None:
             continue
         security_header = _BID_SECURITY_HEADER.search(text)

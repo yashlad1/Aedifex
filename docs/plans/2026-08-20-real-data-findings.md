@@ -205,6 +205,84 @@ again.
 invariant it breaks is the one the acquisition model rests on: every path converges into the same
 pipeline, and nothing after acquisition can tell them apart.
 
+### B10. A reference document made the reader invent facts
+
+The first real Indian **reference** document — the NHAI Works Manual 2006, 297 pages, manually
+downloaded from nhai.gov.in — produced two facts, and **both were false.**
+
+| Fact | Value | Where it came from |
+| --- | --- | --- |
+| `estimated_cost` | ₹20,00,00,000 | clause 4.14.1: *"two percent of **the estimated cost** for works up to **Rs. 20 crore**"* |
+| `document_date` | 31.7.2002 | the contents page, citing *"M/o Finance … U.O. No. 24(16)/PFII/2000 **dated 31.7.2002**"* |
+
+A 297-page procedure manual has no estimated cost, and its date is not the date of a Ministry of
+Finance memorandum it happens to list. The cost fact was then **cited as evidence** in the
+bid-security finding, which is the part that makes this a blocker rather than a curiosity.
+
+**The root cause generalises, and it is the most useful thing this acquisition taught:** *a value
+mentioned in a document is not necessarily a value about that document.* Every extractor in the
+pipeline was tuned on tenders, where a labelled amount near the top **is** the tender's own figure.
+Reference documents violate that assumption structurally — amounts, rates and dates are their
+subject matter, quoted as the objects of rules. So the pipeline was quietly relying on a property of
+one document class and met the other for the first time this week.
+
+**Fixed, narrowly.** The discriminator is what precedes the label: a document stating its own cost
+writes `Estimated Cost (in Rs.)`; a document stating a rule writes `N percent of the estimated
+cost`. Neither real tender layout is preceded by a percentage, so refusing that construction removes
+the false fact and leaves both real tenders extracting exactly as before — verified on
+`RFP_806.pdf`, still ₹8,46,49,969 and ₹16.93 Lacs from page 6. The scan also now considers *every*
+occurrence of the label on a page rather than the first, so a page carrying both a rule and a value
+still yields the value.
+
+**Not fixed: the date.** Same defect class, lower stakes — it feeds project chronology, not money —
+and a general "is this date about this document?" discriminator is genuinely hard when dates appear
+in prose constantly. Recorded as N8.
+
+**The wrong fact was not deleted.** `EXTRACTOR_VERSION` went to `2` instead, so the corrected reading
+supersedes the false one under the existing selection policy (newest extractor version per document
+wins) while the v1 row stays queryable. That distinction is worth stating: a false fact is *not* a
+competing reading to be weighed against a better one, so the requirement is that it stop being
+selectable, not that it stop existing.
+
+### N9. The authoritative NHAI bid-security policy exists, is tiered, and cannot be read
+
+**This corrects a conclusion recorded during the vertical-slice milestone.** That plan stated *"There
+is no single global NHAI rate to configure"*, inferred from two tenders observed at 1% and 2%. There
+is one. Clause 4.14.1 of the NHAI Works Manual, page 79:
+
+| Estimated cost | Bid security | Cap |
+| --- | --- | --- |
+| up to ₹20 crore | **2%** | ₹30 lacs |
+| ₹20 crore – ₹50 crore | **1.5%** | ₹50 lacs |
+| above ₹50 crore | **1%** | — |
+
+It predicts the corpus exactly. The real tender's estimated cost is ₹8.46 crore, which falls in tier
+(a): 2% of ₹84,649,969 is **₹1,692,999.38**, and the document states **₹16.93 Lacs** — the same
+figure to the rupee, within the ₹30 lac cap. The 1%/2% spread that prompted the earlier conclusion is
+not two policies; it is one policy and two contract sizes.
+
+**And `prescribed_bid_security_share` reads none of it**, reporting "this document states no
+bid-security rate". Three reasons, all real: the rates are words (`two percent`,
+`one and one-half percent`), each is conditional on a band of estimated cost, and the applicable band
+depends on *the project's* cost rather than anything in the manual.
+
+**Deliberately not built**, and the third reason is why. Selecting a tier requires a reference
+document's rule to be applied to a project's fact — which is precisely the explicit-applicability
+problem [ADR 0014](../adr/0014-reference-data-by-explicit-applicability.md) left open, and this is
+its first concrete instance. It is now the highest-value NEXT in this document, and it needs a
+decision rather than a patch.
+
+One discrepancy this immediately surfaces and cannot resolve: the orphaned 145-page tender `65ab…`
+has an estimated cost of ₹13.28 crore, which is tier (a) at 2%, while its own ITB clause 13.2
+prescribes 1%. Either the 2006 manual is superseded, or that tender departs from policy. **Reporting
+that is the product; resolving it is not.**
+
+### N8. A date mentioned in a document is read as the document's date
+
+`document_date` extracted `31.7.2002` from the NHAI Works Manual's contents page, where it is the
+date of a referenced Ministry of Finance memorandum. Same class as B10 and left unfixed: it affects
+chronology rather than money, and no real finding is wrong because of it yet.
+
 ### N7. Reference data has nowhere to live
 
 Not a defect — a consequence, and the crux of the business-object work.

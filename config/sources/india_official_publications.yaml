@@ -1,0 +1,98 @@
+# Indian official publications, acquired by manual download.
+#
+# Reference documents that Indian public authorities publish on their own websites for public
+# download: works manuals, financial and accounts rules, standard specifications, schedules of
+# rates, and audit reports. These are the documents that *govern* construction work rather than
+# record it — the reference half of the reference-versus-project axis.
+#
+# Retrieval is `manual_upload`, and that is the whole point of this entry rather than an
+# afterthought. A document is fetched by hand, one at a time, and handed to the pipeline; the
+# source URL, the retrieval date and the operator go in the upload's note, so the provenance says
+# what actually happened instead of inventing a crawl. No crawler is registered and none should be
+# until a real acquisition workload justifies one.
+#
+# REVIEW AUTHORITY. Terms, licence, privacy and robots review for this entry was performed by
+# Claude (Opus 5) under authority explicitly delegated by the project owner on 2026-08-20. That is
+# recorded in `reviewed_by` rather than attributed to the owner, because an approval must say who
+# actually made it. The owner's standing constraints were not relaxed: no authentication, CAPTCHA,
+# paywall or access control is bypassed, and an explicit robots.txt disallow is honoured.
+
+sources:
+  - id: india_official_publications
+    name: Indian public authority official publications
+    description: >
+      Reference documents published for public download by Indian public authorities — works
+      manuals, public works financial and accounts rules, standard specifications, schedules of
+      rates, and audit reports. Acquired by manual download of individual documents, never by
+      crawling.
+    country: IN
+    category: government_procurement
+    retrieval: manual_upload
+    base_url: null
+    robots_policy: respect
+    enabled: true
+    verification_status: approved
+    crawler: null
+    # Generous because nothing automated runs against this source: acquisition is one manual
+    # download at a time. The limits exist so the entry is well-formed, not because they bind.
+    rate_limit:
+      requests_per_minute: 6
+      max_concurrency: 1
+      min_delay_seconds: 10.0
+      max_documents_per_run: 20
+    data_use:
+      license: Government of India / State Government publication (see notes per host)
+      access: public
+      allowed_use: >
+        Manual download of individual documents that the issuing authority itself publishes for
+        public download, for research and evaluation, with attribution to the issuing authority.
+        Automated crawling is out of scope for this entry. Hosts whose robots.txt carries an
+        explicit disallow are excluded regardless of licence — see notes. Documents obtained from
+        mirrors, aggregators or third-party sites are excluded: a schedule of rates is evidence
+        only if it came from the body that issued it.
+      attribution_required: true
+      contains_personal_data: false
+      reviewed_by: >
+        Claude (Opus 5) under authority delegated by the project owner
+        (lad.yas@northeastern.edu) on 2026-08-20
+      reviewed_on: 2026-08-20T00:00:00Z
+    document_types:
+      - technical_specification
+      - contract
+      - bill_of_quantities
+      - inspection_report
+    file_formats: [pdf]
+    notes: >
+      REVIEW 2026-08-20, under delegated authority. Findings per host, each verified by request
+      rather than assumed.
+
+      ROBOTS. Checked directly. nhai.gov.in returns HTTP 404 for /robots.txt — no policy is
+      declared, so nothing is disallowed, and politeness rests on the rate limits and on manual
+      acquisition. cag.gov.in and nrega.nic.in likewise return 404. morth.nic.in answers every path
+      with its single-page-app shell including /robots.txt, so it has no robots policy that any
+      client can read.
+
+      data.gov.in IS EXCLUDED. Its robots.txt is real and reads "User-agent: * / Disallow: /" — a
+      blanket disallow for automated access. That is honoured despite its datasets carrying the
+      Government Open Data License, which is the more permissive of the two signals: a licence
+      grants rights over the data, robots.txt states how the site may be accessed, and they are
+      answering different questions. Anything wanted from data.gov.in must be downloaded by a human
+      and ingested as an upload naming that origin.
+
+      TERMS. Not readable by any HTTP client on the single-page-app sites: nhai.gov.in and
+      morth.nic.in serve a client-side shell for /terms-conditions and /copyright-policy, which is
+      the same finding already recorded against the `nhai` source. Approval therefore rests on the
+      access pattern rather than on retrieved terms text — these are documents an authority
+      publishes at a stable public URL for anyone to download, taken one at a time, with the
+      issuing body credited.
+
+      PERSONAL DATA. contains_personal_data is false and that is a scope commitment, not an
+      observation about a single file. Manuals, rules, specifications and rate schedules describe
+      procedure and price; they name no bidder, contractor or individual. A document that does
+      carry personal data — a bid submission, a muster roll, a named payment record — does not
+      belong under this entry.
+
+      PROVENANCE. Every upload must record the exact source URL and the download date in its note.
+      A reference document whose issuing authority cannot be established is not reference data; it
+      is an assertion. This is why mirrors are excluded: tnebes.org was found hosting a Tamil Nadu
+      schedule of rates and is a trade union's website, not the issuing department.

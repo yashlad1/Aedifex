@@ -1,10 +1,21 @@
 # Data sources
 
-## Current status: nothing is being collected
+## Current status
 
-Every external source in `config/sources/` is **disabled and unverified**. No crawler has been
-written, and no portal's terms of use have been reviewed. The only enabled source is
-`synthetic_projects`, which is data we generate ourselves.
+Three of nine sources are collectable; six remain **disabled and unverified**, with no crawler
+written and no terms reviewed.
+
+| Source | Status | Acquired so far |
+| --- | --- | --- |
+| `nhai` | Approved, crawler registered | 4 tender documents with retrieval provenance, including a real 37-item priced BOQ |
+| `synthetic_projects` | Approved, generated here | 5 spreadsheets: BOQ revisions, a measurement book, an RA bill |
+| `india_official_publications` | **Approved 2026-08-20 under delegated review**, manual download only | NHAI Works Manual 2006 (297pp), the first real Indian reference document |
+| `cppp_eprocure`, `cpwd`, `gem_marketplace`, `open_contracting_registry`, `ted_europa`, `world_bank_projects` | Unverified — cannot be collected from | — |
+
+`gem_marketplace` is `registration_required` and is therefore permanently out of scope rather than
+pending: the hard limits below forbid bypassing authentication regardless of review outcome.
+
+Run `make validate-registry` for the current position rather than trusting this table.
 
 ```
 $ make validate-registry
@@ -25,6 +36,41 @@ Collectable now: 1 of 8
 
 This is the honest state, and the schema enforces it: a source cannot be enabled while its
 `verification_status` is `unverified`.
+
+## Reviews performed under delegated authority
+
+On 2026-08-20 the project owner delegated terms-of-use, licence, privacy and robots review, and the
+authority to classify a source approved / blocked / unclear. One review was carried out under that
+delegation and is recorded here so the delegation itself is auditable.
+
+**`india_official_publications` — APPROVED, manual download only.** Reference documents that Indian
+public authorities publish at stable public URLs on their own sites: works manuals, public works
+financial and accounts rules, standard specifications, schedules of rates, audit reports. No crawler
+is registered; acquisition is one manual download at a time, and each upload records the exact source
+URL and download date. `reviewed_by` names the delegate rather than the owner, because an approval
+must say who actually made it.
+
+**`data.gov.in` — BLOCKED for automated access, and this is the one that matters.** Its `robots.txt`
+is real and reads `User-agent: * / Disallow: /`. That is honoured *despite* its datasets carrying the
+Government Open Data License – India, which is the more permissive of the two signals. The two are
+answering different questions: a licence grants rights over the data, `robots.txt` states how the
+site may be accessed. Anything wanted from there is downloaded by a human and ingested as an upload
+naming that origin.
+
+**Robots findings, each checked by request rather than assumed:** `nhai.gov.in`, `cag.gov.in` and
+`nrega.nic.in` return HTTP 404 for `/robots.txt` — no policy is declared, which is not the same as
+permission. `morth.nic.in` answers every path including `/robots.txt` with its single-page-app shell,
+so it has no robots policy any client can read.
+
+**Not reachable at all from the development environment:** `cpwd.gov.in`, `uppwd.gov.in` and
+`geosadak-pmgsy.nic.in` refused connections or failed DNS, while the same requests to `nhai.gov.in`
+and `nrega.nic.in` succeeded. Any determination about the unreachable hosts rests on documentation
+rather than inspection, and is marked as such in
+[docs/research/INDIAN_POSTAWARD_SOURCES.md](docs/research/INDIAN_POSTAWARD_SOURCES.md).
+
+**One source rejected on provenance rather than terms.** `tnebes.org` hosts a Tamil Nadu schedule of
+rates and is a trade union's website, not the issuing department. A rate schedule whose issuing
+authority cannot be established is not reference data; it is an assertion.
 
 ## The registry is data, not code
 
