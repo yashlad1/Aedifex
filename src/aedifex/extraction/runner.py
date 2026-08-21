@@ -22,6 +22,7 @@ import uuid
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
+from typing import Final
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -29,11 +30,14 @@ from sqlalchemy.orm import Session
 from aedifex.calculation.engine import (
     DERIVED_BID_SECURITY_SHARE,
     DERIVED_BILL_ITEMS_TOTAL,
+    DERIVED_REQUIRED_BID_SECURITY,
     compute_for_document,
     compute_for_work_item,
+    compute_required_bid_security,
 )
-from aedifex.domain.documents import DocumentState, assert_transition_allowed
+from aedifex.domain.documents import DocumentState, DocumentType, assert_transition_allowed
 from aedifex.errors import ExtractionError
+from aedifex.extraction.applicability import ApplicableProvision, select_provision
 from aedifex.extraction.pdf_boq import (
     FIELD_STATED_BILL_TOTAL,
     PdfBoq,
@@ -44,6 +48,7 @@ from aedifex.extraction.pdf_boq import (
     value_of,
 )
 from aedifex.extraction.pdftext import extract_text
+from aedifex.extraction.policy import PROVISION_BID_SECURITY_SHARE, read_bid_security_policy
 from aedifex.extraction.selection import Selected, select_facts
 from aedifex.extraction.spreadsheet import (
     FIELD_CONTRACTED_QUANTITY,
@@ -55,9 +60,12 @@ from aedifex.extraction.store import (
     persist_facts,
     persist_finding,
     persist_project_finding,
+    persist_provisions,
     persist_work_item_finding,
 )
 from aedifex.extraction.tender_notice import (
+    FIELD_ESTIMATED_COST,
+    FIELD_NIT_NUMBER,
     Evidence,
     ExtractedField,
     TenderNotice,
@@ -99,6 +107,31 @@ DEFAULT_MAX_PAGES = 260
 # Recorded on spreadsheet facts so they are distinguishable from PDF-extracted ones, and so a change
 # to the sheet reader versions independently of the notice reader.
 SPREADSHEET_EXTRACTOR = "construction_spreadsheet"
+
+# Document types whose content is *about other projects*: manuals, rate schedules, specifications.
+# The tender-notice reader must not emit document-scoped facts from these without positive evidence
+# that a value describes the document itself.
+#
+# Found the hard way. The NHAI Works Manual states "two percent of the estimated cost for works up
+# to Rs. 20 crore" and version 1 of the reader recorded `estimated_cost = Rs 20,00,00,000` as a fact
+# about a 297-page procedure manual — then cited it as evidence in a finding. A quoted amount inside
+# a reference document is not a fact about that document.
+_REFERENCE_DOCUMENT_TYPES: Final[frozenset[DocumentType]] = frozenset(
+    {DocumentType.TECHNICAL_SPECIFICATION, DocumentType.SCHEDULE_OF_RATES}
+)
+
+
+def _self_metadata_evidence(notice: TenderNotice) -> bool:
+    """Whether the notice identifies the document as being *about* one procurement.
+
+    The test is its own tender identifier. A document that names the tender it concerns is stating
+    facts about that tender; a document that names none, while quoting amounts and rates throughout,
+    is stating rules about other people's tenders.
+
+    Deliberately one positive signal rather than a list of negative ones. A guard built from "things
+    that look like policy language" would be endless and would still miss the next phrasing.
+    """
+    return notice.field(FIELD_NIT_NUMBER) is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +185,23 @@ def analyse_document(
     # A bid document can carry a priced bill of quantities as well as its notice, and on the one
     # real example in this corpus it carries 34 line items worth 8.46 crore that the notice reader
     # cannot see. Both readers run; the fields merge into one set of facts.
+    # Reference documents state norms, not facts about themselves. Suppress document-scoped
+    # extraction unless the document identifies its own procurement, and read the norms instead.
+    is_reference = document.document_type in _REFERENCE_DOCUMENT_TYPES
+    suppressed: tuple[str, ...] = ()
+    if is_reference and not _self_metadata_evidence(notice):
+        suppressed = tuple(
+            f"{field.name}: suppressed — this is a reference document and states no tender "
+            f"identifier, so a quoted value is a norm about other projects rather than a fact "
+            f"about itself"
+            for field in notice.fields
+        )
+        notice = TenderNotice(fields=(), unsupported=notice.unsupported + suppressed)
+
+    provisions = persist_provisions(
+        session, document_id, read_bid_security_policy(text) if is_reference else ()
+    )
+
     boq = read_pdf_boq(text)
     if boq.rows:
         notice = TenderNotice(
@@ -172,6 +222,24 @@ def analyse_document(
     # and the calculation that sums them needs all of them; passing the type-keyed view summed one
     # row and called it the bill total.
     calculated = compute_for_document(list(facts.all))
+
+    # A reference provision reaching into this document: explicit applicability, decided from the
+    # authority the document was acquired from and the cost it states. Not global visibility.
+    cost_fact = facts.by_type.get(FIELD_ESTIMATED_COST)
+    applicable: ApplicableProvision | None = None
+    if cost_fact is not None and cost_fact.numeric_value is not None:
+        applicable = select_provision(
+            session,
+            provision_type=PROVISION_BID_SECURITY_SHARE,
+            document_id=document_id,
+            value=Decimal(cost_fact.numeric_value),
+            applies_to=FIELD_ESTIMATED_COST,
+        )
+        if applicable.provision is not None:
+            required = compute_required_bid_security(cost_fact, applicable.provision)
+            if required is not None:
+                calculated = (*calculated, required)
+
     derived = persist_derived_facts(session, calculated, document_id=document_id)
 
     findings = tuple(
@@ -182,6 +250,8 @@ def analyse_document(
             share=derived.get(DERIVED_BID_SECURITY_SHARE),
             refused_rows=len(boq.rejected),
             bill_total=derived.get(DERIVED_BILL_ITEMS_TOTAL),
+            applicable=applicable,
+            required=derived.get(DERIVED_REQUIRED_BID_SECURITY),
         )
     )
 
@@ -193,6 +263,7 @@ def analyse_document(
         document_id=str(document_id),
         facts=len(facts.all),
         derived=len(derived),
+        provisions=len(provisions),
         findings=len(findings),
         pages_read=text.pages_read,
         page_count=text.page_count,

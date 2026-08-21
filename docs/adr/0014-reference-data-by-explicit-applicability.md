@@ -4,7 +4,11 @@ Date: 2026-08-20
 
 ## Status
 
-Accepted (pre-implementation, deliberately deferred)
+Accepted. **First implemented 2026-08-20** for NHAI bid security — `extraction/applicability.py`,
+`extraction/policy.py`, `verification/reference_policy.py` and the `policy_provisions` table. The
+decision below stands unchanged; what follows it is now code rather than intent. Deliberately scoped
+to that one provision: no policy language, no rule engine, and the applicability condition is a band
+on a single quantity because the one real provision conditions on a single quantity.
 
 ## Context
 

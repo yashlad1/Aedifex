@@ -23,6 +23,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aedifex.calculation.engine import Calculated
+from aedifex.extraction.policy import (
+    POLICY_EXTRACTOR,
+    POLICY_EXTRACTOR_VERSION,
+    ExtractedProvision,
+)
 from aedifex.extraction.tender_notice import EXTRACTOR, EXTRACTOR_VERSION, TenderNotice
 from aedifex.infrastructure.database.models import (
     DerivedFact,
@@ -30,6 +35,7 @@ from aedifex.infrastructure.database.models import (
     ExtractedFact,
     Finding,
     FindingEvidence,
+    PolicyProvision,
     WorkItem,
 )
 from aedifex.verification.cross_document import ProjectRuleResult
@@ -40,14 +46,23 @@ from aedifex.verification.rules import RuleResult
 _DERIVED_SCALE = Decimal("1E-10")
 
 
-def _fingerprint(inputs: Mapping[str, ExtractedFact]) -> str:
-    """A digest of exactly which facts fed a calculation.
+def _fingerprint(
+    inputs: Mapping[str, ExtractedFact],
+    provisions: Mapping[str, PolicyProvision] | None = None,
+) -> str:
+    """A digest of exactly which facts and provisions fed a calculation.
 
     Roles are included, not just ids: swapping which fact fills ``measured_quantity`` and which
     fills ``cumulative_claim_quantity`` is a different calculation with the same two inputs.
+
+    Provisions are folded in for the same reason facts are. A required amount recomputed against a
+    re-read rate schedule is a different value with the same estimated cost, and a fingerprint that
+    ignored the clause would report it as unchanged.
     """
-    material = "|".join(f"{role}={inputs[role].id}" for role in sorted(inputs))
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+    applied = provisions or {}
+    parts = [f"{role}={inputs[role].id}" for role in sorted(inputs)]
+    parts += [f"provision:{role}={applied[role].id}" for role in sorted(applied)]
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
 
 __all__ = [
@@ -56,6 +71,7 @@ __all__ = [
     "persist_facts",
     "persist_finding",
     "persist_project_finding",
+    "persist_provisions",
     "persist_work_item_finding",
 ]
 
@@ -179,6 +195,8 @@ def persist_finding(
         finding.evidence.append(FindingEvidence(fact_id=fact.id, role=role))
     for role, derived in sorted(result.derived_evidence.items()):
         finding.evidence.append(FindingEvidence(derived_fact_id=derived.id, role=role))
+    for role, provision in sorted(result.provision_evidence.items()):
+        finding.evidence.append(FindingEvidence(provision_id=provision.id, role=role))
 
     session.flush()
     return finding
@@ -276,7 +294,7 @@ def persist_derived_facts(
         row.calculation_version = item.calculation_version
         row.produced_by = item.produced_by
         row.expression = item.expression
-        row.inputs_fingerprint = _fingerprint(item.inputs)
+        row.inputs_fingerprint = _fingerprint(item.inputs, item.provisions)
         if existing is None:
             session.add(row)
         else:
@@ -285,6 +303,10 @@ def persist_derived_facts(
 
         for role in sorted(item.inputs):
             row.inputs.append(DerivedFactInput(role=role, fact_id=item.inputs[role].id))
+        for role in sorted(item.provisions):
+            row.inputs.append(
+                DerivedFactInput(role=f"provision:{role}", provision_id=item.provisions[role].id)
+            )
         stored[item.fact_type] = row
 
     session.flush()
@@ -334,3 +356,54 @@ def persist_work_item_finding(
         finding.evidence.append(FindingEvidence(derived_fact_id=derived.id, role=role))
     session.flush()
     return finding
+
+
+def persist_provisions(
+    session: Session,
+    document_id: uuid.UUID,
+    provisions: Sequence[ExtractedProvision],
+    *,
+    extractor: str = POLICY_EXTRACTOR,
+    extractor_version: str = POLICY_EXTRACTOR_VERSION,
+) -> tuple[PolicyProvision, ...]:
+    """Store the norms one reference document states, keyed by clause.
+
+    Idempotent on (document, provision type, clause, extractor version), so re-reading the same
+    manual updates its clauses rather than accumulating them. Versioned for the same reason facts
+    are: a corrected reading of a rate schedule supersedes the earlier one without deleting it,
+    because a finding recorded against the old reading must stay explicable.
+    """
+    stored: list[PolicyProvision] = []
+    for provision in provisions:
+        existing = session.execute(
+            select(PolicyProvision).where(
+                PolicyProvision.document_id == document_id,
+                PolicyProvision.provision_type == provision.provision_type,
+                PolicyProvision.clause == provision.clause,
+                PolicyProvision.extractor_version == extractor_version,
+            )
+        ).scalar_one_or_none()
+
+        row = existing if existing is not None else PolicyProvision(document_id=document_id)
+        row.provision_type = provision.provision_type
+        row.clause = provision.clause
+        row.authority = provision.authority
+        row.jurisdiction = provision.jurisdiction
+        row.page = provision.page
+        row.span_start = provision.span_start
+        row.span_end = provision.span_end
+        row.snippet = provision.snippet
+        row.applies_to = provision.applies_to
+        row.applies_from = provision.applies_from
+        row.applies_to_max = provision.applies_to_max
+        row.share = provision.share
+        row.cap_amount = provision.cap_amount
+        row.currency = provision.currency
+        row.extractor = extractor
+        row.extractor_version = extractor_version
+        if existing is None:
+            session.add(row)
+        stored.append(row)
+
+    session.flush()
+    return tuple(stored)

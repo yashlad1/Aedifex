@@ -1,6 +1,7 @@
 """Walk every stored finding back to an immutable raw artifact, and report where the walk stops.
 
-    Finding -> Evidence -> Derived Fact -> Fact -> Document -> Page/Cell -> Immutable Raw Artifact
+    Finding -> Evidence -> Derived Fact -> Fact         -> Document -> Page/Cell -> Raw Artifact
+                        -> Policy Provision -^
 
 This is the property the platform exists to provide, so it is checked rather than assumed. Nothing
 here reads the pipeline's code paths: it reads only what was persisted, which is the point — a chain
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import uuid
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
@@ -37,6 +39,7 @@ from aedifex.infrastructure.database.models import (
     ExtractedFact,
     Finding,
     FindingEvidence,
+    PolicyProvision,
 )
 from aedifex.infrastructure.database.session import build_engine
 from aedifex.infrastructure.storage.objects import RawObjectStore
@@ -85,15 +88,59 @@ def _s3_client(settings: Settings) -> S3Client:
     return client
 
 
+def _check_provision(
+    session: Session, provision_id: uuid.UUID, audit: Audit, *, fatal: bool, **kwargs: object
+) -> None:
+    """A cited provision, from its clause down to the reference document's bytes.
+
+    A provision is a third kind of evidence and traces the same way as the other two: it names a
+    clause, a page and a document, and that document has to exist with a matching digest. What it
+    does *not* do is claim to be a measurement, which is the distinction the type exists for.
+    """
+    audit.note("provisions")
+    provision = session.get(PolicyProvision, provision_id)
+    if provision is None:
+        audit.broke("evidence points at a missing provision", str(provision_id), fatal=fatal)
+        return
+    document = session.get(Document, provision.document_id)
+    if document is None:
+        audit.broke(
+            "provision belongs to no document",
+            f"{provision.clause} id={provision.id}",
+            fatal=fatal,
+        )
+        return
+    audit.note("documents reached")
+    store = kwargs.get("store")
+    verified = kwargs.get("verified")
+    if not isinstance(store, RawObjectStore) or not isinstance(verified, dict):
+        return
+    key = document.storage_key
+    if key not in verified:
+        metadata = store.head(key)
+        verified[key] = metadata is not None and metadata.sha256 == document.sha256
+    if verified[key]:
+        audit.note("raw artifacts confirmed")
+    else:
+        audit.broke(
+            "raw artifact missing, or its digest does not match the document",
+            f"{document.original_filename} key={key}",
+            fatal=fatal,
+        )
+
+
 def _facts_behind(
     session: Session, link: FindingEvidence, finding: Finding, audit: Audit, *, fatal: bool
 ) -> list[ExtractedFact]:
     """The extracted facts one evidence link ultimately rests on.
 
-    A link cites either a fact or a derived fact, never both — the check constraint enforces it. A
-    derived fact is resolved through its recorded inputs, because a computed value is only evidence
-    if the values it came from are.
+    A link cites exactly one of a fact, a derived fact, or a policy provision — the check constraint
+    enforces it. A derived fact is resolved through its recorded inputs, because a computed value is
+    only evidence if the values it came from are; a provision is handled by the caller, since it
+    resolves to a clause rather than to a fact.
     """
+    if link.provision_id is not None:
+        return []
     if link.fact_id is not None:
         fact = session.get(ExtractedFact, link.fact_id)
         if fact is None:
@@ -103,7 +150,7 @@ def _facts_behind(
 
     if link.derived_fact_id is None:
         audit.broke(
-            "evidence cites neither a fact nor a derived fact",
+            "evidence cites none of a fact, a derived fact, or a provision",
             f"rule {finding.rule_id} finding={finding.id}",
             fatal=fatal,
         )
@@ -117,7 +164,13 @@ def _facts_behind(
         )
         return []
     inputs = [row.fact for row in derived.inputs if row.fact is not None]
-    if not inputs:
+    # A calculation may rest partly on a provision, which is a legitimate input rather than a
+    # missing one -- "required bid security" is a rate schedule's share applied to a stated cost.
+    applied = [row for row in derived.inputs if row.provision_id is not None]
+    for row in applied:
+        if row.provision_id is not None:
+            _check_provision(session, row.provision_id, audit, fatal=fatal)
+    if not inputs and not applied:
         audit.broke(
             "derived fact records no inputs",
             f"{derived.fact_type} id={derived.id} (rule {finding.rule_id})",
@@ -206,6 +259,16 @@ def run(*, skip_objects: bool) -> Audit:
                 continue
             for link in links:
                 audit.note("evidence links")
+                if link.provision_id is not None:
+                    _check_provision(
+                        session,
+                        link.provision_id,
+                        audit,
+                        fatal=conclusive,
+                        store=store,
+                        verified=verified,
+                    )
+                    continue
                 for fact in _facts_behind(session, link, finding, audit, fatal=conclusive):
                     _check_fact(
                         session, fact, audit, fatal=conclusive, store=store, verified=verified

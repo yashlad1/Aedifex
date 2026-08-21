@@ -34,7 +34,7 @@ from aedifex.extraction.tender_notice import (
     ExtractedField,
     TenderNotice,
 )
-from aedifex.infrastructure.database.models import DerivedFact
+from aedifex.infrastructure.database.models import DerivedFact, PolicyProvision
 
 __all__ = [
     "BID_SECURITY_RULE_ID",
@@ -98,6 +98,14 @@ class RuleResult:
     evidence: dict[str, ExtractedField]
     derived_evidence: dict[str, DerivedFact] = field(default_factory=dict)
     """Computed values the rule relied on. Cited alongside the facts, never instead of them."""
+
+    provision_evidence: dict[str, PolicyProvision] = field(default_factory=dict)
+    """Reference provisions the rule applied — the clause a threshold came from.
+
+    A third kind of citation because a threshold is a third kind of evidence. "The bid security is
+    2% of the estimated cost" is not a measurement and not a calculation; it is a rule somebody
+    else wrote down, and a finding that compares against it has to say where it read it.
+    """
 
 
 def _percent(value: Decimal) -> Decimal:

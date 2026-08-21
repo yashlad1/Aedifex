@@ -41,6 +41,30 @@ and reference data**; customer-provided post-award records supply the **operatio
 payment verification needs. Strengthening acquisition interfaces and business-object modelling is
 therefore worth more than adding public crawlers.
 
+## Two kinds of statement, and why they cannot share a table
+
+A document states facts **about itself** and norms **about others**, and the difference is not
+cosmetic. The NHAI Works Manual settled it: clause 4.14.1 reads *"two percent of the estimated cost
+for works up to Rs. 20 crore"*, and a reader tuned on tenders recorded
+`estimated_cost = ₹20,00,00,000` as a fact about a 297-page procedure manual — then cited it as
+evidence in a finding. **A quoted amount inside a reference document is not a fact about that
+document.**
+
+So there are two types, not one with a flag:
+
+| | `ExtractedFact` | `PolicyProvision` |
+| --- | --- | --- |
+| Answers | what does this document state about itself | what rule does this document impose on others |
+| Has | a subject — the document it describes | an authority, a jurisdiction, an effective date, an applicability band |
+| Lacks | applicability; a fact applies to nothing but itself | a subject; a norm is about whoever meets its condition |
+
+Two consequences hold throughout. **Extractors on reference documents require positive evidence of
+self-metadata** before emitting a document-scoped fact — the test is whether the document names the
+procurement it concerns, one positive signal rather than an endless list of policy-language patterns.
+And **a provision is a third kind of citable evidence**, alongside facts and derived facts, under a
+check constraint permitting exactly one. The CLI labels it `policy` rather than `evidence` so a
+reader can tell a cited threshold from a cited measurement.
+
 ## Reference data and project data
 
 The useful axis is not public versus private. It is **shared across many projects** versus **specific
@@ -163,6 +187,9 @@ Phase 0 is complete. Implemented and tested:
 | Local-file ingestion, upload provenance | [extraction/ingest.py](src/aedifex/extraction/ingest.py), `document_uploads` |
 | Construction spreadsheet reader | [extraction/spreadsheet.py](src/aedifex/extraction/spreadsheet.py) |
 | Priced bill of quantities reader (PDF) | [extraction/pdf_boq.py](src/aedifex/extraction/pdf_boq.py) |
+| Policy provisions: norms stated by reference documents | [extraction/policy.py](src/aedifex/extraction/policy.py), `policy_provisions` |
+| Explicit reference-data applicability | [extraction/applicability.py](src/aedifex/extraction/applicability.py) |
+| Reference-policy rule | [verification/reference_policy.py](src/aedifex/verification/reference_policy.py) |
 | Bill total reconciliation rule | [verification/bill_total.py](src/aedifex/verification/bill_total.py) |
 | Work items, deterministic item linkage | [extraction/work_items.py](src/aedifex/extraction/work_items.py), `work_items` |
 | Payment reconciliation rules | [verification/reconciliation.py](src/aedifex/verification/reconciliation.py) |

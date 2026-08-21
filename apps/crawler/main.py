@@ -76,6 +76,7 @@ from aedifex.infrastructure.database.models import (
     DerivedFact,
     Document,
     ExtractedFact,
+    PolicyProvision,
     Project,
 )
 from aedifex.infrastructure.database.session import build_engine
@@ -659,6 +660,16 @@ def _print_analysis(session: Session, outcome: AnalysisOutcome) -> None:
                         f"    derived   {link.role} = {computed.numeric_value} "
                         f"({computed.expression})"
                     )
+            elif link.provision_id is not None:
+                clause = session.get(PolicyProvision, link.provision_id)
+                if clause is not None:
+                    # Labelled "policy": a document does state it, but about other projects. A
+                    # reader has to be able to tell a cited threshold from a cited measurement.
+                    band = _describe_band(clause)
+                    print(
+                        f"    policy    {clause.authority.upper()} clause {clause.clause} "
+                        f"-> page {clause.page}: {band}"
+                    )
 
     for note in outcome.unsupported:
         print(f"  not extracted: {note}")
@@ -735,6 +746,19 @@ def _shutdown_signal() -> threading.Event:
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
     return flag
+
+
+def _describe_band(clause: PolicyProvision) -> str:
+    """One line naming what a provision requires and when it applies.
+
+    The band is spelled out rather than summarised because "2%" alone does not explain why *this*
+    clause was the one applied. A reader checking a finding needs the condition, not just the rate.
+    """
+    share = f"{clause.share * 100}%" if clause.share is not None else "no share"
+    low = f"{clause.applies_from:,.2f}" if clause.applies_from is not None else "0"
+    high = f"{clause.applies_to_max:,.2f}" if clause.applies_to_max is not None else "unbounded"
+    cap = f", capped at {clause.cap_amount:,.2f}" if clause.cap_amount is not None else ""
+    return f"{share} of {clause.applies_to} for {low} to {high}{cap}"
 
 
 if __name__ == "__main__":

@@ -31,7 +31,8 @@ from aedifex.extraction.spreadsheet import (
     FIELD_CUMULATIVE_CLAIM_QUANTITY,
     FIELD_MEASURED_QUANTITY,
 )
-from aedifex.infrastructure.database.models import ExtractedFact
+from aedifex.extraction.tender_notice import FIELD_ESTIMATED_COST
+from aedifex.infrastructure.database.models import ExtractedFact, PolicyProvision
 
 __all__ = [
     "CALCULATIONS",
@@ -40,6 +41,7 @@ __all__ = [
     "DERIVED_QUANTITY_VARIANCE",
     "DERIVED_RATE_VARIANCE",
     "DERIVED_REMAINING_CONTRACT_QUANTITY",
+    "DERIVED_REQUIRED_BID_SECURITY",
     "DERIVED_UNSUPPORTED_AMOUNT",
     "Calculated",
     "compute_bid_security_share",
@@ -49,6 +51,7 @@ __all__ = [
     "compute_quantity_variance",
     "compute_rate_variance",
     "compute_remaining_contract_quantity",
+    "compute_required_bid_security",
     "compute_unsupported_amount",
 ]
 
@@ -62,6 +65,12 @@ DERIVED_BID_SECURITY_SHARE: Final[str] = "bid_security_share"
 # rows it was added from. A rule that summed the facts itself would reach the same figure and be
 # able to prove nothing about it.
 DERIVED_BILL_ITEMS_TOTAL: Final[str] = "bill_items_total"
+
+# What a reference provision requires of a project, once the applicable band is known. A derived
+# fact rather than a number the rule works out in passing, because it is the product of a project's
+# fact and a reference document's clause -- and citing both is the only thing that makes "why is
+# this the required amount?" answerable.
+DERIVED_REQUIRED_BID_SECURITY: Final[str] = "required_bid_security"
 
 # Payment reconciliation. Each answers "what can be calculated?" and none answers "is this
 # acceptable?" -- a positive quantity_variance is a number, not an accusation.
@@ -94,6 +103,12 @@ class Calculated:
     unit: str | None = None
     currency: str | None = None
     inputs: dict[str, ExtractedFact] = field(default_factory=dict)
+    provisions: dict[str, PolicyProvision] = field(default_factory=dict)
+    """Reference provisions this calculation applied, cited alongside the facts it read.
+
+    A required amount derived from a rate schedule rests half on a project's own figure and half on
+    somebody else's clause. Recording only the fact would leave the threshold unexplained.
+    """
 
 
 def _numeric(fact: ExtractedFact | None) -> Decimal | None:
@@ -172,6 +187,44 @@ def compute_bill_items_total(facts: list[ExtractedFact]) -> Calculated | None:
         calculation="sum_of",
         currency=next((fact.currency for fact in rows if fact.currency), None),
         inputs={f"{FIELD_LINE_AMOUNT}:{index}": fact for index, fact in enumerate(rows, start=1)},
+    )
+
+
+def compute_required_bid_security(
+    cost: ExtractedFact, provision: PolicyProvision
+) -> Calculated | None:
+    """The bid security a provision requires, given a project's estimated cost.
+
+    Applies the share and then the cap, in that order, because that is the order the clause states:
+    "two percent of the estimated cost ... subject to a maximum of Rs. 30 lacs". A cap applied first
+    would silently become a floor for large contracts.
+
+    No verdict, as everywhere in this module. Whether the document's stated security *matches* this
+    figure is a rule's question, and the two answers differ: a mismatch may be rounding, a
+    superseded policy, or a real defect.
+    """
+    amount = _numeric(cost)
+    if amount is None or provision.share is None:
+        return None
+    share = Decimal(provision.share)
+    required = amount * share
+    expression = f"{amount} x {share}"
+
+    if provision.cap_amount is not None:
+        cap = Decimal(provision.cap_amount)
+        if required > cap:
+            expression = f"min({amount} x {share}, {cap})"
+            required = cap
+
+    return Calculated(
+        fact_type=DERIVED_REQUIRED_BID_SECURITY,
+        kind=FactKind.MONEY,
+        value=required,
+        expression=expression,
+        calculation="apply_provision",
+        currency=provision.currency,
+        inputs={FIELD_ESTIMATED_COST: cost},
+        provisions={provision.provision_type: provision},
     )
 
 
@@ -322,6 +375,7 @@ def _comparable_pair(
 CALCULATIONS: Final[dict[str, object]] = {
     DERIVED_BID_SECURITY_SHARE: compute_bid_security_share,
     DERIVED_BILL_ITEMS_TOTAL: compute_bill_items_total,
+    DERIVED_REQUIRED_BID_SECURITY: compute_required_bid_security,
     DERIVED_QUANTITY_VARIANCE: compute_quantity_variance,
     DERIVED_REMAINING_CONTRACT_QUANTITY: compute_remaining_contract_quantity,
     DERIVED_RATE_VARIANCE: compute_rate_variance,

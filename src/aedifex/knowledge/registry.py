@@ -25,6 +25,7 @@ from aedifex.calculation.engine import (
     DERIVED_QUANTITY_VARIANCE,
     DERIVED_RATE_VARIANCE,
     DERIVED_REMAINING_CONTRACT_QUANTITY,
+    DERIVED_REQUIRED_BID_SECURITY,
     DERIVED_UNSUPPORTED_AMOUNT,
 )
 from aedifex.domain.evidence import (
@@ -64,6 +65,7 @@ from aedifex.verification.reconciliation import (
     RATE_MATCHES_CONTRACT_RULE_ID,
     UNAMBIGUOUS_EVIDENCE_RULE_ID,
 )
+from aedifex.verification.reference_policy import REFERENCE_BID_SECURITY_RULE_ID
 from aedifex.verification.rules import BID_SECURITY_RULE_ID, Outcome
 
 __all__ = [
@@ -275,6 +277,18 @@ FACT_TYPES: Final[tuple[FactTypeInfo, ...]] = (
         inputs=(FIELD_LINE_AMOUNT,),
     ),
     FactTypeInfo(
+        fact_type=DERIVED_REQUIRED_BID_SECURITY,
+        kind=FactKind.MONEY,
+        origin=FactOrigin.DERIVED,
+        description=(
+            "The bid security a reference provision requires: the clause's share applied to the "
+            "project's stated estimated cost, then capped. Rests half on a tender and half on "
+            "somebody else's rulebook, and cites both."
+        ),
+        produced_by="aedifex.calculation.engine",
+        inputs=(FIELD_ESTIMATED_COST,),
+    ),
+    FactTypeInfo(
         fact_type=DERIVED_QUANTITY_VARIANCE,
         kind=FactKind.QUANTITY,
         origin=FactOrigin.DERIVED,
@@ -367,6 +381,20 @@ RULE_TYPES: Final[tuple[RuleTypeInfo, ...]] = (
             "as likely to mean the extraction is untrustworthy as that the document is."
         ),
         consumes=(DERIVED_BILL_ITEMS_TOTAL, FIELD_STATED_BILL_TOTAL),
+    ),
+    RuleTypeInfo(
+        rule_id=REFERENCE_BID_SECURITY_RULE_ID,
+        scope="document",
+        description=(
+            "Compares a tender's bid security against the amount an authority's own rate schedule "
+            "requires for a contract of that size. The first rule whose threshold comes from a "
+            "different document than the one being judged: applicability is decided from the "
+            "authority the document was acquired from and the cost band the document states, so "
+            "cross-project access is explicit and evidence-backed rather than global. A cost "
+            "inside two bands at once resolves to INCONCLUSIVE, because the document does not say "
+            "which governs and choosing would invent policy."
+        ),
+        consumes=(DERIVED_REQUIRED_BID_SECURITY, FIELD_ESTIMATED_COST, FIELD_BID_SECURITY),
     ),
     RuleTypeInfo(
         rule_id=AGREEMENT_RULE_ID,

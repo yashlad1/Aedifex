@@ -698,22 +698,29 @@ class FindingEvidence(Base):
     way that a bare fact id does not.
     """
 
-    # Exactly one of these. A rule cites what a document states, or a value computed from such
-    # statements; both are evidence, and which one it is must never be ambiguous.
+    # Exactly one of these three. A rule cites what a document states about itself, a value computed
+    # from such statements, or a norm a reference document imposes. All three are evidence and all
+    # three are traceable to a page; which one it is must never be ambiguous, because they support
+    # different claims. A provision is a threshold, not a measurement.
     fact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("extracted_facts.id", ondelete="RESTRICT"), default=None
     )
     derived_fact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("derived_facts.id", ondelete="RESTRICT"), default=None
     )
+    provision_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("policy_provisions.id", ondelete="RESTRICT"), default=None
+    )
 
     finding: Mapped[Finding] = relationship(back_populates="evidence")
     fact: Mapped[ExtractedFact | None] = relationship()
     derived_fact: Mapped[DerivedFact | None] = relationship()
+    provision: Mapped[PolicyProvision | None] = relationship()
 
     __table_args__ = (
         CheckConstraint(
-            "(fact_id IS NULL) <> (derived_fact_id IS NULL)",
+            "(fact_id IS NOT NULL)::int + (derived_fact_id IS NOT NULL)::int "
+            "+ (provision_id IS NOT NULL)::int = 1",
             name="evidence_cites_exactly_one_kind_of_fact",
         ),
     )
@@ -829,6 +836,108 @@ class DocumentRelationship(Base):
     )
 
 
+class PolicyProvision(Base):
+    """A norm a reference document states about *other* projects, not about itself.
+
+    The distinction this table exists for was found by running the NHAI Works Manual through the
+    pipeline. It states ``two percent of the estimated cost for works up to Rs. 20 crore``, and the
+    tender-tuned extractor recorded ``estimated_cost = Rs 20,00,00,000`` as a fact about a 297-page
+    procedure manual. **A quoted amount inside a reference document is not a fact about that
+    document.** An :class:`ExtractedFact` answers "what does this document state about itself"; a
+    provision answers "what rule does this document impose on others", and conflating them puts a
+    threshold into the evidence graph as though it were a measurement.
+
+    So a provision is not a fact with an extra column. It carries the things a fact never does — an
+    authority, a jurisdiction, an effective date, and the conditions under which it applies — and it
+    lacks the thing a fact always has, which is a subject. Nothing here is a formula language: the
+    applicability of the one real provision is a band on a single quantity, and it is stored as a
+    band on a single quantity.
+    """
+
+    __tablename__ = "policy_provisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+    """The reference document that states it. A provision with no source is an assertion."""
+
+    provision_type: Mapped[str] = mapped_column(String(64), index=True)
+    """What the norm governs, e.g. ``bid_security_share``."""
+
+    # --- Where it is written. The same locator an extracted fact carries, for the same reason.
+    clause: Mapped[str] = mapped_column(String(64))
+    """The document's own reference, e.g. ``4.14.1(a)``. Quoted, never invented."""
+
+    page: Mapped[int] = mapped_column()
+    span_start: Mapped[int] = mapped_column()
+    span_end: Mapped[int] = mapped_column()
+    snippet: Mapped[str] = mapped_column(Text)
+
+    # --- Who it binds, and from when.
+    authority: Mapped[str] = mapped_column(String(64), index=True)
+    """The body whose rule this is, e.g. ``nhai``. Matched against a project's source."""
+
+    jurisdiction: Mapped[str] = mapped_column(String(8))
+    """ISO country code. A rule of one state does not govern another."""
+
+    effective_from: Mapped[date | None] = mapped_column(Date, default=None)
+    """When it began to apply, when the document says. Null means the document does not say."""
+
+    # --- The applicability condition. One dimension, because one real provision needs one.
+    applies_to: Mapped[str] = mapped_column(String(64))
+    """The quantity the band is measured on, e.g. ``estimated_cost``."""
+
+    applies_from: Mapped[Decimal | None] = mapped_column(Numeric(20, 2), default=None)
+    """Inclusive lower bound of the band. Null means unbounded below."""
+
+    applies_to_max: Mapped[Decimal | None] = mapped_column(Numeric(20, 2), default=None)
+    """Inclusive upper bound of the band. Null means unbounded above."""
+
+    # --- The value it imposes.
+    share: Mapped[Decimal | None] = mapped_column(Numeric(12, 8), default=None)
+    """A fraction, e.g. ``0.02`` for two percent. Null if the provision states no share."""
+
+    cap_amount: Mapped[Decimal | None] = mapped_column(Numeric(20, 2), default=None)
+    """A ceiling on the resulting amount, e.g. Rs 30 lacs. Null if uncapped."""
+
+    currency: Mapped[str | None] = mapped_column(String(3), default=None)
+
+    extractor: Mapped[str] = mapped_column(String(64))
+    extractor_version: Mapped[str] = mapped_column(String(32))
+    extracted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    document: Mapped[Document] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "provision_type",
+            "clause",
+            "extractor_version",
+            name="one_provision_per_clause_per_extractor_version",
+        ),
+        CheckConstraint("page >= 1", name="page_is_one_based"),
+        CheckConstraint("span_end >= span_start", name="span_is_whole"),
+        # A band that excludes everything is a parse error, not a policy.
+        CheckConstraint(
+            "applies_from IS NULL OR applies_to_max IS NULL OR applies_to_max >= applies_from",
+            name="band_is_whole",
+        ),
+        # A provision that imposes nothing cannot be applied to anything.
+        CheckConstraint(
+            "share IS NOT NULL OR cap_amount IS NOT NULL",
+            name="imposes_something",
+        ),
+        CheckConstraint(
+            "currency IS NULL OR currency = upper(currency)",
+            name="currency_is_upper",
+        ),
+    )
+
+
 class DerivedFact(Base):
     """A value computed deterministically from facts, stored so more than one rule can use it.
 
@@ -932,12 +1041,27 @@ class DerivedFactInput(Base):
         ForeignKey("derived_facts.id", ondelete="CASCADE"), primary_key=True
     )
     role: Mapped[str] = mapped_column(String(64), primary_key=True)
-    fact_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("extracted_facts.id", ondelete="RESTRICT")
+
+    # A calculation reads a fact or applies a provision. "Required bid security" is the share from
+    # clause 4.14.1 multiplied by a cost the tender states, so it has one input of each -- and both
+    # must be citable or the derived value has a page for half its origin.
+    fact_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("extracted_facts.id", ondelete="RESTRICT"), default=None
+    )
+    provision_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("policy_provisions.id", ondelete="RESTRICT"), default=None
     )
 
     derived_fact: Mapped[DerivedFact] = relationship(back_populates="inputs")
-    fact: Mapped[ExtractedFact] = relationship()
+    fact: Mapped[ExtractedFact | None] = relationship()
+    provision: Mapped[PolicyProvision | None] = relationship()
+
+    __table_args__ = (
+        CheckConstraint(
+            "(fact_id IS NULL) <> (provision_id IS NULL)",
+            name="input_is_fact_or_provision",
+        ),
+    )
 
 
 class WorkItem(Base):

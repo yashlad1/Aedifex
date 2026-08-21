@@ -16,6 +16,7 @@ from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import Final
 
+from aedifex.extraction.applicability import ApplicableProvision
 from aedifex.extraction.tender_notice import TenderNotice
 from aedifex.infrastructure.database.models import DerivedFact
 from aedifex.verification.bill_total import (
@@ -30,6 +31,11 @@ from aedifex.verification.cross_document import (
     ProjectRuleResult,
     evaluate_derived_share_consistency,
     evaluate_fact_agreement,
+)
+from aedifex.verification.reference_policy import (
+    REFERENCE_BID_SECURITY_RULE_ID,
+    REFERENCE_BID_SECURITY_RULE_VERSION,
+    evaluate_bid_security_against_policy,
 )
 from aedifex.verification.rules import (
     BID_SECURITY_RULE_ID,
@@ -48,6 +54,8 @@ __all__ = [
     "BILL_TOTAL_RULE_VERSION",
     "NOT_SOURCED",
     "PROJECT_RULES",
+    "REFERENCE_BID_SECURITY_RULE_ID",
+    "REFERENCE_BID_SECURITY_RULE_VERSION",
     "RULES",
     "SHARE_CONSISTENCY_RULE_ID",
     "Outcome",
@@ -55,6 +63,7 @@ __all__ = [
     "RuleResult",
     "evaluate_all",
     "evaluate_bid_security",
+    "evaluate_bid_security_against_policy",
     "evaluate_bill_total",
     "evaluate_project",
 ]
@@ -69,6 +78,7 @@ ProjectRule = Callable[[ProjectFacts], ProjectRuleResult]
 RULES: Final[Mapping[str, Rule]] = {
     BID_SECURITY_RULE_ID: evaluate_bid_security,
     BILL_TOTAL_RULE_ID: evaluate_bill_total,
+    REFERENCE_BID_SECURITY_RULE_ID: evaluate_bid_security_against_policy,
 }
 
 
@@ -79,6 +89,8 @@ def evaluate_all(
     share: DerivedFact | None = None,
     refused_rows: int = 0,
     bill_total: DerivedFact | None = None,
+    applicable: ApplicableProvision | None = None,
+    required: DerivedFact | None = None,
 ) -> tuple[RuleResult, ...]:
     """Run every registered rule over one document's facts, in a stable order.
 
@@ -95,6 +107,10 @@ def evaluate_all(
             needs this to know its sum is incomplete; every rule receives it and most ignore it.
         bill_total: The summed line amounts of this document's bill of quantities, produced by the
             calculation layer with one input row per line item.
+        applicable: The reference provision selected for this document, or the recorded reason none
+            was. Applicability is decided before the rules run, so a rule never searches for its own
+            threshold.
+        required: The amount that provision requires, from the calculation layer.
     """
     return tuple(
         RULES[rule_id](
@@ -103,6 +119,8 @@ def evaluate_all(
             share=share,
             refused_rows=refused_rows,
             bill_total=bill_total,
+            applicable=applicable,
+            required=required,
         )
         for rule_id in sorted(RULES)
     )

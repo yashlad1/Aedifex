@@ -244,7 +244,7 @@ wins) while the v1 row stays queryable. That distinction is worth stating: a fal
 competing reading to be weighed against a better one, so the requirement is that it stop being
 selectable, not that it stop existing.
 
-### N9. The authoritative NHAI bid-security policy exists, is tiered, and cannot be read
+### ~~N9. The authoritative NHAI bid-security policy exists, is tiered, and cannot be read~~ — RESOLVED
 
 **This corrects a conclusion recorded during the vertical-slice milestone.** That plan stated *"There
 is no single global NHAI rate to configure"*, inferred from two tenders observed at 1% and 2%. There
@@ -266,11 +266,15 @@ bid-security rate". Three reasons, all real: the rates are words (`two percent`,
 `one and one-half percent`), each is conditional on a band of estimated cost, and the applicable band
 depends on *the project's* cost rather than anything in the manual.
 
-**Deliberately not built**, and the third reason is why. Selecting a tier requires a reference
-document's rule to be applied to a project's fact — which is precisely the explicit-applicability
-problem [ADR 0014](../adr/0014-reference-data-by-explicit-applicability.md) left open, and this is
-its first concrete instance. It is now the highest-value NEXT in this document, and it needs a
-decision rather than a patch.
+**Now built**, as the first instance of ADR 0014's explicit applicability. The clause is read into
+three `policy_provisions` rows with their bands and caps; the applicable band is selected from the
+authority read out of the manual and the cost the tender states; the required amount is a derived
+fact citing both the cost fact and the clause; and the rule compares.
+
+Verified on the real tender: ₹8,46,49,969 selects clause 4.14.1(a), which requires ₹16,92,999.38, and
+the tender states ₹16.93 Lacs. **PASS** within a ₹1 tolerance — chosen because the difference is
+₹0.62, a rounding to the whole rupee, while the next-coarsest plausible rounding would be ₹620 away
+and must not pass silently. Both real documents of that tender now pass.
 
 One discrepancy this immediately surfaces and cannot resolve: the orphaned 145-page tender `65ab…`
 has an estimated cost of ₹13.28 crore, which is tier (a) at 2%, while its own ITB clause 13.2
