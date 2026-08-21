@@ -252,3 +252,35 @@ class TestOpenApi:
         paths = client.get("/openapi.json").json()["paths"]
         assert "/v1/sources" in paths
         assert "/health" in paths
+
+
+class TestFindingReviewContract:
+    """The review endpoint's request contract, which is enforced before any database is touched.
+
+    Deliberately not a full round trip: recording, append-only behaviour and staleness are database
+    properties and are tested in ``tests/integration/test_finding_review.py``. What is worth pinning
+    here is that a malformed decision cannot reach the service layer, because the vocabulary of what
+    a human may conclude is a domain decision and not free text.
+    """
+
+    def test_an_unknown_decision_is_refused_before_the_database(self, client: TestClient) -> None:
+        response = client.post(
+            "/v1/findings/00000000-0000-0000-0000-000000000000/reviews",
+            json={"decision": "probably_fine", "note": "hmm", "reviewer": "someone"},
+        )
+        assert response.status_code == 422
+
+    def test_a_blank_note_is_refused(self, client: TestClient) -> None:
+        """A verdict with no reasoning is indistinguishable from a mis-click."""
+        response = client.post(
+            "/v1/findings/00000000-0000-0000-0000-000000000000/reviews",
+            json={"decision": "accepted", "note": "", "reviewer": "someone"},
+        )
+        assert response.status_code == 422
+
+    def test_a_missing_reviewer_is_refused(self, client: TestClient) -> None:
+        response = client.post(
+            "/v1/findings/00000000-0000-0000-0000-000000000000/reviews",
+            json={"decision": "accepted", "note": "checked"},
+        )
+        assert response.status_code == 422

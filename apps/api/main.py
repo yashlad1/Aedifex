@@ -36,12 +36,14 @@ from aedifex.acquisition.catalog import (
 from aedifex.acquisition.registry import SourceDefinition, SourceRegistry, get_registry
 from aedifex.config import Settings, get_settings
 from aedifex.domain.evidence import FactOrigin
+from aedifex.domain.review import ReviewDecision
 from aedifex.errors import SourceRegistryError
 from aedifex.infrastructure.database.models import (
     DerivedFact,
     DocumentRelationship,
     ExtractedFact,
     Finding,
+    FindingReview,
     Project,
     ProjectDocument,
     WorkItem,
@@ -60,6 +62,7 @@ from aedifex.knowledge.registry import (
     RELATIONSHIP_TYPES,
     RULE_TYPES,
 )
+from aedifex.review import ReviewError, record_review
 
 API_PREFIX: Final[str] = "/v1"
 REQUEST_ID_HEADER: Final[str] = "X-Request-ID"
@@ -420,6 +423,58 @@ class EvidenceResponse(BaseModel):
     """For a derived fact, the arithmetic performed — so the number can be redone by hand."""
 
 
+class ReviewResponse(BaseModel):
+    """One human decision about a finding.
+
+    ``stale`` is the field that matters. A review decides a *verdict*, so if the rule was revised or
+    re-evaluation changed the outcome, an earlier review no longer speaks for this finding and a
+    client must not render it as the current state. Kept and shown rather than hidden, because
+    "someone accepted the previous conclusion" is worth seeing.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    review_id: str
+    decision: str
+    note: str
+    reviewer: str
+    reviewed_outcome: str
+    reviewed_rule_version: str
+    reviewed_at: str
+    stale: bool
+
+    @classmethod
+    def from_row(cls, row: FindingReview, finding: Finding) -> ReviewResponse:
+        return cls(
+            review_id=str(row.id),
+            decision=row.decision,
+            note=row.note,
+            reviewer=row.reviewer,
+            reviewed_outcome=row.reviewed_outcome,
+            reviewed_rule_version=row.reviewed_rule_version,
+            reviewed_at=row.reviewed_at.isoformat(),
+            stale=(
+                row.reviewed_outcome != finding.outcome
+                or row.reviewed_rule_version != finding.rule_version
+            ),
+        )
+
+
+class ReviewRequest(BaseModel):
+    """A reviewer's decision, as submitted.
+
+    Note and reviewer are required and non-blank by construction. The outcome and rule version are
+    deliberately *not* accepted from the client — the server reads them off the finding, so the
+    record says what the reviewer was actually looking at rather than what they claimed.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    decision: ReviewDecision
+    note: str = Field(min_length=1, max_length=4000)
+    reviewer: str = Field(min_length=1, max_length=128)
+
+
 class FindingResponse(BaseModel):
     """One rule's verdict on one document, with the evidence it rested on.
 
@@ -441,6 +496,13 @@ class FindingResponse(BaseModel):
     detail: dict[str, object]
     evaluated_at: str
     evidence: list[EvidenceResponse]
+    reviews: list[ReviewResponse] = Field(default_factory=list)
+    review_state: str = "unreviewed"
+    """``unreviewed``, or the decision of the newest review made against *this* verdict.
+
+    Never the newest review outright: a stale review does not decide anything. See
+    ``Finding.current_review``.
+    """
 
     @classmethod
     def from_row(
@@ -494,6 +556,10 @@ class FindingResponse(BaseModel):
             detail=dict(row.detail),
             evaluated_at=row.evaluated_at.isoformat(),
             evidence=cited,
+            reviews=[ReviewResponse.from_row(r, row) for r in row.reviews],
+            review_state=(
+                current.decision if (current := row.current_review) is not None else "unreviewed"
+            ),
         )
 
 
@@ -964,6 +1030,62 @@ def create_app() -> FastAPI:
             }
             payload = [FindingResponse.from_row(row, facts, computed) for row in rows]
         return FindingListResponse(returned=len(payload), findings=payload)
+
+    @app.post(
+        f"{API_PREFIX}/findings/{{finding_id}}/reviews",
+        response_model=ReviewResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["review"],
+    )
+    def create_finding_review(finding_id: uuid.UUID, body: ReviewRequest) -> ReviewResponse:
+        """Record a human decision about a finding. The last stage of the pipeline.
+
+        The first write endpoint in this API, and the only place a person's judgement enters the
+        system. Everything upstream is deterministic; this is where that stops, which is why the
+        record is attributed, reasoned and append-only.
+
+        Appends rather than replaces: a second reviewer disagreeing with the first is what an audit
+        trail is for. ``201`` on every successful call, including a re-review.
+        """
+        with session_scope() as session:
+            try:
+                review = record_review(
+                    session,
+                    finding_id,
+                    decision=body.decision,
+                    note=body.note,
+                    reviewer=body.reviewer,
+                )
+            except ReviewError as error:
+                # 404 for an absent finding, 422 for a bad decision — but the service raises one
+                # type, so the message decides. Kept simple deliberately.
+                code = (
+                    status.HTTP_404_NOT_FOUND
+                    if "no finding" in str(error)
+                    else status.HTTP_422_UNPROCESSABLE_CONTENT
+                )
+                raise HTTPException(status_code=code, detail=str(error)) from error
+            return ReviewResponse.from_row(review, review.finding)
+
+    @app.get(
+        f"{API_PREFIX}/findings/{{finding_id}}/reviews",
+        tags=["review"],
+    )
+    def get_finding_reviews(finding_id: uuid.UUID) -> dict[str, object]:
+        """Every decision recorded against one finding, oldest first, with staleness marked."""
+        with session_scope() as session:
+            finding = session.get(Finding, finding_id)
+            if finding is None:
+                raise HTTPException(status_code=404, detail=f"no finding {finding_id}")
+            payload = [ReviewResponse.from_row(row, finding) for row in finding.reviews]
+            current = finding.current_review
+            state = "unreviewed" if current is None else current.decision
+        return {
+            "finding_id": str(finding_id),
+            "review_state": state,
+            "returned": len(payload),
+            "reviews": payload,
+        }
 
     @app.get(
         f"{API_PREFIX}/projects/{{project_id}}/relationships",

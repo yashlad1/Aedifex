@@ -70,3 +70,5 @@ trivial case-folding must be backed by a document that shows it.
 
 The goal is not a theoretically complete parser. It is for Aedifex to survive increasingly messy real
 construction records while every finding stays explainable.
+
+| [2026-08-21-first-product-workflow.md](2026-08-21-first-product-workflow.md) | Acquisition frozen; build the first end-to-end workflow. Human review shipped first |

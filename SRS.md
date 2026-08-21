@@ -120,15 +120,19 @@ Validation
    ↓
 Immutable Raw Storage
    ↓
-Text Extraction
+Classifier                     what kind of document is this?
+   ↓
+Extractor                      the capability that document class needs
    ↓
 Structured Facts
    ↓
 Relationships
    ↓
-Evidence Graph
+Evidence Graph                 ← the contract everything plugs into
    ↓
 Deterministic Rules
+   ↓
+Cross-Document Validation
    ↓
 Findings
    ↓
@@ -138,6 +142,20 @@ Business Decision
 ```
 
 Every future component must fit into this pipeline.
+
+**"Text Extraction" was one stage and is now two, and the split is the point.** A classifier decides
+what a document *is*; an extractor is the capability that class requires. There is no OCR stage,
+because OCR is one extractor among several — the same slot holds a spreadsheet cell reader, a PDF
+text-layer reader, a printed-scan recogniser, a handwriting recogniser and a table model. Adding a
+capability must never mean editing the pipeline.
+
+The subsystem that owns this is a **Document Understanding Gateway**, not an OCR subsystem. It takes
+PDF, XLSX, DOCX, CSV, JPG, PNG (and, if a customer ever needs it, IFC or DWG) and emits **evidence
+objects**. See [docs/adr/0017-document-understanding-gateway.md](docs/adr/0017-document-understanding-gateway.md).
+
+**Evidence is the contract.** Downstream of the Evidence Graph, nothing knows or cares which
+extractor produced a value — only what it says, where it came from, and how confident the
+*deterministic* validation is.
 
 ---
 
@@ -377,7 +395,21 @@ over every stored finding and fails on a `PASS`, `FAIL` or `REVIEW` that cannot 
 
 ## 18. Guiding Principles
 
-The following principles govern all future development:
+**Principle 0, from which the rest follow: Aedifex owns the trust boundary, not the recogniser.**
+
+The product is not reading documents. The product is *proving financial statements*. No competitive
+position was ever going to rest on "our OCR is 2% better"; it rests on being able to say **this
+payment is inconsistent — here are the five documents that prove it, the exact pages, the
+calculation, the governing provision, and the audit trail.** Nobody asks which recogniser produced
+that.
+
+Everything downstream is a consequence. Extractors are swappable because they are not the value.
+Deterministic verification is non-negotiable because it *is* the value. Provenance is mandatory
+because a proof without a citation is an assertion. Human review exists because the boundary between
+"uncertain reading" and "financial finding" must be crossed by a person or by arithmetic, never by a
+model's confidence.
+
+The remaining principles govern all future development:
 
 1. Evidence over opinion.
 2. Deterministic verification over AI guessing.
@@ -391,8 +423,51 @@ The following principles govern all future development:
 10. Build generic infrastructure, not one-off NHAI features.
 11. Every new source should plug into the existing pipeline with minimal changes.
 12. Optimize for correctness, traceability, and maintainability over implementation speed.
+13. **The measure of a corpus is "can a real customer upload this?", never its size.** More portals,
+    more PDFs and more OCR are not progress. A document that no customer would ever hold is
+    secondary by definition, however public it is.
+14. **Extractor precedence follows information preserved, not novelty:** spreadsheet cells → native
+    PDF text → OCR → vision models. A spreadsheet already carries rows, columns, formulas and cell
+    positions, which is exactly what the rule engine needs; reconstructing that from pixels is work
+    done to recover information that was never lost until we lost it.
 
 ---
+
+## 18a. The three corpora, and what each is for
+
+Conflating these is how availability starts defining the product. They are named so that a document
+cannot be quietly promoted from one to another.
+
+| Tier | Name | Contents | Purpose |
+| --- | --- | --- | --- |
+| **1** | **Product corpus** | residential, commercial and general building construction: RERA filings, private developers, university building projects, CPWD building works | **What a customer would actually upload.** The only tier that may shape the domain model, the rules, or the UI |
+| **2** | **Engineering corpus** | NHAI, highways, bridges, other public infrastructure | **Validation, regression and stress testing only.** It exists to prove the pipeline survives hostile input. It defines nothing |
+| **3** | **Reference corpus** | CPWD DSR, IS 1200, CPWA Code and Book of Forms, CAG manuals, AIA, FIDIC | **Knowledge sources, not uploads.** They state norms a rule may cite; they are never project evidence |
+| **4** | **Customer Reality Corpus** | anonymised real documents from design partners | **The eventual benchmark.** See §18b |
+
+A Tier 2 document may never justify a feature on its own. If the only evidence for a capability is a
+highway document, the capability is deferred.
+
+## 18b. The Customer Reality Corpus
+
+The benchmark Aedifex does not yet have, and the one that should eventually replace every public
+corpus as the measure of correctness. Target composition:
+
+| Document type | Target | Why this count |
+| --- | --- | --- |
+| BOQ | 100 | the spine; layout variance is the risk |
+| RA Bill | 100 | the primary verification subject |
+| JMR / measurement sheet | 100 | **settles whether handwriting matters at all** |
+| Architect / payment certificate | 50 | the certification link |
+| Invoice | 50 | tax, GST, deduction handling |
+| Material Reconciliation Statement | 50 | consumption vs. issued |
+| Variation / change order | 50 | entitlement and scope change |
+| Completion certificate | 20 | terminal state |
+
+**Every parser, extractor, rule and regression test should eventually be measured against this and
+not against the public corpus.** Until it exists, every claim about document difficulty in this
+repository rests on public documents that no customer would upload — and the handwriting question in
+particular rests on a single 2001 highway contract.
 
 ## 19. Current Development Strategy
 

@@ -708,6 +708,37 @@ class Finding(Base):
     evidence: Mapped[list[FindingEvidence]] = relationship(
         back_populates="finding", cascade="all, delete-orphan"
     )
+    reviews: Mapped[list[FindingReview]] = relationship(
+        back_populates="finding",
+        cascade="all, delete-orphan",
+        order_by="FindingReview.reviewed_at",
+    )
+    """Every human decision recorded against this finding, oldest first.
+
+    A list rather than one row, unlike ``ExtractedFact.retraction``: a second review genuinely is a
+    second opinion and both belong on the record, whereas retracting a fact twice is just a repeated
+    run. Use :attr:`current_review` rather than the last element — the last element may be stale.
+    """
+
+    @property
+    def current_review(self) -> FindingReview | None:
+        """The newest review that was made against *this* conclusion, or ``None``.
+
+        A review decides a specific verdict, not a rule identifier. If the rule is revised or
+        re-evaluation changes the outcome, every earlier review becomes **stale** and must stop
+        counting as the current state — otherwise an accepted ``FAIL`` would silently present as an
+        accepted ``PASS``, which loses a finding without deleting it.
+
+        Staleness is decided by comparing what the reviewer saw against what the finding now says,
+        which is why each review stores both.
+        """
+        for review in reversed(self.reviews):
+            if (
+                review.reviewed_outcome == self.outcome
+                and review.reviewed_rule_version == self.rule_version
+            ):
+                return review
+        return None
 
     __table_args__ = (
         # Two partial uniques rather than one over both columns: a NULL never equals a NULL in
@@ -1226,4 +1257,77 @@ class DocumentUpload(Base):
 
     __table_args__ = (
         UniqueConstraint("document_id", "source_id", name="one_upload_per_document_and_source"),
+    )
+
+
+class FindingReview(Base):
+    """A person's decision about one finding: the pipeline's last stage, and its trust boundary.
+
+    Everything upstream of this table is deterministic. This is where judgement is allowed to enter,
+    and the design constraint is that it must enter **visibly** — attributed, dated, reasoned, and
+    append-only, exactly like every other assertion in the corpus.
+
+    Why it exists, stated as the invariant it implements: an uncertain document reading becomes
+    authoritative evidence only when deterministic validation closes **or a human accepts it**.
+    Until this table existed the second clause was not expressible, so the trust boundary the
+    project is built on had no representation in code.
+
+    **Append-only, and deliberately without a one-review-per-finding constraint.** That is the
+    difference from :class:`FactRetraction`, where retracting twice is a repeated run and is made
+    idempotent. Here a second review is a *second opinion* — a senior reviewer disagreeing with a
+    junior one is precisely the thing an audit trail should preserve — so reviews accumulate and
+    :attr:`Finding.current_review` decides which one speaks for the finding now.
+
+    **A review is about a verdict, not about a rule.** ``reviewed_outcome`` and
+    ``reviewed_rule_version`` record what the reviewer was actually looking at, so revising a rule
+    or re-evaluating a document invalidates prior reviews instead of silently inheriting them.
+    Without those two columns an accepted ``FAIL`` would present as an accepted ``PASS`` the moment
+    a threshold changed, which loses a finding without deleting anything.
+    """
+
+    __tablename__ = "finding_reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    finding_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("findings.id", ondelete="CASCADE"), index=True
+    )
+
+    decision: Mapped[str] = mapped_column(String(24))
+    """One of ``accepted``, ``rejected``, ``needs_evidence``.
+
+    See :class:`aedifex.domain.review.ReviewDecision` for what each one is for.
+    """
+
+    note: Mapped[str] = mapped_column(Text)
+    """The reviewer's reasoning, mandatory and non-blank.
+
+    A decision with no stated reason is indistinguishable from a mis-click, and the value of keeping
+    the row is that someone can later disagree with the argument rather than just the verdict.
+    """
+
+    reviewer: Mapped[str] = mapped_column(String(128))
+    """Who decided, as recorded by the caller.
+
+    A free string and not a foreign key, because this deployment has no user table and inventing one
+    to hold a name would be building authentication under another name. When identity arrives, this
+    becomes the migration target rather than a thing to retrofit.
+    """
+
+    reviewed_outcome: Mapped[str] = mapped_column(String(16))
+    reviewed_rule_version: Mapped[str] = mapped_column(String(32))
+    """What the finding said at the moment of review. See the class docstring."""
+
+    reviewed_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    software_version: Mapped[str] = mapped_column(String(32))
+
+    finding: Mapped[Finding] = relationship(back_populates="reviews")
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(note)) > 0", name="note_is_not_blank"),
+        CheckConstraint("length(btrim(reviewer)) > 0", name="reviewer_is_not_blank"),
+        CheckConstraint(
+            "decision IN ('accepted', 'rejected', 'needs_evidence')",
+            name="decision_is_known",
+        ),
+        Index("ix_finding_reviews_decision", "decision"),
     )

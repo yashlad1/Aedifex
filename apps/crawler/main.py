@@ -59,6 +59,7 @@ from aedifex.config import Settings, get_settings
 from aedifex.domain.documents import DocumentType
 from aedifex.domain.evidence import RelationshipType
 from aedifex.domain.files import FileFormat
+from aedifex.domain.review import ReviewDecision
 from aedifex.errors import AedifexError, ConfigurationError
 from aedifex.extraction.ingest import ingest_file
 from aedifex.extraction.ocr import OCR_MAX_PAGES
@@ -84,6 +85,7 @@ from aedifex.infrastructure.database.models import (
 from aedifex.infrastructure.database.session import build_engine
 from aedifex.infrastructure.observability.logging import configure_logging, get_logger
 from aedifex.infrastructure.storage.objects import RawObjectStore
+from aedifex.review import ReviewError, record_review
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from mypy_boto3_s3.client import S3Client
@@ -129,6 +131,8 @@ def main(argv: list[str] | None = None) -> int:
             return _supersede(args, settings)
         if args.command == "analyse":
             return _analyse(args, settings)
+        if args.command == "review":
+            return _review(args, settings)
         if args.command == "status":
             return _status(args, settings)
     except AedifexError as error:
@@ -229,6 +233,24 @@ def _parser() -> argparse.ArgumentParser:
     supersede.add_argument(
         "--decided-by", default=None, help="Who decided. Defaults to the OS user"
     )
+
+    review = commands.add_parser(
+        "review", help="Record a human decision about a finding (the last pipeline stage)"
+    )
+    review.add_argument("finding_id", help="A finding UUID from `analyse` or the API")
+    review.add_argument(
+        "--decision",
+        required=True,
+        choices=[member.value for member in ReviewDecision],
+        help=(
+            "accepted: the finding is real. rejected: it is a false positive. "
+            "needs_evidence: a person looked and cannot decide without a document we do not hold"
+        ),
+    )
+    review.add_argument(
+        "--note", required=True, help="Why. Required: a verdict alone is not a review"
+    )
+    review.add_argument("--reviewer", default=None, help="Who decided. Defaults to the OS user")
 
     status = commands.add_parser("status", help="Show the corpus, the queue, and recent runs")
     status.add_argument("--source", default=None)
@@ -775,6 +797,42 @@ def _print_analysis(session: Session, outcome: AnalysisOutcome) -> None:
 
     for note in outcome.unsupported:
         print(f"  not extracted: {note}")
+
+
+def _review(args: argparse.Namespace, settings: Settings) -> int:
+    """Record one person's decision about one finding.
+
+    Prints what the reviewer was judging as well as the decision, because the record is only
+    meaningful against a specific verdict: a review of a FAIL is not a review of the PASS it might
+    later become.
+    """
+    engine = build_engine(settings)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    reviewer = args.reviewer or getpass.getuser()
+    with factory.begin() as session:
+        try:
+            recorded = record_review(
+                session,
+                uuid.UUID(args.finding_id),
+                decision=ReviewDecision(args.decision),
+                note=args.note,
+                reviewer=reviewer,
+            )
+        except ReviewError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 2
+        finding = recorded.finding
+        prior = len(finding.reviews) - 1
+        print(f"REVIEWED  {finding.rule_id} (v{finding.rule_version})")
+        print(f"  finding   {finding.id}")
+        print(f"  verdict   {finding.outcome.upper()}")
+        print(f"  expected  {finding.expected}")
+        print(f"  observed  {finding.observed}")
+        print(f"  decision  {recorded.decision}  by {recorded.reviewer}")
+        print(f"  note      {recorded.note}")
+        if prior:
+            print(f"  {prior} earlier review(s) kept on the record; this one is now current")
+    return 0
 
 
 def _status(args: argparse.Namespace, settings: Settings) -> int:
