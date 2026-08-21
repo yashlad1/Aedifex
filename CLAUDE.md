@@ -32,6 +32,7 @@ Then read, as the task requires:
 | [docs/research/NHAI_PUBLIC_DATA_ENDPOINTS.md](docs/research/NHAI_PUBLIC_DATA_ENDPOINTS.md) | Every ungated NHAI data endpoint, the 1,450-project static register, and the four identifiers that join documents to projects |
 | [docs/research/DOCUMENT_LAYOUT_SURVEY.md](docs/research/DOCUMENT_LAYOUT_SURVEY.md) | Layout and table-structure engines measured on the real corpus: what the licences allow, why per-cell OCR failed, and why RapidOCR stays |
 | [docs/research/BUILDING_CORPUS_AVAILABILITY.md](docs/research/BUILDING_CORPUS_AVAILABILITY.md) | Where Indian **building** construction documents actually are, classified A–F: what was acquired, why the priced-BOQ reader cannot read them yet, and the one link no reachable source publishes |
+| [docs/research/PRODUCT_FIRST_CORPUS_DISCOVERY.md](docs/research/PRODUCT_FIRST_CORPUS_DISCOVERY.md) | Product-first corpus discovery: 152 ranked sources, the workflow coverage matrix, the structural gap at Measurement and RA Bill, the three-layer canonical corpus, and the OCR gateway recommendation |
 | [docs/plans/](docs/plans/) | Implementation plans, newest first |
 | [docs/requirements/functional.md](docs/requirements/functional.md) | Numbered requirements and their status |
 

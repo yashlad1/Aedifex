@@ -276,22 +276,54 @@ Every finding must contain:
 
 ---
 
-## 14. Personas
+## 14. Market and personas
 
-The same evidence supports different users.
+### 14.1 The primary market, and why this is stated here
 
-| Persona | Needs |
-| --- | --- |
-| Contractor | Tender preparation, compliance checking |
-| Consultant | Document review, technical validation |
-| Quantity Surveyor | BOQ, quantity reconciliation |
-| Site Engineer | Progress verification, drawing lookup |
-| Finance | Invoice validation, payment verification |
-| Internal Auditor | Compliance, fraud detection |
-| External Auditor | Evidence, explainability |
-| Executive | Portfolio risk, project insights |
+**Primary: residential real estate, commercial real estate, and general building construction.**
 
-**No feature should exist without benefiting at least one persona.**
+**Secondary, later: highways, metro, utilities, industrial civil works, other public
+infrastructure.** NHAI is a *validation corpus* — it exists to prove the pipeline survives a real
+2001 contract with handwritten rates, and it defines nothing about the product.
+
+This is in the SRS rather than in a plan because the failure it prevents is a slow one. Public
+infrastructure agencies publish far more than private developers do, so research drifts toward
+highways by gravity, and the corpus starts defining the product instead of validating it. That
+happened here and had to be reversed. **Availability must never determine the canonical domain
+model.** See [docs/research/PRODUCT_FIRST_CORPUS_DISCOVERY.md](docs/research/PRODUCT_FIRST_CORPUS_DISCOVERY.md).
+
+The canonical workflow is horizontal and must work across every vertical above:
+
+```text
+Project → Contract → BOQ → Measurement → RA Bill / Claim → Certification → Payment → Variation
+        → Quality Evidence
+```
+
+Reference documents — schedules of rates, codes, methods of measurement, price indices — **govern**
+that flow without belonging to it.
+
+### 14.2 Personas
+
+The same evidence supports different users. Primary personas are the ones a building project has on
+it every day.
+
+| Persona | Primary? | Needs |
+| --- | --- | --- |
+| Developer / Owner | **yes** | Is what I am being billed supported by measured work? |
+| PMC | **yes** | Certify progress and payment defensibly |
+| Quantity Surveyor | **yes** | BOQ, quantity reconciliation, rate verification |
+| Billing Engineer | **yes** | Prepare and check RA bills against measurement |
+| Contracts Engineer | **yes** | Variations, deviations, claims, entitlement |
+| Finance | **yes** | Invoice validation, payment verification, retention and recovery |
+| Internal Audit | **yes** | Compliance, over-certification, fraud detection |
+| General Contractor | **yes** | Get paid for measured work, evidence a claim |
+| Consultant | no | Document review, technical validation |
+| Site Engineer | no | Progress verification, drawing lookup |
+| External Auditor | no | Evidence, explainability |
+| Executive | no | Portfolio risk, project insights |
+
+**No feature should exist without benefiting at least one persona**, and a feature that benefits
+only a non-primary persona is a deferral rather than a decision.
 
 ---
 
@@ -385,6 +417,19 @@ new personas) rather than redesigning the pipeline.
 ---
 
 ## 20. Revision note
+
+**2026-08-21, second revision.** Section 14 was rewritten from "Personas" to "Market and personas"
+after the owner clarified the commercial target. Two things were added and nothing was removed: a
+statement that the primary market is residential, commercial and general building construction with
+infrastructure secondary, and a division of the persona list into primary and non-primary.
+
+The reason is recorded because the mistake is repeatable: public infrastructure agencies publish more
+documents than private developers, so three research passes drifted toward highways purely on
+availability, and the NHAI corpus began to shape extractors, rules and OCR priorities. The corpus is
+meant to validate the product, not define it. Nothing in the vision, mission, philosophy, AI boundary
+or guiding principles changed — principle 10 already forbade one-off NHAI features, and this makes
+the market it was protecting explicit.
+
 
 **2026-08-20.** Six refinements were applied to this document as the output of the Construction
 Information Model milestone. Each corrects a place where the SRS had fallen behind the implementation
