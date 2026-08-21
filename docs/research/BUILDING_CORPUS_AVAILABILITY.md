@@ -41,7 +41,7 @@ flow without belonging to it.
 | --- | --- | --- | --- |
 | **Project** | **A** | IIT Bombay tender sets; eProcurement portals | **acquired** |
 | **Contract** (conditions) | **A** | IIT Bombay `gcc.pdf`; Puducherry PWD GCC 2023 | **acquired** |
-| **Work Item** (priced BOQ) | **A** | IIT Bombay, priced PDF *and* structured `.xlsx` | **acquired, 5 documents** |
+| **Work Item** (priced BOQ) | **A** | IIT Bombay, priced PDF; one priced `.xlsx` sheet | **acquired, 3 priced** |
 | **Work Item** (unpriced BOQ) | **A** | the same sets, bidder return | **acquired** |
 | Award / bid opening | **A** | IIT Bombay `fbo.pdf` — qualified firms, opening date | **acquired** |
 | **Measurement** | **A** | **Odisha PPMS** `msrmt_doc/*.pdf` | **identified, unreachable** |
@@ -106,9 +106,14 @@ hostel for 1,052 students, estimate ₹85,39,81,318.41 excluding GST, NIT
 | `fbo.pdf` | Five prequalified firms, bid opening 30-01-2023 |
 | `amen.pdf` | CPWD specification amendment (reference) |
 
-Plus four more priced building BOQs (Victor Menezes Convention Centre interior renovation, a
-₹67.85 crore civil+MEP package, a P.C. Saxena refurbishment, a CoE unpriced return), the IIT Bombay
-Works Manual 2014, the **CPWA Book of Forms** and the **CAG Works Audit Manual**.
+Plus two more **priced** building BOQs (Victor Menezes Convention Centre interior renovation, a
+₹67.85 crore civil+MEP package), two **unpriced** bidder returns (H1 60 flats, sports cladding), two
+`.xlsx` bills of which one carries rates (P.C. Saxena refurbishment) and one does not (CoE), the IIT
+Bombay Works Manual 2014, the **CPWA Book of Forms** and the **CAG Works Audit Manual**.
+
+The priced/unpriced split was miscounted when this document was first written: five PDFs were called
+priced, and two of them state quantities with the rate column blank. Zero rows is the correct answer
+for those two.
 
 ### Why this beats the NHAI corpus for building the product
 
