@@ -61,9 +61,12 @@ from aedifex.extraction.store import (
     persist_finding,
     persist_project_finding,
     persist_provisions,
+    persist_retractions,
     persist_work_item_finding,
 )
 from aedifex.extraction.tender_notice import (
+    EXTRACTOR,
+    EXTRACTOR_VERSION,
     FIELD_ESTIMATED_COST,
     FIELD_NIT_NUMBER,
     Evidence,
@@ -77,6 +80,7 @@ from aedifex.infrastructure.database.models import (
     Document,
     DocumentRelationship,
     ExtractedFact,
+    FactRetraction,
     Finding,
     Project,
     ProjectDocument,
@@ -168,6 +172,13 @@ class AnalysisOutcome:
     pages_read: int
     page_count: int
     had_text_layer: bool
+    retracted: tuple[FactRetraction, ...] = ()
+    """Facts an earlier version wrote that this run explicitly withdrew.
+
+    Surfaced rather than left in the log, because "three facts this document never stated have been
+    taken out of circulation" is the kind of thing an operator has to see once and can then stop
+    worrying about.
+    """
 
     @property
     def unsupported(self) -> tuple[str, ...]:
@@ -211,6 +222,7 @@ def analyse_document(
     # extraction unless the document identifies its own procurement, and read the norms instead.
     is_reference = document.document_type in _REFERENCE_DOCUMENT_TYPES
     suppressed: tuple[str, ...] = ()
+    suppressed_types: tuple[str, ...] = ()
     if is_reference and not _self_metadata_evidence(notice):
         # Named by document type rather than lumped under "reference document", because the two
         # cases read very differently to an operator: a manual quotes a *norm*, an audit report
@@ -226,7 +238,23 @@ def analyse_document(
             f"quoted value is about another project rather than a fact about itself"
             for field in notice.fields
         )
+        suppressed_types = tuple(field.name for field in notice.fields)
         notice = TenderNotice(fields=(), unsupported=notice.unsupported + suppressed)
+
+    # Suppression alone is silent. If an earlier extractor version already wrote one of these facts,
+    # writing nothing now leaves that row the newest for its document and fact type — so it stays
+    # selected and stays served. Withdrawing it explicitly is what makes "this document does not
+    # state that" a fact of the record rather than an absence someone has to infer.
+    retracted = persist_retractions(
+        session,
+        document_id,
+        suppressed_types,
+        reason=(
+            f"Suppressed by {EXTRACTOR} v{EXTRACTOR_VERSION}: this document's declared type is "
+            f"{document.document_type.value}, and it states no tender identifier, so a value "
+            f"quoted in it is about another project rather than a fact about itself."
+        ),
+    )
 
     provisions = persist_provisions(
         session, document_id, read_bid_security_policy(text) if is_reference else ()
@@ -310,6 +338,7 @@ def analyse_document(
         pages_read=text.pages_read,
         page_count=text.page_count,
         had_text_layer=text.has_text_layer,
+        retracted=retracted,
     )
 
 

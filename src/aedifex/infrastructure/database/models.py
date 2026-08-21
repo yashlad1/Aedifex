@@ -546,6 +546,25 @@ class ExtractedFact(Base):
 
     document: Mapped[Document] = relationship(back_populates="facts")
 
+    retraction: Mapped[FactRetraction | None] = relationship(
+        back_populates="fact", uselist=False, cascade="all, delete-orphan"
+    )
+    """The withdrawal of this fact, if a later extractor version said it should not exist.
+
+    ``None`` for every fact that still stands, which is almost all of them. Present means this row
+    is history: readable, citable by the findings that were computed from it, and never selected as
+    a current fact again.
+    """
+
+    @property
+    def is_retracted(self) -> bool:
+        """Whether a later extractor version withdrew this fact.
+
+        The one question every consumer of a fact has to ask, given a name so nobody has to remember
+        that ``retraction is not None`` is what it means.
+        """
+        return self.retraction is not None
+
     __table_args__ = (
         # A prose document states each kind of fact once; a table states it once per row. The
         # original single constraint assumed the former, and a spreadsheet silently kept only its
@@ -574,6 +593,64 @@ class ExtractedFact(Base):
         CheckConstraint("page >= 1", name="page_is_one_based"),
         CheckConstraint("span_end >= span_start", name="span_is_whole"),
         CheckConstraint("currency IS NULL OR currency = upper(currency)", name="currency_is_upper"),
+    )
+
+
+class FactRetraction(Base):
+    """A later extractor version asserting that an earlier fact should never have existed.
+
+    Extractor versioning already handles a *correction*: version 2 writes a better value, selection
+    takes the newest version, and the older row stays readable so a finding made against it is still
+    explainable. It cannot handle a *retraction*, because a retraction writes nothing — and a fact
+    that is silently not re-emitted remains the newest row for its document and fact type, so it
+    stays selected.
+
+    That is not hypothetical. On 2026-08-21 five real documents produced six facts the documents
+    never stated — ₹13,262 crore of Polavaram resettlement colonies recorded as a CAG report's own
+    estimated cost, dates lifted from specimen forms inside model agreements. The extractor was
+    corrected, version 3 declined to emit them, and all six rows remained selectable and were still
+    being served by the facts API.
+
+    So a retraction is recorded as its own row, and the shape follows from what it actually is: **a
+    new assertion by an extractor version about an existing fact**, not a property of that fact. The
+    fact row is never touched, never deleted, and stays exactly as reproducible as before; what
+    changes is that something now says it is wrong. Append-only, like everything else here.
+
+    One retraction per fact, enforced by a unique constraint. Retracting twice is not a second
+    opinion, it is a repeated run, and it should be idempotent.
+    """
+
+    __tablename__ = "fact_retractions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    fact_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("extracted_facts.id", ondelete="CASCADE"), index=True
+    )
+    """The fact being withdrawn. ``CASCADE`` because a retraction of a deleted fact says nothing."""
+
+    retracted_by_extractor: Mapped[str] = mapped_column(String(64))
+    retracted_by_version: Mapped[str] = mapped_column(String(32))
+    """Which extractor and version made the assertion, so it is attributable like any other.
+
+    Necessarily a *later* version than the fact's own, and the check constraint enforces nothing
+    about that because string versions do not order reliably. The reason field carries the argument.
+    """
+
+    reason: Mapped[str] = mapped_column(Text)
+    """Why, in prose, in the operator's words or the extractor's.
+
+    Mandatory and not nullable. A withdrawal of evidence with no stated reason is indistinguishable
+    from a bug, and the whole point of keeping the row is that someone can later disagree with it.
+    """
+
+    retracted_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    software_version: Mapped[str] = mapped_column(String(32))
+
+    fact: Mapped[ExtractedFact] = relationship(back_populates="retraction")
+
+    __table_args__ = (
+        UniqueConstraint("fact_id", name="one_retraction_per_fact"),
+        CheckConstraint("length(btrim(reason)) > 0", name="reason_is_not_blank"),
     )
 
 

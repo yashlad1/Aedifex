@@ -166,6 +166,7 @@ class TestMigrations:
             "work_items",
             "document_uploads",
             "policy_provisions",
+            "fact_retractions",
         }
 
     def test_enum_columns_persist_lowercase_values(self, session: Session) -> None:

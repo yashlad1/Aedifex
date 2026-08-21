@@ -12,6 +12,10 @@ nothing is a verdict with no basis, and the first run of this audit found thirty
 An INCONCLUSIVE citing nothing is reported but tolerated: it asserts only that a fact was missing,
 and there is no evidence for an absence.
 
+A conclusive finding citing a **retracted** fact is also fatal. Retraction is how a later extractor
+version says "the document never stated this", and a verdict whose only support has been withdrawn
+is worse than an untraceable one — it looks explainable and is not.
+
 Needs the database and the object store, so it is an operator command rather than a CI gate::
 
     python -m scripts.audit_traceability
@@ -190,6 +194,18 @@ def _check_fact(
 ) -> None:
     """One fact, from its locator down to the bytes it was read out of."""
     audit.note("facts reached")
+
+    # A retracted fact is a value a later extractor version says the document never stated. It stays
+    # in the table so history reads correctly, but a *conclusive* finding resting on one is not
+    # explainable — it asserts something whose only support has been withdrawn. Fatal for the same
+    # reason a missing artifact is fatal: the chain is broken, and the verdict has to be recomputed.
+    if fact.is_retracted:
+        audit.broke(
+            "conclusive finding cites a retracted fact",
+            f"{fact.fact_type} id={fact.id} literal={fact.literal!r}",
+            fatal=fatal,
+        )
+        return
 
     # The locator needs no check here: ``extracted_facts.page`` is NOT NULL and carries a
     # ``page >= 1`` constraint, with ``sheet_row``/``sheet_column`` narrowing it to a cell for

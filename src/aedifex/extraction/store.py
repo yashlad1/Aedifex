@@ -22,6 +22,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from aedifex import __version__
 from aedifex.calculation.engine import Calculated
 from aedifex.extraction.policy import (
     POLICY_EXTRACTOR,
@@ -33,11 +34,13 @@ from aedifex.infrastructure.database.models import (
     DerivedFact,
     DerivedFactInput,
     ExtractedFact,
+    FactRetraction,
     Finding,
     FindingEvidence,
     PolicyProvision,
     WorkItem,
 )
+from aedifex.infrastructure.observability.logging import get_logger
 from aedifex.verification.cross_document import ProjectRuleResult
 from aedifex.verification.reconciliation import WorkItemRuleResult
 from aedifex.verification.rules import RuleResult
@@ -65,6 +68,8 @@ def _fingerprint(
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
 
+_log = get_logger(__name__)
+
 __all__ = [
     "FactSet",
     "persist_derived_facts",
@@ -72,6 +77,7 @@ __all__ = [
     "persist_finding",
     "persist_project_finding",
     "persist_provisions",
+    "persist_retractions",
     "persist_work_item_finding",
 ]
 
@@ -151,6 +157,82 @@ def persist_facts(
 
     session.flush()
     return FactSet(all=tuple(written), by_type=stored)
+
+
+def persist_retractions(
+    session: Session,
+    document_id: uuid.UUID,
+    fact_types: Sequence[str],
+    *,
+    reason: str,
+    extractor: str = EXTRACTOR,
+    extractor_version: str = EXTRACTOR_VERSION,
+) -> tuple[FactRetraction, ...]:
+    """Record that this extractor version withdraws earlier facts of these types.
+
+    Called when the extractor deliberately declines to emit a document-scoped fact it previously
+    emitted — the suppression case. Suppression alone is silent: writing nothing leaves the old row
+    as the newest one for its document and fact type, so it stays selected and stays served. This is
+    what makes the decision explicit.
+
+    Scope is deliberately narrow in three ways, because a retraction removes evidence from view and
+    the blast radius of getting it wrong is high:
+
+    * only document-scoped facts (``sheet_row IS NULL``). A suppressed bill line is not a thing that
+      happens — suppression is about values quoted in prose.
+    * only *older* extractor versions. A fact written by this same version is not withdrawn by this
+      same version; that would be self-contradictory within one run.
+    * only facts not already retracted, so re-running is idempotent rather than accumulating
+      duplicate opinions.
+
+    Args:
+        fact_types: The fact types this run suppressed.
+        reason: Why, in prose. Stored verbatim on every row written, because a withdrawal nobody can
+            argue with is not auditable.
+
+    Returns:
+        The retractions written. Empty when there was nothing to withdraw, which is the normal case
+        for a document being analysed for the first time.
+    """
+    if not fact_types:
+        return ()
+
+    stale = list(
+        session.execute(
+            select(ExtractedFact)
+            .outerjoin(FactRetraction, FactRetraction.fact_id == ExtractedFact.id)
+            .where(
+                ExtractedFact.document_id == document_id,
+                ExtractedFact.fact_type.in_(list(fact_types)),
+                ExtractedFact.sheet_row.is_(None),
+                ExtractedFact.extractor_version != extractor_version,
+                FactRetraction.id.is_(None),
+            )
+        ).scalars()
+    )
+
+    written: list[FactRetraction] = []
+    for fact in stale:
+        retraction = FactRetraction(
+            fact_id=fact.id,
+            retracted_by_extractor=extractor,
+            retracted_by_version=extractor_version,
+            reason=reason,
+            software_version=__version__,
+        )
+        session.add(retraction)
+        written.append(retraction)
+
+    if written:
+        session.flush()
+        _log.info(
+            "extraction.facts_retracted",
+            document_id=str(document_id),
+            retracted=len(written),
+            fact_types=sorted(set(fact_types)),
+            by_version=extractor_version,
+        )
+    return tuple(written)
 
 
 def persist_finding(

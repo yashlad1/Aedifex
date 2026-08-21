@@ -652,6 +652,18 @@ def _print_analysis(session: Session, outcome: AnalysisOutcome) -> None:
             f"{'' if outcome.had_text_layer else '  (NO TEXT LAYER - needs OCR)'}"
         )
 
+    if outcome.retracted:
+        # Loud on purpose. This line means the corpus previously held a value the document does not
+        # state, and it is now out of circulation without being destroyed.
+        print(f"\nRETRACTED  {len(outcome.retracted)} fact(s) an earlier extractor version wrote")
+        for r in outcome.retracted:
+            fact = r.fact
+            print(
+                f"  {fact.fact_type:<28} was {fact.literal!r} (v{fact.extractor_version}, "
+                f"page {fact.page})  withdrawn by v{r.retracted_by_version}"
+            )
+        print("  the rows remain readable, so any finding computed from them is still explainable")
+
     if outcome.facts:
         print("\nFACTS")
         for fact in sorted(outcome.facts, key=lambda f: f.fact_type):

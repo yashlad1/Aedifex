@@ -20,6 +20,7 @@ from typing import Annotated, Final
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, text
+from sqlalchemy.orm import selectinload
 
 from aedifex import __version__
 from aedifex.acquisition.catalog import (
@@ -360,6 +361,17 @@ class FactResponse(BaseModel):
     extractor: str
     extractor_version: str
     extracted_at: str
+    retracted: bool
+    """Whether a later extractor version said this fact should never have existed.
+
+    Returned rather than filtered out, for the same reason superseded versions are returned: a
+    finding computed from this row has to stay explainable. But a client must never present a
+    retracted fact as something the document states — that is exactly what this flag is for, and
+    before it existed the API served ₹13,262 crore of another project's resettlement colonies as a
+    CAG audit report's own estimated cost.
+    """
+
+    retracted_reason: str | None = None
 
     @classmethod
     def from_row(cls, row: ExtractedFact) -> FactResponse:
@@ -381,6 +393,8 @@ class FactResponse(BaseModel):
             extractor=row.extractor,
             extractor_version=row.extractor_version,
             extracted_at=row.extracted_at.isoformat(),
+            retracted=row.is_retracted,
+            retracted_reason=None if row.retraction is None else row.retraction.reason,
         )
 
 
@@ -773,11 +787,21 @@ def create_app() -> FastAPI:
 
         Facts from superseded extractor versions are returned too. They are what older findings
         were computed from, so hiding them would make a stored verdict unexplainable.
+
+        The same reasoning applies to a *retracted* fact — a value a later extractor version says
+        the document never stated — but the consequence is different, and getting it wrong once was
+        enough. A superseded fact has a successor that contradicts it; a retracted fact has nothing,
+        so it reads as current unless something says otherwise. ``retracted`` is that something, and
+        a client must not display a fact carrying it as a value the document states.
         """
         with session_scope() as session:
             rows = list(
                 session.execute(
                     select(ExtractedFact)
+                    # Eagerly, because the response is built after the session closes and a lazy
+                    # load there raises DetachedInstanceError. Found by calling the endpoint rather
+                    # than by reading it.
+                    .options(selectinload(ExtractedFact.retraction))
                     .where(ExtractedFact.document_id == document_id)
                     .order_by(ExtractedFact.extractor_version, ExtractedFact.fact_type)
                 ).scalars()
