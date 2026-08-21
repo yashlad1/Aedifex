@@ -23,7 +23,11 @@ from aedifex.calculation.engine import (
 from aedifex.domain.evidence import FactKind
 from aedifex.extraction.applicability import ApplicableProvision, _in_band
 from aedifex.extraction.pdftext import DocumentText, PageText
-from aedifex.extraction.policy import PROVISION_BID_SECURITY_SHARE, read_bid_security_policy
+from aedifex.extraction.policy import (
+    PROVISION_BID_SECURITY_SHARE,
+    _percent_as_fraction,
+    read_bid_security_policy,
+)
 from aedifex.extraction.tender_notice import (
     FIELD_BID_SECURITY,
     FIELD_ESTIMATED_COST,
@@ -83,6 +87,34 @@ def test_a_document_that_names_no_authority_yields_nothing() -> None:
     """A threshold binding nobody in particular would end up binding everybody."""
     anonymous = _CLAUSE.replace("National Highways Authority of India", "the Employer")
     assert read_bid_security_policy(_document(anonymous)) == ()
+
+
+@pytest.mark.parametrize(
+    ("written", "fraction"),
+    [
+        ("two percent", "0.02"),  # NHAI Works Manual, words
+        ("one and one-half percent", "0.015"),  # NHAI, words with a half
+        ("0.5%", "0.005"),  # decimal
+        ("1/2%", "0.005"),  # Rajasthan PWFAR, vulgar fraction
+        ("1/2 per cent", "0.005"),
+        ("3/4 percent", "0.0075"),
+    ],
+)
+def test_every_rate_notation_the_real_documents_use(written: str, fraction: str) -> None:
+    """Three notations across two authorities, and one of them used to read four times too high.
+
+    ``1/2%`` matched the ``2%`` inside itself and returned two percent for half a percent — a
+    fourfold overstatement of a money threshold, silently, on a rate the Rajasthan Public Works
+    Financial & Accounts Rules really do write that way.
+    """
+    assert _percent_as_fraction(written) == Decimal(fraction)
+
+
+def test_an_unreadable_rate_is_refused_rather_than_guessed() -> None:
+    """A rate this module invented would become a threshold compared against real money."""
+    assert _percent_as_fraction("a reasonable percent") is None
+    assert _percent_as_fraction("1/0%") is None
+    assert _percent_as_fraction("no rate here") is None
 
 
 def _provision(

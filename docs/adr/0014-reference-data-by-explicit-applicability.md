@@ -69,6 +69,20 @@ judgement an LLM appears good at. It is also a compliance decision, which the SR
 outside what a model may do. A rule's threshold is evidence, not inference — the same conclusion
 already reached for the prescribed bid-security rate.
 
+## Tested against a second authority, 2026-08-20
+
+The Rajasthan Public Works Financial & Accounts Rules Part II were run through the same path. The
+decision here held; the *implementation's* applicability shape did not. Rajasthan conditions its rates
+on whether a contractor is enlisted and within their zone — a categorical predicate, where
+`applies_from`/`applies_to_max` express only a numeric band. And a check constraint requires every
+provision to carry a share or a cap, so measurement procedures and definitions cannot be stored at
+all.
+
+Both are recorded as limitations rather than fixed, on this ADR's own reasoning: the shape of a
+categorical condition guessed from one document is the speculative design the ADR exists to prevent.
+Full analysis in
+[docs/research/REFERENCE_PROVISION_SECOND_SOURCE.md](../research/REFERENCE_PROVISION_SECOND_SOURCE.md).
+
 ## Consequences
 
 A rule that consumes reference evidence will have to state which reference documents it applied and

@@ -79,8 +79,18 @@ _WORD_NUMBERS: Final[dict[str, Decimal]] = {
 }
 _HALF_WORDS: Final[frozenset[str]] = frozenset({"half", "one-half", "a-half", "a half", "one half"})
 
+# A rate, in any of the three notations the two real reference documents use between them: words
+# ("two percent", NHAI), decimals ("0.5%"), and vulgar fractions ("1/2%", Rajasthan PWFAR).
+#
+# The fraction alternative comes first and the leading guard is not decoration. Without them, "1/2%"
+# matched the "2%" inside it and returned **two percent for half a percent** — a fourfold
+# overstatement of a money threshold, silently. The guard refuses a match that begins immediately
+# after a digit or a slash, so a rate can never be read out of the middle of another number.
 _PERCENT: Final[re.Pattern[str]] = re.compile(
-    r"(?P<value>\d+(?:\.\d+)?|[a-z]+(?:[\s\-]and[\s\-][a-z\-]+)?)\s*(?:%|per\s?cent)",
+    r"(?<![\d/])(?:"
+    r"(?P<numerator>\d+)\s*/\s*(?P<denominator>\d+)"
+    r"|(?P<value>\d+(?:\.\d+)?|[a-z]+(?:[\s\-]and[\s\-][a-z\-]+)?)"
+    r")\s*(?:%|per\s?cent)",
     re.IGNORECASE,
 )
 
@@ -154,6 +164,14 @@ def _percent_as_fraction(text: str) -> Decimal | None:
     match = _PERCENT.search(text)
     if match is None:
         return None
+
+    if match.group("numerator") is not None:
+        numerator = Decimal(match.group("numerator"))
+        denominator = Decimal(match.group("denominator"))
+        if denominator == 0:
+            return None
+        return numerator / denominator / 100
+
     raw = match.group("value").strip().lower()
 
     try:
