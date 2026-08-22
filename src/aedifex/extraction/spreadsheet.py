@@ -40,10 +40,17 @@ __all__ = [
     "FIELD_MEASURED_QUANTITY",
     "FIELD_PREVIOUS_CERTIFIED_QUANTITY",
     "FIELD_PROJECT_REFERENCE",
+    "MAX_WINDOW_COLUMNS",
+    "MAX_WINDOW_ROWS",
     "SheetCell",
     "SheetFact",
     "SheetRow",
+    "SheetWindow",
+    "SheetWindowCell",
+    "SheetWindowRow",
+    "cell_reference",
     "read_construction_sheet",
+    "read_sheet_window",
 ]
 
 FIELD_ITEM_IDENTIFIER: Final[str] = "item_identifier"
@@ -115,6 +122,16 @@ MAX_ROWS: Final[int] = 5_000
 MAX_COLUMNS: Final[int] = 64
 
 
+def cell_reference(sheet: str, row: int, column: int) -> str:
+    """``BOQ!D6`` — what a reviewer types into the go-to box to see it.
+
+    A module-level function as well as a property, because the API has to build the same string from
+    three stored columns and the format must be defined once. A viewer showing ``BOQ!D6`` while the
+    extractor recorded ``BOQ.D6`` would be two answers to "where is this?".
+    """
+    return f"{sheet}!{get_column_letter(column)}{row}"
+
+
 @dataclass(frozen=True, slots=True)
 class SheetCell:
     """Where a value came from, in the terms a spreadsheet uses."""
@@ -126,7 +143,7 @@ class SheetCell:
     @property
     def reference(self) -> str:
         """``BOQ!D6`` — what a reviewer types into the go-to box to see it."""
-        return f"{self.sheet}!{get_column_letter(self.column)}{self.row}"
+        return cell_reference(self.sheet, self.row, self.column)
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +220,142 @@ def _rate_field_for(document_type: str) -> str:
     invisible.
     """
     return FIELD_CLAIMED_RATE if document_type == "running_bill" else FIELD_CONTRACT_RATE
+
+
+MAX_WINDOW_ROWS: Final[int] = 61
+"""Rows a single window may return: 30 either side of the target, plus the target.
+
+Bounded because the caller is an HTTP request and the sheet is untrusted input. Wide enough that a
+reviewer sees the header of a bill along with the row in question when they are near each other, and
+narrow enough that no response is a table nobody reads.
+"""
+
+MAX_WINDOW_COLUMNS: Final[int] = 26
+_MAX_CELL_CHARS: Final[int] = 200
+
+
+@dataclass(frozen=True, slots=True)
+class SheetWindowCell:
+    """One cell of a window: where it is, and what it says."""
+
+    column: int
+    letter: str
+    reference: str
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class SheetWindowRow:
+    number: int
+    cells: tuple[SheetWindowCell, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SheetWindow:
+    """A readable region of one sheet, for showing a reviewer where a value came from.
+
+    **Not an extraction.** Nothing here becomes a fact, nothing is normalised, and no column is
+    interpreted — this is the spreadsheet equivalent of opening a PDF at page 6. Values are rendered
+    as the text of what ``openpyxl`` read, using the same library and the same ``data_only`` setting
+    the extractor used, so the window cannot disagree with the facts about what a cell contains. A
+    second reader in the browser could, which is the reason this lives here rather than there.
+    """
+
+    sheet: str
+    sheets: tuple[str, ...]
+    first_row: int
+    rows: tuple[SheetWindowRow, ...]
+    total_rows: int
+    truncated: bool
+    """Whether the sheet has rows outside the window. Never a silent crop."""
+
+
+def read_sheet_window(
+    data: bytes,
+    *,
+    sheet: str | None = None,
+    row: int = 1,
+    radius: int = 12,
+    columns: int = MAX_WINDOW_COLUMNS,
+) -> SheetWindow:
+    """Read a bounded region of a spreadsheet around ``row``, for display only.
+
+    The authoritative artifact is still the workbook, and it stays downloadable. This exists because
+    the alternative was worse in both directions: leaving spreadsheet evidence unviewable made the
+    *strongest* evidence the project holds the hardest to check, and rendering it with a second
+    parser in the browser would let the viewer and the extractor disagree about what cell F43 says.
+
+    Args:
+        sheet: Sheet by name. Defaults to the first, which is what the extractor reads.
+        row: The row to centre on — the one a fact cites.
+        radius: Rows either side. Clamped so a window is always bounded.
+        columns: Columns from A. Clamped to ``MAX_WINDOW_COLUMNS``.
+
+    Raises:
+        ExtractionError: if the workbook cannot be opened, has no worksheets, or has no such sheet.
+    """
+    try:
+        workbook = load_workbook(BytesIO(data), read_only=True, data_only=True)
+    except Exception as error:
+        raise ExtractionError(
+            f"spreadsheet could not be opened: {type(error).__name__}: {error}"
+        ) from error
+
+    try:
+        names = tuple(workbook.sheetnames)
+        if not names:
+            raise ExtractionError("spreadsheet contains no worksheets")
+        if sheet is not None and sheet not in names:
+            raise ExtractionError(f"no sheet named {sheet!r}; this workbook has {', '.join(names)}")
+        worksheet = workbook[sheet] if sheet is not None else workbook[names[0]]
+
+        width = max(1, min(columns, MAX_WINDOW_COLUMNS))
+        span = max(0, min(radius, MAX_WINDOW_ROWS // 2))
+        first = max(1, row - span)
+        last = first + min(MAX_WINDOW_ROWS, span * 2 + 1) - 1
+
+        window: list[SheetWindowRow] = []
+        seen = 0
+        for index, values in enumerate(worksheet.iter_rows(values_only=True), start=1):
+            seen = index
+            if index > MAX_ROWS:
+                break
+            if index < first or index > last:
+                continue
+            cells = tuple(
+                SheetWindowCell(
+                    column=column,
+                    letter=get_column_letter(column),
+                    reference=cell_reference(worksheet.title, index, column),
+                    value=_render(value),
+                )
+                for column, value in enumerate(values[:width], start=1)
+            )
+            window.append(SheetWindowRow(number=index, cells=cells))
+    finally:
+        workbook.close()
+
+    return SheetWindow(
+        sheet=worksheet.title,
+        sheets=names,
+        first_row=first,
+        rows=tuple(window),
+        total_rows=seen,
+        truncated=seen > last or first > 1,
+    )
+
+
+def _render(value: object) -> str:
+    """A cell as text, for display. Bounded, and never reformatted into something else.
+
+    ``str`` of what openpyxl read, not a locale-formatted number: a viewer showing ``85,39,81,318``
+    where the workbook holds ``853981318.41`` would be presenting our formatting as the document's
+    content, which is the same mistake as re-rendering a PDF.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    return text if len(text) <= _MAX_CELL_CHARS else f"{text[:_MAX_CELL_CHARS]}…"
 
 
 def read_construction_sheet(data: bytes, *, document_type: str) -> ConstructionSheet:

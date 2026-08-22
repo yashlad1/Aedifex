@@ -42,6 +42,29 @@ updates:
     commit-message:
       prefix: "ci"
 
+  # The viewer's dependency graph. Committed as package-lock.json and installed with `npm ci`, for
+  # the same reason uv.lock is installed with `--locked`: reproducibility comes from the lockfile,
+  # freshness comes from a reviewed PR. Grouped tightly because a React or Vite major is a real
+  # change and should not arrive batched with a types package.
+  - package-ecosystem: npm
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: [dependencies, frontend]
+    commit-message:
+      prefix: "deps"
+      include: scope
+    groups:
+      frontend-patch:
+        patterns: ["*"]
+        update-types: [patch]
+      frontend-types:
+        patterns: ["@types/*"]
+
   # Base images are pinned by digest, so this is what surfaces new digests.
   - package-ecosystem: docker
     directory: "/"

@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 from apps.api.main import (
     REQUEST_ID_HEADER,
+    FactResponse,
     FindingResponse,
     _download_name,
     create_app,
@@ -598,3 +599,87 @@ class TestArtifactContentBoundary:
         name = _download_name(stored, "abcdef0123456789" + "0" * 48, FileFormat.PDF)
         assert name == expected
         assert '"' not in name and "\r" not in name and "\n" not in name
+
+
+class TestCellProvenance:
+    """A cell reference is served only when the fact knows its sheet — and that is a real trap.
+
+    ``sheet_row`` is *also* used for a row's position in a bill of quantities read out of a PDF,
+    because work-item linking groups on the row whichever format it came from. On the corpus this
+    was written against, 12,646 facts carry a ``sheet_row`` and only 548 come from a spreadsheet.
+    Offering "open cell A37" for a PDF row would send a reviewer to a cell that does not exist.
+    """
+
+    @staticmethod
+    def _fact(**overrides: object) -> ExtractedFact:
+        fields: dict[str, object] = {
+            "id": uuid.uuid4(),
+            "document_id": uuid.uuid4(),
+            "fact_type": "contract_rate",
+            "kind": FactKind.MONEY,
+            "literal": "8000",
+            "numeric_value": Decimal("8000.00"),
+            "page": 1,
+            "span_start": 0,
+            "span_end": 0,
+            "snippet": "BOQ!E8",
+            "method": "cell:BOQ!E8",
+            "extractor": "test",
+            "extractor_version": "1",
+            "extracted_at": datetime(2026, 8, 22, tzinfo=UTC),
+        }
+        fields.update(overrides)
+        return ExtractedFact(**fields)
+
+    def test_a_spreadsheet_fact_carries_its_cell(self) -> None:
+        served = FactResponse.from_row(self._fact(sheet_name="BOQ", sheet_row=8, sheet_column=5))
+
+        assert served.cell == "BOQ!E8"
+        assert served.sheet_name == "BOQ"
+        assert served.sheet_row == 8
+
+    def test_a_pdf_table_row_is_offered_no_cell(self) -> None:
+        """The trap. A row position without a sheet is a row in a printed table, not a cell."""
+        served = FactResponse.from_row(self._fact(sheet_row=37, snippet="Item 4.7.2 ... 8,000.00"))
+
+        assert served.cell is None
+        assert served.sheet_row == 37, "the row is still reported; it is real"
+
+    def test_evidence_carries_the_cell_so_a_finding_can_link_to_it(self) -> None:
+        fact = self._fact(sheet_name="RA Bill", sheet_row=8, sheet_column=7)
+        finding = Finding(
+            id=uuid.uuid4(),
+            document_id=fact.document_id,
+            rule_id="claimed_rate_matches_contract_rate",
+            rule_version="1",
+            outcome="review",
+            summary="Item 4.7.3: claimed rate is above the contracted rate",
+            expected="equal",
+            observed="+2500 INR",
+            detail={},
+            evaluated_at=datetime(2026, 8, 22, tzinfo=UTC),
+        )
+        finding.evidence = [FindingEvidence(role="claimed_rate", fact_id=fact.id)]
+
+        payload = FindingResponse.from_row(finding, {fact.id: fact}, {})
+
+        assert payload.evidence[0].cell == "RA Bill!G8"
+        assert payload.evidence[0].sheet_name == "RA Bill"
+
+    def test_an_inconclusive_finding_is_not_review_work(self) -> None:
+        """Item 2 of the review, at the API boundary rather than in the browser."""
+        finding = Finding(
+            id=uuid.uuid4(),
+            document_id=uuid.uuid4(),
+            rule_id="bid_security_matches_reference_policy",
+            rule_version="1",
+            outcome="inconclusive",
+            summary="No reference provision could be applied to this document.",
+            expected="NOT SOURCED",
+            observed="nothing compared",
+            detail={},
+            evaluated_at=datetime(2026, 8, 22, tzinfo=UTC),
+        )
+        finding.evidence = []
+
+        assert FindingResponse.from_row(finding, {}, {}).needs_human_review is False

@@ -125,6 +125,14 @@ class RuleTypeInfo:
 class FindingOutcomeInfo:
     outcome: Outcome
     description: str
+    requires_human_review: bool = False
+    """Whether a person can resolve this outcome at all.
+
+    Published so a client never has to infer it. ``INCONCLUSIVE`` is the case that matters: it looks
+    like work and is not, because the rule could not be applied for want of evidence and no decision
+    a reviewer makes changes that. A UI that guessed "anything that is not a pass" put those in the
+    review queue, which is how a queue stops being believed.
+    """
 
 
 FACT_TYPES: Final[tuple[FactTypeInfo, ...]] = (
@@ -523,16 +531,20 @@ DOCUMENT_VERSION_STATES: Final[tuple[VersionStateInfo, ...]] = (
 
 FINDING_OUTCOMES: Final[tuple[FindingOutcomeInfo, ...]] = (
     FindingOutcomeInfo(Outcome.PASS, "The rule's condition held."),
-    FindingOutcomeInfo(Outcome.FAIL, "The rule's condition did not hold."),
+    FindingOutcomeInfo(
+        Outcome.FAIL, "The rule's condition did not hold.", requires_human_review=True
+    ),
     FindingOutcomeInfo(
         Outcome.REVIEW,
         "A discrepancy a person should look at. The rule established it but cannot establish its "
         "cause, so it is neither a pass nor a failure.",
+        requires_human_review=True,
     ),
     FindingOutcomeInfo(
         Outcome.INCONCLUSIVE,
         "The rule could not be applied — a value or a threshold was missing. Not a failure of the "
-        "document, and never to be displayed as one.",
+        "document, never to be displayed as one, and not review work: the fix is acquiring the "
+        "missing evidence, which no decision by a reviewer can substitute for.",
     ),
 )
 

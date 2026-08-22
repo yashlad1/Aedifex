@@ -210,6 +210,15 @@ class ExtractedField:
     """Unit of measure for a quantity. Explicit, never inferred — 470 m3 and 470 MT are not
     comparable, and a quantity that has lost its unit invites exactly that comparison."""
 
+    sheet_name: str | None = None
+    """Which sheet the value came from, when it came from a spreadsheet.
+
+    Structured rather than left inside the snippet. Until 2026-08-22 the sheet name survived only in
+    the snippet text (``BOQ!D7``) and in ``method``, so a client wanting to open the sheet had to
+    parse prose written for a human — and a viewer could not offer "go to this cell" for the very
+    format the precedence rules call the *strongest* evidence we hold.
+    """
+
     sheet_row: int | None = None
     sheet_column: int | None = None
     """Grid position, for a value read from a spreadsheet cell rather than a page of text."""

@@ -1,0 +1,83 @@
+# Documents a project owner gives us directly.
+#
+# This source exists because the product needs an honest answer to "where did these bytes come
+# from?" for the ordinary case: a developer, PMC or quantity surveyor uploading their own project's
+# records. Before it existed, a customer's BOQ had to be filed under whichever acquisition source
+# happened to be approved — `iitb_building_works`, or worse, `synthetic_projects` — which would put a
+# false statement in the provenance record on every upload.
+#
+# What this source is NOT:
+#
+#   * it is not a tenant, an organisation, or an owner. A source says how a document arrived, and
+#     nothing about who is entitled to see it. Authorization, when it exists, will be a separate
+#     model (Organization -> Membership -> Project), not a reinterpretation of this field.
+#   * it is not a licence grant. The terms below describe the *default* position — the owner gave us
+#     their own records for the purpose of reviewing them — and a design-partner agreement governs
+#     anything beyond that. Nothing collected under this source may be redistributed or used to
+#     train anything.
+#
+# `contains_personal_data: true` is the safe reading and almost certainly the true one: real
+# construction records name site engineers, sign-offs, contractor contacts and bank details.
+
+sources:
+  - id: customer_provided
+    name: Customer-provided project records
+    description: >
+      Documents supplied directly by the owner of the project they describe — bills of quantities,
+      measurement records, running account bills, certificates, invoices and the reference material
+      their contract points at. Uploaded through the product, never fetched.
+    country: XX
+    category: government_procurement
+    # `category` is a poor fit and the least wrong of the five available values: these are
+    # procurement and post-award records of construction works, and inventing a sixth enum value for
+    # one source would put a vocabulary change in front of a data change. Revisit if a second
+    # private-sector source appears.
+    retrieval: manual_upload
+    base_url: null
+    robots_policy: not_applicable
+    enabled: true
+    verification_status: approved
+    crawler: null
+    rate_limit:
+      requests_per_minute: 600
+      max_concurrency: 8
+      min_delay_seconds: 0.0
+    data_use:
+      license: Proprietary to the customer; no licence granted to this project
+      access: restricted
+      allowed_use: >
+        Review and verification for the customer who supplied the documents, and nothing else. No
+        redistribution, no publication of extracts, no use as training data, and no cross-customer
+        analysis. A document uploaded here is evidence held on someone's behalf.
+      attribution_required: false
+      contains_personal_data: true
+      reviewed_by: project maintainers
+      reviewed_on: 2026-08-22T00:00:00Z
+    document_types:
+      - contract
+      - bill_of_quantities
+      - measurement_book
+      - running_bill
+      - payment_certificate
+      - invoice
+      - change_order
+      - purchase_order
+      - delivery_challan
+      - goods_receipt_note
+      - material_test_certificate
+      - inspection_report
+      - technical_specification
+      - schedule_of_rates
+      - tender_notice
+      - bid_document
+      - award_notice
+      - corrigendum
+      - drawing
+      - bank_guarantee
+      - unknown
+    file_formats: [pdf, xlsx, csv, docx, png, jpeg, json]
+    notes: >
+      Access is `restricted` deliberately, even though the API currently enforces nothing: the write
+      and content endpoints refuse to serve in production precisely because a source like this one
+      exists. Before any external deployment, documents under this source must be reachable only
+      through an authenticated identity scoped to the project that holds them.

@@ -29,9 +29,11 @@ from typing import Final
 from aedifex.domain.documents import DocumentState, DocumentType
 
 __all__ = [
+    "REVIEWABLE_OUTCOMES",
     "WORKFLOW_CATEGORY",
     "ProcessingStatus",
     "WorkflowCategory",
+    "needs_human_review",
     "processing_status",
     "workflow_category",
 ]
@@ -116,6 +118,35 @@ def processing_status(
     if state is DocumentState.PROCESSED:
         return ProcessingStatus.NEEDS_ATTENTION if needs_attention else ProcessingStatus.PROCESSED
     return ProcessingStatus.UPLOADED
+
+
+# Outcomes a person can actually resolve. The distinction is not cosmetic:
+#
+#   PASS           nothing to do.
+#   FAIL / REVIEW  a person decides. Accept it, reject it, or say what evidence is missing.
+#   INCONCLUSIVE   a person can decide nothing. The rule could not be applied because the evidence
+#                  it needed is not in the corpus, and clicking Accept or Reject changes nothing —
+#                  the only fix is acquiring the document. Listing it as review work fills a
+#                  reviewer's queue with tasks that cannot be completed, which is worse than showing
+#                  nothing: it teaches them the queue is noise.
+REVIEWABLE_OUTCOMES: Final[frozenset[str]] = frozenset({"fail", "review"})
+
+
+def needs_human_review(outcome: str, *, has_current_review: bool) -> bool:
+    """Whether this finding is waiting on a person.
+
+    The single definition. It lives in ``domain`` so the read models, the API and any future client
+    all answer the question the same way — a browser deciding this for itself was how
+    ``INCONCLUSIVE`` findings came to be listed as review work, and a second implementation of a
+    deterministic decision is a second answer that drifts quietly.
+
+    Args:
+        outcome: The finding's stored outcome, verbatim.
+        has_current_review: Whether a review speaks for the verdict **as it now stands**. A stale
+            review — recorded against an outcome or a rule version the finding no longer has —
+            does not count, which is what re-opens a finding when a rule is revised.
+    """
+    return outcome in REVIEWABLE_OUTCOMES and not has_current_review
 
 
 class WorkflowCategory(StrEnum):

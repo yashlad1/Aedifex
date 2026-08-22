@@ -143,6 +143,30 @@ Two additions were needed and are recorded as requirements rather than smuggled 
 rendered in the browser, and there are no frontend tests. All three are recorded in
 `ARCHITECTURE.md` or `frontend/README.md`.
 
+### 5. Consistency pass after a code review — 2026-08-22
+
+A read of the repository at `fdc0694` produced seven findings, all of them about the architecture
+being internally inconsistent rather than about anything missing. Six were acted on and one was a
+disagreement worth conceding.
+
+| # | Finding | Resolution |
+| --- | --- | --- |
+| 1 | `Project.source_id` had three meanings — acquisition origin, ownership, tenancy placeholder | The code's comments were wrong and the architecture note was right. Audited and corrected everywhere; `customer_provided` added so a customer's documents have an honest origin |
+| 2 | The frontend decided which findings need review, listing every INCONCLUSIVE as work | One definition, in `domain/workflow.py`, served as `needs_human_review` per finding and `requires_human_review` per outcome. The browser now only sorts by it |
+| 3 | Spreadsheet cell provenance never reached the API | `sheet_name` stored and backfilled; sheet, row, column and cell exposed on facts and evidence |
+| 4 | The frontend was not in CI | A `viewer` job: `npm ci`, `npm run build`. Make switched to `npm ci`; Dependabot watches the lockfile |
+| 5 | A failed summary rendered as a dash | "Summary unavailable — *reason*", verified by making the request fail in a real browser |
+| 6 | Refusing to render spreadsheets was too strict | Conceded, and it was the right call: the *strongest* evidence we hold was the hardest to review. `GET /v1/documents/{id}/sheet` serves a bounded window read by the extractor's own library, so the grid cannot disagree with the facts |
+| 7 | Create Project and Upload still needed curl | Both are in the UI, and both were driven through a real browser to confirm it |
+
+Finding 6 deserves its own note, because the reasoning changed rather than the standard. The
+objection to rendering was that a re-rendering is our interpretation of the evidence. That still
+holds for a PDF, where a faithful renderer already exists in the browser. For a workbook there was no
+renderer at all, so the choice was not "artifact or interpretation" but "reviewable or not" — and the
+danger the original rule was guarding against, a *second* reader disagreeing with the extractor, is
+avoided by reading the cells on the server with the same library and the same settings. The workbook
+remains authoritative and the screen says so.
+
 ## Where this leaves the product
 
 A real building project — IIT Bombay Hostel 19, seven documents, 3,319 facts — goes from a URL to a

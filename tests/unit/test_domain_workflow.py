@@ -18,6 +18,7 @@ from aedifex.domain.workflow import (
     WORKFLOW_CATEGORY,
     ProcessingStatus,
     WorkflowCategory,
+    needs_human_review,
     processing_status,
     workflow_category,
 )
@@ -103,3 +104,40 @@ class TestProcessingStatus:
         from aedifex.extraction import READABLE_FORMATS
 
         assert frozenset({FileFormat.PDF, FileFormat.XLSX}) == READABLE_FORMATS
+
+
+class TestNeedsHumanReview:
+    """Which outcomes a person can actually resolve — the one definition, tested once.
+
+    Justified because the failure is a product failure with a quiet cause: the browser used to make
+    this judgement itself, as "outcome is not pass and nobody has reviewed it", which put every
+    INCONCLUSIVE finding in the review queue. A reviewer cannot resolve one — the rule could not be
+    applied because the evidence it needed is missing — so the queue filled with work that could not
+    be completed, which teaches people to ignore the queue.
+    """
+
+    @pytest.mark.parametrize(
+        ("outcome", "expected"),
+        [("fail", True), ("review", True), ("pass", False), ("inconclusive", False)],
+    )
+    def test_only_a_resolvable_verdict_asks_for_a_person(
+        self, outcome: str, expected: bool
+    ) -> None:
+        assert needs_human_review(outcome, has_current_review=False) is expected
+
+    def test_a_current_review_closes_it(self) -> None:
+        assert needs_human_review("fail", has_current_review=True) is False
+
+    def test_the_vocabulary_agrees_with_the_function(self) -> None:
+        """The published vocabulary and the decision must not drift apart.
+
+        ``GET /v1/knowledge`` tells a client which outcomes require review so it can explain the
+        difference; the function decides per finding. Two sources for one rule is the duplication
+        this consolidation removed, so they are checked against each other here.
+        """
+        from aedifex.knowledge.registry import FINDING_OUTCOMES
+
+        for info in FINDING_OUTCOMES:
+            assert info.requires_human_review is needs_human_review(
+                info.outcome.value, has_current_review=False
+            ), f"{info.outcome.value} disagrees between the registry and the function"

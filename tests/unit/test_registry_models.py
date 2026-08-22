@@ -124,6 +124,30 @@ class TestEnablingRequiresReview:
 
 
 class TestAccessControls:
+    def test_a_restricted_upload_source_may_be_enabled(self) -> None:
+        """The one exemption, and why it is not a hole in the rule.
+
+        The prohibition exists because *fetching* from behind an access control would mean
+        bypassing that control. A ``manual_upload`` source makes no request: the owner of the
+        documents hands them over. ``restricted`` there records that the contents are not ours to
+        redistribute — a statement about what we may do with the bytes rather than about how we got
+        them. Refusing to model it would force every customer's documents to be filed as ``public``.
+        """
+        source = SourceDefinition(
+            **source_kwargs(
+                enabled=True,
+                retrieval=RetrievalMethod.MANUAL_UPLOAD,
+                base_url=None,
+                verification_status=VerificationStatus.APPROVED,
+                data_use=DataUsePolicy(
+                    license="Proprietary to the customer",
+                    access=AccessLevel.RESTRICTED,
+                    allowed_use="Review for the customer who supplied it. No redistribution.",
+                ),
+            )
+        )
+        assert source.is_collectable is True
+
     def test_a_restricted_source_can_never_be_enabled(self) -> None:
         """Collecting from behind an access control would mean bypassing it."""
         with pytest.raises(ValidationError, match="behind an access control"):

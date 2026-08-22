@@ -87,14 +87,34 @@ class TestCollectionSafety:
                     "pending" not in source.data_use.license.lower()
                 ), f"{source.id} is approved but its licence still says 'pending'"
 
-    def test_no_enabled_source_sits_behind_an_access_control(
+    def test_no_enabled_fetching_source_sits_behind_an_access_control(
         self, sources: tuple[SourceDefinition, ...]
     ) -> None:
+        """Fetching from behind a control would mean bypassing it. Being handed a file would not.
+
+        The exemption is the rule's own logic rather than a hole in it: ``manual_upload`` makes no
+        request, so there is no control to bypass. ``customer_provided`` is exactly that case —
+        documents an owner gives us, marked restricted because they are not ours to redistribute.
+        """
         for source in sources:
-            if source.enabled:
+            if source.enabled and source.retrieval is not RetrievalMethod.MANUAL_UPLOAD:
                 assert (
                     source.data_use.access is not AccessLevel.RESTRICTED
-                ), f"{source.id} is enabled but marked restricted"
+                ), f"{source.id} is fetched and enabled but marked restricted"
+
+    def test_a_restricted_upload_source_states_what_may_not_be_done_with_it(
+        self, sources: tuple[SourceDefinition, ...]
+    ) -> None:
+        """``restricted`` on an upload source is a statement about use, so it has to say so.
+
+        The field stops meaning anything if it is set without the permitted use narrowing to match.
+        """
+        for source in sources:
+            if source.data_use.access is AccessLevel.RESTRICTED:
+                allowed = source.data_use.allowed_use.lower()
+                assert any(
+                    word in allowed for word in ("no redistribution", "not ", "only")
+                ), f"{source.id} is restricted but its allowed_use does not restrict anything"
 
     def test_every_enabled_remote_source_has_a_crawler(
         self, sources: tuple[SourceDefinition, ...]

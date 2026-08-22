@@ -34,14 +34,19 @@ export function EvidenceCard({
   findingId?: string;
 }) {
   const openable = item.document_id !== null && item.origin !== "derived";
+  // A cell is a location exactly as a page is. Both carry `fact` so the panel can highlight the row
+  // that was cited, and `finding` so there is a way back.
   const target = openable
     ? `/projects/${projectId}/documents/${item.document_id}?` +
       new URLSearchParams({
         ...(item.page ? { page: String(item.page) } : {}),
+        ...(item.sheet_name ? { sheet: item.sheet_name } : {}),
+        ...(item.cell ? { cell: item.cell } : {}),
         fact: item.fact_id,
         ...(findingId ? { finding: findingId } : {}),
       }).toString()
     : null;
+  const where = item.cell ?? (item.page ? `page ${item.page}` : null);
 
   return (
     <div className="evidence">
@@ -79,9 +84,7 @@ export function EvidenceCard({
 
       <div className="row small" style={{ marginTop: 7 }}>
         {target ? (
-          <Link to={target}>
-            Open {item.page ? `page ${item.page}` : "the document"} →
-          </Link>
+          <Link to={target}>Open {where ?? "the document"} →</Link>
         ) : (
           <span className="muted">
             {item.origin === "derived"

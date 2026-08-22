@@ -655,9 +655,13 @@ def _field_from_cell(fact: SheetFact) -> ExtractedField:
     goes in the snippet, which is what a reviewer needs in order to look: ``BOQ!D7`` locates a value
     in a spreadsheet as precisely as a character span locates one in prose.
 
-    The grid position goes in ``sheet_row``/``sheet_column`` rather than the character-span columns,
-    which mean something else. Work-item linking groups on the row, because a fact and its item
-    identifier are related by sharing one.
+    The grid position goes in ``sheet_name``/``sheet_row``/``sheet_column`` rather than the
+    character-span columns, which mean something else. All three are stored, so a client can offer
+    "go to this cell" without parsing the snippet — the snippet keeps the reference too, because it
+    is what a person reads.
+
+    Work-item linking groups on the row, because a fact and its item identifier are related by
+    sharing one.
     """
     return ExtractedField(
         name=fact.fact_type,
@@ -666,6 +670,7 @@ def _field_from_cell(fact: SheetFact) -> ExtractedField:
         value=fact.value,
         currency=fact.currency,
         unit=fact.unit,
+        sheet_name=fact.cell.sheet,
         sheet_row=fact.cell.row,
         sheet_column=fact.cell.column,
         evidence=Evidence(page=1, start=0, end=0, snippet=fact.cell.reference),

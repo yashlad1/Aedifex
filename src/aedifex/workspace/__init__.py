@@ -69,7 +69,12 @@ from aedifex.domain.files import (
     formats_are_compatible,
     sniff_format,
 )
-from aedifex.domain.workflow import ProcessingStatus, WorkflowCategory, processing_status
+from aedifex.domain.workflow import (
+    ProcessingStatus,
+    WorkflowCategory,
+    needs_human_review,
+    processing_status,
+)
 from aedifex.domain.workflow import workflow_category as category_of
 from aedifex.errors import AedifexError
 from aedifex.extraction import READABLE_FORMATS
@@ -108,11 +113,6 @@ __all__ = [
 ]
 
 _log = get_logger(__name__)
-
-# Outcomes that mean a person still has something to do. `inconclusive` is deliberately not one of
-# them: the rule could not source what it needed, which is a gap in the corpus rather than a task
-# for a reviewer, and putting it here would fill every project's queue with work nobody can do.
-_OPEN_OUTCOMES: Final[frozenset[str]] = frozenset({"fail", "review"})
 
 # Filenames arrive from a client and are attacker-controlled. They never reach a storage key — that
 # is built from the digest — but they are stored, displayed, and used to name a temporary file, so
@@ -154,10 +154,21 @@ def create_project(
     """Declare a project. The first thing a user does, and until now not possible at all.
 
     Args:
-        source: Which registered source this project's documents belong to. Required because
-            ``projects.source_id`` is, and because it carries a real invariant: two authorities can
-            issue the same reference number and they are not the same project. When tenancy arrives
-            this is the column it replaces.
+        source: Which registered source **namespaces this project's identifier**. Required because
+            the column is, and because it carries one real invariant: ``external_ref`` is unique
+            only within the authority that issued it, so two authorities can both publish tender
+            ``PWD/2026/14`` and those are two projects.
+
+            It is **not** ownership and it will not become tenancy. An earlier version of this
+            docstring said it would; that was wrong, and it is the kind of wrong that turns into a
+            security defect, because an authorization check written against an acquisition field
+            looks correct and scopes nothing. Authorization arrives as
+            ``Organization → Membership → Project``, in new columns.
+
+            It also does not constrain what may be attached. A real project holds an owner-uploaded
+            bill, a contractor's claim, a PMC certificate and a published rate schedule; those come
+            from different sources and each document records its own origin. For a customer's own
+            project the honest value is ``customer_provided``.
         name: What the owner calls it. Required and non-blank — a project nobody can name is not
             usefully distinguishable from the next one.
         external_ref: The identifier the *documents* use, if the owner knows it. Optional, and left
@@ -839,13 +850,14 @@ def project_summary(session: Session, project_id: uuid.UUID) -> ProjectSummary:
 
 
 def _is_open(finding: Finding) -> bool:
-    """Whether a finding still needs a person.
+    """Whether a finding still needs a person. Delegates, so there is one definition.
 
-    Not a pass, and no review that speaks for the verdict as it now stands. Using
     ``current_review`` rather than "has any review" is what makes a revised rule re-open a finding
     somebody already accepted, which is the behaviour the staleness columns exist for.
     """
-    return finding.outcome in _OPEN_OUTCOMES and finding.current_review is None
+    return needs_human_review(
+        finding.outcome, has_current_review=finding.current_review is not None
+    )
 
 
 def _origins(

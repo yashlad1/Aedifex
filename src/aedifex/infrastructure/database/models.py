@@ -531,6 +531,17 @@ class ExtractedFact(Base):
     numeric_value: Mapped[Decimal | None] = mapped_column(Numeric(20, 2), default=None)
     currency: Mapped[str | None] = mapped_column(String(3), default=None)
 
+    sheet_name: Mapped[str | None] = mapped_column(String(128), default=None)
+    """Which sheet the cell is on, when this came from a spreadsheet.
+
+    Added on 2026-08-22, and the omission was a real gap rather than an oversight in labelling: the
+    row and column were stored while the sheet name existed only inside ``snippet`` (``BOQ!D7``) and
+    ``method``. So the format the extractor-precedence rules call the *strongest* evidence available
+    — a spreadsheet, which already carries rows, columns and cell positions — was the one a reviewer
+    could not navigate to, while a PDF could be opened at a page. Existing rows were backfilled from
+    the snippet, which is where the value had been all along.
+    """
+
     sheet_row: Mapped[int | None] = mapped_column(Integer, default=None)
     """Row of the spreadsheet cell this came from, when it came from a spreadsheet.
 
@@ -888,7 +899,29 @@ class Project(Base):
     __tablename__ = "projects"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+
     source_id: Mapped[str] = mapped_column(String(64), index=True)
+    """Which registered source **namespaces this project's identifier**. Acquisition metadata, and
+    nothing else.
+
+    Stated precisely, because a loose reading of this column would eventually become a security
+    defect. It exists for one reason: ``external_ref`` is only unique within the authority that
+    issued it, so two authorities can both publish tender ``PWD/2026/14`` and those are two
+    projects. Pairing the reference with a source is what keeps reconciliation from merging them.
+
+    Three things it is **not**:
+
+    * **not ownership, and not a tenant.** Authorization, when it arrives, is a separate model
+      (``Organization → Membership → Project``) and a new column. Reinterpreting this one would give
+      every future authorization check the appearance of scoping while scoping nothing, which is
+      worse than having no check at all.
+    * **not the source of the project's documents.** Membership legitimately spans sources: one
+      project holds an owner-uploaded bill, a contractor's claim, a PMC's certificate and a
+      published rate schedule. Each *document* records its own origin in ``document_uploads`` or
+      ``document_retrievals``; this column says nothing about them.
+    * **not a constraint on attachment.** Nothing refuses a document from another source, and
+      nothing should: origin affects provenance and nothing after it.
+    """
 
     external_ref: Mapped[str | None] = mapped_column(String(256), default=None)
     """The identifier the documents themselves use, e.g. a tender number. Never invented.

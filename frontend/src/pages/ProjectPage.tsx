@@ -10,8 +10,16 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import type { Finding, Knowledge, ProcessingReport, ProjectDocument, ProjectSummary } from "../api";
-import { formatBytes, humanise, postJson, useApi } from "../api";
+import type {
+  Finding,
+  Knowledge,
+  ProcessingReport,
+  ProjectDocument,
+  ProjectSummary,
+  Source,
+  UploadResult,
+} from "../api";
+import { formatBytes, humanise, postForm, postJson, useApi } from "../api";
 import { CountRow, ErrorBox, Loading, Pill, Stat } from "../components/bits";
 import { Coverage } from "../components/Coverage";
 
@@ -135,6 +143,14 @@ export function ProjectPage() {
       </div>
 
       <h2>Documents</h2>
+      <UploadPanel
+        projectId={projectId}
+        sourceId={project.source_id}
+        onUploaded={() => {
+          documents.reload();
+          summary.reload();
+        }}
+      />
       {documents.error ? <ErrorBox error={documents.error} /> : null}
       <table>
         <thead>
@@ -208,6 +224,169 @@ export function ProjectPage() {
   );
 }
 
+/**
+ * Giving a project a document, from the browser.
+ *
+ * The declared type is optional and stays optional: absent means absent, and a re-upload with no
+ * declaration keeps whatever the document already says rather than downgrading it to `unknown`. The
+ * classifier proposes a type either way, into its own field, where nothing acts on it.
+ *
+ * The source defaults to the project's own, which is the ordinary case, and can be changed because
+ * membership legitimately spans sources — a contractor's claim and a published rate schedule do not
+ * arrive the same way.
+ */
+function UploadPanel({
+  projectId,
+  sourceId,
+  onUploaded,
+}: {
+  projectId: string;
+  sourceId: string;
+  onUploaded: () => void;
+}) {
+  const sources = useApi<{ sources: Source[] }>("/v1/sources?collectable_only=true");
+  const knowledge = useApi<Knowledge>("/v1/knowledge");
+  const [file, setFile] = useState<File | null>(null);
+  const [declared, setDeclared] = useState("");
+  const [uploadedBy, setUploadedBy] = useState("");
+  const [source, setSource] = useState(sourceId);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const [outcome, setOutcome] = useState<string | undefined>();
+
+  const uploadable = (sources.data?.sources ?? []).filter(
+    (candidate) => candidate.retrieval === "manual_upload",
+  );
+  const types = knowledge.data?.workflow_categories === undefined ? [] : DOCUMENT_TYPES;
+
+  async function submit() {
+    if (file === null) return;
+    setBusy(true);
+    setError(undefined);
+    setOutcome(undefined);
+    const form = new FormData();
+    form.set("file", file);
+    form.set("source_id", source);
+    form.set("uploaded_by", uploadedBy);
+    if (declared !== "") form.set("document_type", declared);
+    try {
+      const body = await postForm<UploadResult>(`/v1/projects/${projectId}/documents`, form);
+      setOutcome(
+        `${body.document.filename ?? "document"}: ` +
+          `${body.artifact_was_new ? "stored" : "already held"}, ` +
+          `${body.membership_was_new ? "attached" : "already attached"}` +
+          (body.suggested_type ? `; classifier suggests ${humanise(body.suggested_type)}` : ""),
+      );
+      setFile(null);
+      onUploaded();
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="panel">
+      <div className="row">
+        <input
+          type="file"
+          style={{ maxWidth: 340 }}
+          onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+        />
+        <select
+          value={declared}
+          onChange={(event) => setDeclared(event.target.value)}
+          style={{ maxWidth: 220 }}
+          aria-label="Document type"
+        >
+          <option value="">Type: not stated</option>
+          {types.map((value) => (
+            <option key={value} value={value}>
+              {humanise(value)}
+            </option>
+          ))}
+        </select>
+        <select
+          value={source}
+          onChange={(event) => setSource(event.target.value)}
+          style={{ maxWidth: 220 }}
+          aria-label="Source"
+        >
+          {uploadable.map((candidate) => (
+            <option key={candidate.id} value={candidate.id}>
+              {candidate.name}
+            </option>
+          ))}
+        </select>
+        <input
+          type="text"
+          style={{ maxWidth: 170 }}
+          value={uploadedBy}
+          placeholder="uploaded by"
+          onChange={(event) => setUploadedBy(event.target.value)}
+        />
+        <button
+          className="primary"
+          disabled={busy || file === null || uploadedBy.trim() === ""}
+          onClick={submit}
+        >
+          {busy ? "Uploading…" : "Upload"}
+        </button>
+      </div>
+      <p className="small muted" style={{ marginBottom: 0 }}>
+        Leaving the type unstated is fine and often right: a suggestion is recorded either way, and a
+        person confirms it. Re-uploading the same bytes creates no second copy and no second
+        membership. Processing is a separate step.
+      </p>
+      {outcome ? (
+        <div className="warnbox small" style={{ marginTop: 8 }}>
+          {outcome}
+        </div>
+      ) : null}
+      {error ? (
+        <div style={{ marginTop: 8 }}>
+          <ErrorBox error={error} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The types a person may declare at upload.
+ *
+ * Listed here rather than fetched because the API publishes no document-type vocabulary endpoint —
+ * `/v1/knowledge` describes facts, rules, categories and outcomes, not document types. That is a gap
+ * worth closing when something else needs it; a stale entry here fails loudly, because the API
+ * validates the value and rejects anything it does not know.
+ */
+const DOCUMENT_TYPES = [
+  "bill_of_quantities",
+  "measurement_book",
+  "running_bill",
+  "payment_certificate",
+  "invoice",
+  "change_order",
+  "contract",
+  "tender_notice",
+  "bid_document",
+  "award_notice",
+  "corrigendum",
+  "purchase_order",
+  "delivery_challan",
+  "goods_receipt_note",
+  "material_test_certificate",
+  "inspection_report",
+  "technical_specification",
+  "schedule_of_rates",
+  "model_agreement",
+  "audit_report",
+  "drawing",
+  "bank_guarantee",
+  "unknown",
+];
+
 const FINDINGS_SHOWN = 20;
 
 /**
@@ -221,12 +400,13 @@ function FindingList({ projectId, findings }: { projectId: string; findings: Fin
   const [all, setAll] = useState(false);
   if (findings.length === 0) return <p className="muted small">None.</p>;
 
+  // `needs_human_review` comes from the backend. This file used to compute it as
+  // `outcome !== "pass" && review_state === "unreviewed"`, which put every INCONCLUSIVE finding in
+  // the review queue — work no reviewer can complete, because the rule could not be applied for want
+  // of evidence. Severity ordering within "needs a person" is presentation; the decision is not.
   const rank = (finding: Finding) => {
-    const open = finding.outcome !== "pass" && finding.review_state === "unreviewed";
-    if (open && finding.outcome === "fail") return 0;
-    if (open && finding.outcome === "review") return 1;
-    if (open && finding.outcome === "inconclusive") return 2;
-    return 3;
+    if (!finding.needs_human_review) return 3;
+    return finding.outcome === "fail" ? 0 : 1;
   };
   const ordered = [...findings].sort((a, b) => rank(a) - rank(b));
   const shown = all ? ordered : ordered.slice(0, FINDINGS_SHOWN);

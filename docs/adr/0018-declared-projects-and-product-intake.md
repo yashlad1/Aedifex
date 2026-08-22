@@ -124,6 +124,34 @@ two values that stand. Regression tests at both layers.
 **This is the milestone's strongest argument.** No amount of parser work would have surfaced it; a
 product workflow surfaced it on its first run.
 
+## Correction, 2026-08-22: what `projects.source_id` means
+
+The first version of this ADR, and the code it describes, said that `source_id` is "the column
+tenancy will replace". **That was wrong**, and it contradicted
+[ARCHITECTURE.md](../../ARCHITECTURE.md)'s own design-debt note, which had it right.
+
+The column has exactly one job: `external_ref` is unique only within the authority that issued it,
+so pairing the reference with a source is what stops reconciliation merging two authorities' identical
+tender numbers into one project. That is acquisition metadata.
+
+It is **not** ownership, and it must never become tenancy. The reason is not tidiness. An
+authorization check written against an acquisition field *looks* like scoping and scopes nothing —
+every query would appear guarded while returning rows from anywhere, which is worse than an obviously
+missing check. Authorization arrives as `Organization → Membership → Project`, in new columns.
+
+It also does not restrict what a project may hold, and the implementation never did: membership spans
+sources by design, because a real project holds an owner-uploaded bill, a contractor's claim, a PMC
+certificate and a published rate schedule. Each *document* records its own origin. The API request
+description that said "projects never span sources" was describing reconciliation's grouping rule as
+if it were a constraint on the project, and has been corrected.
+
+One thing was added rather than only reworded: a `customer_provided` source now exists in the
+registry, so a customer's own documents have an honest origin instead of borrowing whichever
+acquisition source happened to be approved. Its `access` is `restricted` — the contents are not ours
+to redistribute — which required scoping the registry's "restricted sources cannot be enabled" rule
+to *fetching* methods. That rule exists because collecting from behind an access control would mean
+bypassing the control; a document its owner hands over bypasses nothing.
+
 ## Consequences
 
 **Good.** A real building project moves create → upload → process → findings → evidence → review

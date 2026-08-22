@@ -267,3 +267,70 @@ class TestDocumentContent:
 
     def test_an_unknown_document_is_a_404(self, client: TestClient) -> None:
         assert client.get(f"/v1/documents/{uuid.uuid4()}/content").status_code == 404
+
+
+class TestSheetWindow:
+    """A spreadsheet region, served so a cell citation can be looked at.
+
+    The integration half of the item that made spreadsheet evidence usable. What is worth pinning
+    against a real store: the right sheet comes back for a real workbook, and a PDF is refused by
+    name rather than producing an empty grid.
+    """
+
+    @staticmethod
+    def _workbook() -> bytes:
+        from io import BytesIO
+
+        from openpyxl import Workbook
+
+        book = Workbook()
+        sheet = book.create_sheet("BOQ")
+        del book["Sheet"]
+        sheet["A5"] = "1.2"
+        sheet["B5"] = "PCC 1:4:8 in foundation"
+        sheet["D5"] = 86
+        sheet["E5"] = 631
+        buffer = BytesIO()
+        book.save(buffer)
+        return buffer.getvalue()
+
+    def test_a_cell_can_be_looked_at(
+        self,
+        client: TestClient,
+        session: Session,
+        store: RawObjectStore,
+        source: SourceDefinition,
+    ) -> None:
+        _, document_id = _attached(
+            session, store, source, filename="BOQ.xlsx", content=self._workbook(), declared=None
+        )
+
+        response = client.get(f"/v1/documents/{document_id}/sheet", params={"row": 5, "radius": 1})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["sheet"] == "BOQ"
+        assert body["sheets"] == ["BOQ"]
+        cited = [
+            cell
+            for entry in body["rows"]
+            for cell in entry["cells"]
+            if cell["reference"] == "BOQ!E5"
+        ]
+        assert [cell["value"] for cell in cited] == ["631"]
+        assert "authoritative artifact" in body["note"]
+
+    def test_a_pdf_is_refused_by_name(
+        self,
+        client: TestClient,
+        session: Session,
+        store: RawObjectStore,
+        source: SourceDefinition,
+    ) -> None:
+        """Not an empty grid. "This is a PDF, use /content" sends the reader somewhere useful."""
+        _, document_id = _attached(session, store, source)
+
+        response = client.get(f"/v1/documents/{document_id}/sheet")
+
+        assert response.status_code == 415
+        assert "not a spreadsheet" in response.json()["detail"]

@@ -79,6 +79,8 @@ export interface Evidence {
   value: string | null;
   expression: string | null;
   document_id: string | null;
+  sheet_name: string | null;
+  cell: string | null;
   clause: string | null;
   authority: string | null;
   band: string | null;
@@ -109,6 +111,16 @@ export interface Finding {
   evidence: Evidence[];
   reviews: Review[];
   review_state: string;
+  /**
+   * Whether this finding is waiting on a person — decided by the backend, never here.
+   *
+   * This app used to compute it as `outcome !== "pass" && review_state === "unreviewed"`, which
+   * listed every INCONCLUSIVE finding as review work. A reviewer cannot resolve one: the rule could
+   * not be applied because the evidence it needed is missing, and the fix is acquiring a document,
+   * not clicking Accept. `GET /v1/knowledge` publishes `requires_human_review` per outcome for
+   * explaining the difference.
+   */
+  needs_human_review: boolean;
 }
 
 export interface Fact {
@@ -126,6 +138,10 @@ export interface Fact {
   extracted_at: string;
   retracted: boolean;
   retracted_reason: string | null;
+  sheet_name: string | null;
+  sheet_row: number | null;
+  sheet_column: number | null;
+  cell: string | null;
 }
 
 export interface WorkflowCategoryInfo {
@@ -140,8 +156,45 @@ export interface Knowledge {
   workflow_categories: WorkflowCategoryInfo[];
   processing_statuses: { status: string; description: string; needs_a_person: boolean }[];
   review_decisions: { decision: string; description: string; closes_the_finding: boolean }[];
-  finding_outcomes: { outcome: string; description: string }[];
+  finding_outcomes: { outcome: string; description: string; requires_human_review: boolean }[];
   rule_types: { rule_id: string; scope: string; description: string; consumes: string[] }[];
+}
+
+export interface SheetWindowCell {
+  column: number;
+  letter: string;
+  reference: string;
+  value: string;
+}
+
+export interface SheetWindow {
+  document_id: string;
+  sheet: string;
+  sheets: string[];
+  first_row: number;
+  total_rows: number;
+  truncated: boolean;
+  max_rows: number;
+  max_columns: number;
+  rows: { row: number; cells: SheetWindowCell[] }[];
+  note: string;
+}
+
+/** What one upload did. The two booleans are the deduplication contract, made visible. */
+export interface UploadResult {
+  project_id: string;
+  document: ProjectDocument;
+  artifact_was_new: boolean;
+  membership_was_new: boolean;
+  suggested_type: string | null;
+  suggestion_matched: string | null;
+}
+
+export interface Source {
+  id: string;
+  name: string;
+  retrieval: string;
+  is_collectable: boolean;
 }
 
 export interface ProcessingReport {
@@ -255,6 +308,18 @@ export function contentUrl(documentId: string, page?: number | null): string {
   // A fragment, not a query parameter: `#page=` is understood by the browser's own PDF viewer, and
   // it is deliberately not sent to the server -- the bytes are the same whichever page you open.
   return page ? `${base}#page=${page}&view=FitH` : base;
+}
+
+/**
+ * A window onto a spreadsheet, read by the same library that extracted the facts.
+ *
+ * Deliberately a server call rather than a parser in the browser: two parsers can disagree about
+ * what cell F43 contains, and the one a reviewer sees must be the one the finding was computed from.
+ */
+export function sheetUrl(documentId: string, sheet: string | null, row: number): string {
+  const params = new URLSearchParams({ row: String(row), radius: "12" });
+  if (sheet) params.set("sheet", sheet);
+  return `/v1/documents/${documentId}/sheet?${params.toString()}`;
 }
 
 export function formatBytes(size: number): string {

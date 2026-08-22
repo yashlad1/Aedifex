@@ -9,7 +9,13 @@ source cannot be expressed at all:
 
 * A source cannot be enabled until a human has reviewed its terms
   (``verification_status: approved``) and a crawler exists to handle it.
-* A source behind an access control cannot be enabled, ever.
+* A source behind an access control cannot be enabled for *fetching*, ever. The rule exempts
+  ``manual_upload``, and the exemption is the rule's own logic rather than a hole in it: the
+  prohibition exists because collecting from a restricted source would mean bypassing the control
+  protecting it, and there is nothing to bypass when the owner of the documents hands them over.
+  ``access: restricted`` on such a source records that its contents are **not** ours to
+  redistribute — which is a statement about what we may do with the bytes, not about how we got
+  them.
 * An HTML-crawling source must declare that it respects ``robots.txt``.
 * Plain-HTTP endpoints must opt in explicitly, because evidence fetched over a tamperable
   channel is weak evidence.
@@ -445,7 +451,11 @@ class SourceDefinition(BaseModel):
         ):
             problems.append("robots_policy must be 'respect' for HTML-crawling sources")
 
-        if self.data_use.access is AccessLevel.RESTRICTED and self.enabled:
+        if (
+            self.data_use.access is AccessLevel.RESTRICTED
+            and self.enabled
+            and self.retrieval is not RetrievalMethod.MANUAL_UPLOAD
+        ):
             problems.append(
                 "a source behind an access control cannot be enabled; collection would "
                 "require bypassing that control"

@@ -220,6 +220,8 @@ Phase 0 is complete. Implemented and tested:
 | Product-facing status and workflow categories | [domain/workflow.py](src/aedifex/domain/workflow.py) |
 | Artifact content, digest re-verified on the way out | `GET /v1/documents/{id}/content` |
 | Review workspace (React, TypeScript, Vite) | [frontend/](frontend/) |
+| Bounded spreadsheet window for review | `GET /v1/documents/{id}/sheet`, `read_sheet_window` |
+| One definition of "needs human review" | [domain/workflow.py](src/aedifex/domain/workflow.py) |
 
 The pipeline is complete end to end and has been run against a real portal. NHAI's terms were
 reviewed and recorded (ADR 0006, rule 60), its tender API was reverse-engineered from the portal's own
@@ -334,10 +336,18 @@ Origin        upload{source, uploaded_by, uploaded_at}
 needed, the project workspace uses `project_inventory`, which reads memberships and is correct for
 both origins.
 
-**2. `projects.source_id` is an acquisition concept and must not become tenancy.** It made sense when
-every project was inferred from one source's documents. A real customer project holds an
-owner-uploaded BOQ, a contractor's RA bill, a PMC certificate, a RERA filing and CPWD reference
-material — there is no single meaningful evidence source for it. The target ownership model is:
+**2. `projects.source_id` is an acquisition concept and must not become tenancy.** *(Code and
+comments reconciled with this on 2026-08-22 — they previously said the opposite, and this note was
+the correct half.)*
+
+The column has one job: `external_ref` is unique only within the authority that issued it, so
+pairing them stops reconciliation merging two authorities' identical tender numbers. It does **not**
+restrict what a project holds, and never did — a real customer project holds an owner-uploaded BOQ,
+a contractor's RA bill, a PMC certificate, a RERA filing and CPWD reference material, from different
+sources, each document recording its own origin. `customer_provided` now exists in the registry so
+those uploads have an honest one.
+
+The target ownership model is:
 
 ```text
 Organization → Membership/User → Project → Documents → Findings → Reviews
@@ -346,7 +356,9 @@ Organization → Membership/User → Project → Documents → Findings → Revi
 with `Document → Origin(s)` orthogonal to it, and every future authorization query scoped through the
 organization/project boundary rather than through a source id. Changing the column now would be
 churn; **letting "source" quietly mean "tenant" would be a security defect**, because an
-authorization check written against it would look right and scope nothing.
+authorization check written against it would look right and scope nothing — every query appearing
+guarded while returning rows from anywhere. That is worse than an obviously missing check, which is
+why the wording in the code was treated as a defect rather than as documentation drift.
 
 **3. `Document.document_type` and `ProjectDocument.role` answer different questions and must not be
 synchronised.** *What is this document?* versus *what part does it play in this project?* One

@@ -19,6 +19,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import type { Fact, Finding, Knowledge, ProjectDocument } from "../api";
 import { contentUrl, formatBytes, humanise, postJson, useApi } from "../api";
 import { ErrorBox, Loading, Pill } from "../components/bits";
+import { SheetView } from "../components/SheetView";
 import { FindingRow } from "./ProjectPage";
 
 const INLINE_FORMATS = new Set(["pdf", "png", "jpeg"]);
@@ -40,6 +41,11 @@ export function DocumentPage() {
   const page = Number(params.get("page") ?? "1") || 1;
   const highlighted = params.get("fact");
   const fromFinding = params.get("finding");
+  const sheet = params.get("sheet");
+  const citedCell = params.get("cell");
+  // A cell reference carries its row (`BOQ!F43`), so the window can open where the evidence is
+  // without a separate parameter.
+  const sheetRow = Number(citedCell?.match(/([0-9]+)$/)?.[1] ?? params.get("row") ?? "1") || 1;
 
   const document = inventory.data?.documents.find((row) => row.document_id === documentId);
   const shown = useMemo(() => {
@@ -77,6 +83,7 @@ export function DocumentPage() {
   }
 
   const inline = INLINE_FORMATS.has(document.file_format);
+  const spreadsheet = document.file_format === "xlsx";
 
   return (
     <>
@@ -121,6 +128,24 @@ export function DocumentPage() {
 
       <div className="split" style={{ marginTop: 14 }}>
         <div className="viewer">
+          {spreadsheet ? (
+            <SheetView
+              documentId={documentId}
+              sheet={sheet}
+              row={sheetRow}
+              highlight={citedCell}
+              onSheetChange={(name) => {
+                params.set("sheet", name);
+                setParams(params, { replace: true });
+              }}
+              onRowChange={(next) => {
+                params.set("row", String(Math.max(1, next)));
+                params.delete("cell");
+                setParams(params, { replace: true });
+              }}
+            />
+          ) : (
+            <>
           <div className="bar">
             <strong className="small">Original artifact</strong>
             {inline ? (
@@ -167,14 +192,17 @@ export function DocumentPage() {
             <div className="fallback">
               <p>
                 <strong>{document.file_format.toUpperCase()}</strong> is not rendered in the browser.
-                The evidence panel shows the cell or row each value came from, and the original bytes
-                are one click away.
+                The evidence panel shows where each value came from, and the original bytes are one
+                click away.
               </p>
               <p className="small">
-                A spreadsheet view would mean re-rendering the document, and a re-rendering is our
-                interpretation of the evidence rather than the evidence.
+                A spreadsheet gets a grid view because the server can read its cells with the same
+                library that extracted the facts. For this format there is nothing equivalent, so the
+                artifact itself is the answer.
               </p>
             </div>
+          )}
+            </>
           )}
         </div>
 
@@ -219,12 +247,17 @@ export function DocumentPage() {
                 <button
                   className="link small"
                   onClick={() => {
-                    params.set("page", String(fact.page));
+                    if (fact.cell && fact.sheet_name) {
+                      params.set("sheet", fact.sheet_name);
+                      params.set("cell", fact.cell);
+                    } else {
+                      params.set("page", String(fact.page));
+                    }
                     params.set("fact", fact.fact_id);
                     setParams(params, { replace: true });
                   }}
                 >
-                  page {fact.page} →
+                  {fact.cell ?? `page ${fact.page}`} →
                 </button>
               </div>
               <div className="value">{fact.value ?? fact.literal}</div>

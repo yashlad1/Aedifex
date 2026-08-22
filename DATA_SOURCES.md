@@ -158,6 +158,29 @@ Never, regardless of review outcome:
 - Collect personal data beyond what is incidentally present in public documents, or train
   models on it without screening.
 
+## Documents a customer gives us
+
+`customer_provided` is a source like any other, and registering it rather than special-casing uploads
+is the point: a customer's bill of quantities goes through the same hashing, deduplication, storage
+and provenance path as a crawled one. Before it existed, a customer's document had to borrow whichever
+acquisition source happened to be approved, which put a false statement in the provenance record on
+every upload.
+
+Three things about it are deliberate:
+
+- **`access: restricted`, and enabled anyway.** The rule that a restricted source cannot be enabled
+  exists because *fetching* from behind an access control would mean bypassing that control. Nothing
+  is bypassed when the owner of the documents hands them over, so the rule is scoped to fetching
+  methods. `restricted` here records that the contents are **not ours to redistribute** — a statement
+  about what we may do with the bytes, not about how we got them.
+- **`contains_personal_data: true`.** Real construction records name site engineers, sign-offs,
+  contractor contacts and bank details. Assuming otherwise would be a decision nobody made.
+- **It is not a tenant.** A source says how a document arrived and nothing about who may see it.
+  Authorization arrives as a separate model (`Organization → Membership → Project`); see
+  [ARCHITECTURE.md](ARCHITECTURE.md) under recorded design debt. Until it exists, the API refuses to
+  serve writes or artifact content in production, which is what makes that gap loud rather than
+  quiet.
+
 The full ecosystem survey — every realistic source worldwide, with the document lifecycle it serves —
 is in [docs/research/CORPUS_ROADMAP.md](docs/research/CORPUS_ROADMAP.md). This file remains the record
 of what has been *reviewed and decided*; that one is the record of what exists.

@@ -66,6 +66,34 @@ jobs:
       - name: Validate source registry
         run: uv run python -m scripts.validate_registry
 
+  viewer:
+    name: Viewer builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # `npm ci` and not `npm install`: it installs exactly the locked graph and fails if
+      # package.json and package-lock.json disagree, which is the same guarantee `uv sync --locked`
+      # gives the Python side (ADR 0009). `npm install` would quietly resolve something newer and
+      # this job would stop testing what a developer runs.
+      - name: Install from lockfile
+        run: npm ci
+        working-directory: frontend
+
+      # Typechecks and bundles. `npm run build` is `tsc --noEmit && vite build`, so a type error and
+      # a broken import both fail here. Nothing else: no Playwright, no headless browser. The claim
+      # this job makes is narrow and true — the committed frontend compiles — and it is the claim
+      # that was missing, since main could be green while the viewer did not build at all.
+      - name: Build
+        run: npm run build
+        working-directory: frontend
+
   database:
     name: Migrations and integration tests
     runs-on: ubuntu-latest

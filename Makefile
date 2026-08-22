@@ -30,6 +30,8 @@ lock: $(VENV) ## Re-resolve uv.lock after changing dependencies in pyproject.tom
 
 check: lint typecheck test ## Run every gate that does not need infrastructure
 
+check-all: check viewer-check ## Every gate above, plus the viewer build
+
 lint: ## Check formatting and lint rules
 	$(VENV)/bin/ruff check src tests apps scripts migrations
 	$(VENV)/bin/black --check src tests apps scripts migrations
@@ -106,10 +108,10 @@ run-api: ## Run the API with reload at http://localhost:8000/docs
 	$(VENV)/bin/uvicorn apps.api.main:app --reload --host 127.0.0.1 --port 8000
 
 viewer: ## Run the review workspace at http://127.0.0.1:5173 (needs `make run-api` in another shell)
-	cd frontend && npm install --silent && npm run dev
+	cd frontend && npm ci --silent && npm run dev
 
-viewer-check: ## Typecheck and build the viewer
-	cd frontend && npm install --silent && npm run build
+viewer-check: ## Typecheck and build the viewer, from the lockfile
+	cd frontend && npm ci --silent && npm run build
 
 clean: ## Remove caches and build artifacts
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

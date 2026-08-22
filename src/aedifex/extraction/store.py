@@ -145,6 +145,7 @@ def persist_facts(
         row.kind = field.kind
         row.date_value = field.date_value
         row.unit = field.unit
+        row.sheet_name = field.sheet_name
         row.sheet_row = field.sheet_row
         row.sheet_column = field.sheet_column
         row.extractor = extractor

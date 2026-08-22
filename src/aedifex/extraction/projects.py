@@ -117,8 +117,11 @@ def reconcile_projects(session: Session, *, source_id: str | None = None) -> Rec
 
     Args:
         session: Open session. The caller commits.
-        source_id: Restrict to one source. Projects never span sources: two authorities can issue
-            the same reference number and they are not the same tender.
+        source_id: Restrict to one source. *Reconciliation* never groups across sources — two
+            authorities can issue the same reference number and those are not one tender — which is
+            a statement about how membership is **derived**, not about what a project may hold. A
+            project's documents legitimately come from several sources once someone attaches them,
+            and nothing here or elsewhere prevents that.
     """
     # A document's source comes from a retrieval or from an upload, and both are real provenance --
     # one for a document that was fetched, one for a document that was handed to us. Shared with

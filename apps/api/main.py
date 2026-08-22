@@ -73,7 +73,14 @@ from aedifex.domain.documents import DocumentType
 from aedifex.domain.evidence import FactOrigin
 from aedifex.domain.files import MEDIA_TYPES_BY_FORMAT, FileFormat, canonical_extension
 from aedifex.domain.review import ReviewDecision
+from aedifex.domain.workflow import needs_human_review
 from aedifex.errors import AedifexError, SourceRegistryError
+from aedifex.extraction.spreadsheet import (
+    MAX_WINDOW_COLUMNS,
+    MAX_WINDOW_ROWS,
+    cell_reference,
+    read_sheet_window,
+)
 from aedifex.infrastructure.database.models import (
     DerivedFact,
     Document,
@@ -447,6 +454,24 @@ class FactResponse(BaseModel):
 
     retracted_reason: str | None = None
 
+    sheet_name: str | None = None
+    """Which sheet this came from, when it came from a spreadsheet.
+
+    Structured provenance rather than a substring of ``snippet``. A spreadsheet already carries the
+    rows, columns and cell positions a rule needs — which is why the precedence rules put it above
+    a PDF — and a client should not have to parse prose to navigate to the strongest evidence we
+    hold.
+    """
+
+    sheet_row: int | None = None
+    sheet_column: int | None = None
+    cell: str | None = None
+    """``BOQ!F43``, when there is one.
+
+    Present only for a fact that knows its sheet. ``sheet_row`` alone is not enough: it also carries
+    a row's position in a bill of quantities read out of a PDF, which has no cell.
+    """
+
     @classmethod
     def from_row(cls, row: ExtractedFact) -> FactResponse:
         return cls(
@@ -469,7 +494,27 @@ class FactResponse(BaseModel):
             extracted_at=row.extracted_at.isoformat(),
             retracted=row.is_retracted,
             retracted_reason=None if row.retraction is None else row.retraction.reason,
+            sheet_name=row.sheet_name,
+            sheet_row=row.sheet_row,
+            sheet_column=row.sheet_column,
+            cell=_cell_of(row),
         )
+
+
+def _cell_of(fact: ExtractedFact) -> str | None:
+    """``BOQ!F43`` for a fact read from a spreadsheet cell, else ``None``.
+
+    Gated on the sheet *name*, not on the row, and the distinction is easy to get wrong:
+    ``sheet_row`` is also used for a row's position in a bill of quantities read out of a **PDF**,
+    because work-item linking groups on the row whichever format it came from. Only a fact that
+    knows its sheet came from a spreadsheet, and only that fact has a cell a reviewer can open.
+
+    Built with the extractor's own ``cell_reference``, so the viewer and the snippet cannot disagree
+    about how a location is spelled.
+    """
+    if fact.sheet_name is None or fact.sheet_column is None or fact.sheet_row is None:
+        return None
+    return cell_reference(fact.sheet_name, fact.sheet_row, fact.sheet_column)
 
 
 def _download_name(filename: str | None, digest: str, file_format: FileFormat) -> str:
@@ -544,6 +589,15 @@ class EvidenceResponse(BaseModel):
     Present for an extracted fact and for a provision, absent for a derived fact — a computed value
     may draw on several documents, and naming one of them would be a guess about which mattered.
     Exposed so a viewer can jump from a finding to the page without a second request.
+    """
+
+    sheet_name: str | None = None
+    cell: str | None = None
+    """For a fact read from a spreadsheet, where it is: sheet, and ``BOQ!F43``.
+
+    The spreadsheet counterpart of ``page``. Without it a viewer can open a PDF at the page a value
+    is stated on but cannot open a workbook at the cell, which inverts the precedence the project
+    actually holds — spreadsheet cells are the strongest evidence available, not the weakest.
     """
 
     clause: str | None = None
@@ -637,6 +691,19 @@ class FindingResponse(BaseModel):
     ``Finding.current_review``.
     """
 
+    needs_human_review: bool = False
+    """Whether this finding is waiting on a person — decided here, never by the client.
+
+    Computed by ``aedifex.domain.workflow.needs_human_review``, the same function the project read
+    model uses, so a client and the summary can never disagree about how much work is outstanding.
+
+    It is deliberately **not** "outcome is not pass". An ``INCONCLUSIVE`` finding cannot be resolved
+    by a reviewer at all: the rule could not be applied for want of evidence, and the fix is
+    acquiring the document. A browser that inferred the rule for itself listed those as review work,
+    which is exactly the duplication this field removes. ``GET /v1/knowledge`` publishes
+    ``requires_human_review`` per outcome for a client that wants to explain the difference.
+    """
+
     @classmethod
     def from_row(
         cls,
@@ -661,6 +728,8 @@ class FindingResponse(BaseModel):
                         snippet=fact.snippet,
                         value=None if fact.numeric_value is None else str(fact.numeric_value),
                         document_id=str(fact.document_id),
+                        sheet_name=fact.sheet_name,
+                        cell=_cell_of(fact),
                     )
                 )
                 continue
@@ -721,6 +790,9 @@ class FindingResponse(BaseModel):
             reviews=[ReviewResponse.from_row(r, row) for r in row.reviews],
             review_state=(
                 current.decision if (current := row.current_review) is not None else "unreviewed"
+            ),
+            needs_human_review=needs_human_review(
+                row.outcome, has_current_review=row.current_review is not None
             ),
         )
 
@@ -793,9 +865,11 @@ class ProjectCreateRequest(BaseModel):
         min_length=1,
         max_length=64,
         description=(
-            "The registered source these documents belong to. Required because projects never "
-            "span sources: two authorities can issue the same reference and they are not one "
-            "project. This is the column tenancy will replace."
+            "The registered source that namespaces this project's identifier — acquisition "
+            "metadata, not ownership. Required because a reference is unique only within the "
+            "authority that issued it. It does not restrict what may be attached: a project's "
+            "documents legitimately come from several sources. For a customer's own project, use "
+            "'customer_provided'."
         ),
     )
     created_by: str = Field(min_length=1, max_length=96)
@@ -910,6 +984,35 @@ class UploadResponse(BaseModel):
     suggestion_matched: str | None = Field(
         default=None,
         description="The filename phrase the classifier matched, so it is explainable.",
+    )
+
+
+class SheetWindowResponse(BaseModel):
+    """A readable region of a spreadsheet, for showing a reviewer where a value came from.
+
+    **Not an extraction, and not a substitute for the artifact.** Nothing here is a fact: no column
+    is interpreted, no value is normalised, and the workbook stays downloadable and authoritative.
+    It is the spreadsheet equivalent of opening a PDF at page 6.
+
+    Read with the same library and the same ``data_only`` setting the extractor used, so this and
+    the facts cannot disagree about what a cell contains — which is why it is served from here
+    rather than parsed a second time in the browser.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    document_id: str
+    sheet: str
+    sheets: list[str]
+    first_row: int
+    total_rows: int
+    truncated: bool
+    max_rows: int = MAX_WINDOW_ROWS
+    max_columns: int = MAX_WINDOW_COLUMNS
+    rows: list[dict[str, object]]
+    note: str = (
+        "A read-only view for locating evidence. The uploaded workbook remains the authoritative "
+        "artifact and is served unchanged by /content."
     )
 
 
@@ -1389,6 +1492,104 @@ def create_app() -> FastAPI:
                 "X-Content-Digest": f"sha256={expected_digest}",
             },
             background=BackgroundTask(shutil.rmtree, scratch, ignore_errors=True),
+        )
+
+    @app.get(
+        f"{API_PREFIX}/documents/{{document_id}}/sheet",
+        response_model=SheetWindowResponse,
+        dependencies=[ArtifactAccess],
+        tags=["corpus"],
+        responses={
+            404: {"description": "No such document"},
+            415: {"description": "Not a spreadsheet"},
+            422: {"description": "No such sheet"},
+        },
+    )
+    def get_document_sheet(
+        document_id: uuid.UUID,
+        store: StoreDep,
+        sheet: str | None = None,
+        row: int = 1,
+        radius: int = 12,
+    ) -> SheetWindowResponse:
+        """A bounded region of a spreadsheet, so a cell citation can be looked at.
+
+        A browser will not render a workbook, and until this existed the consequence was upside
+        down: a PDF fact could be opened at its page while a fact from a spreadsheet — the format
+        the precedence rules call the strongest evidence available, because it already carries rows,
+        columns and cell positions — could only be downloaded and hunted through.
+
+        The alternative was a spreadsheet parser in the browser, and that was rejected for a
+        specific reason rather than a stylistic one: two parsers can disagree about what cell F43
+        contains, and the one the reviewer sees would not be the one the finding was computed from.
+        Here, the window and the facts come from the same library reading the same bytes.
+
+        Bounded on every axis — rows, columns, cell length — because the input is untrusted and the
+        caller is an HTTP request. ``truncated`` says when there is more, so a crop is never silent.
+        """
+        with session_scope() as session:
+            document = session.get(Document, document_id)
+            if document is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown document {document_id}"
+                )
+            if document.file_format is not FileFormat.XLSX:
+                raise HTTPException(
+                    status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                    detail=(
+                        f"{document_id} is {document.file_format.value}, not a spreadsheet; use "
+                        f"/content for the artifact itself"
+                    ),
+                )
+            storage_key = document.storage_key
+            expected_digest = document.sha256
+
+        with tempfile.TemporaryDirectory(prefix="aedifex-sheet-") as scratch:
+            path = store.download_to(storage_key, Path(scratch) / "artifact")
+            data = path.read_bytes()
+
+        # Same check the content endpoint makes, for the same reason: a window built from bytes that
+        # are not the ones the provenance chain records would show a reviewer the wrong cell.
+        digest = hashlib.sha256(data).hexdigest()
+        if digest != expected_digest:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"stored bytes for {document_id} hash to {digest} but the document records "
+                    f"{expected_digest}; refusing to render evidence that does not match its "
+                    f"provenance"
+                ),
+            )
+
+        try:
+            window = read_sheet_window(data, sheet=sheet, row=row, radius=radius)
+        except AedifexError as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)
+            ) from error
+
+        return SheetWindowResponse(
+            document_id=str(document_id),
+            sheet=window.sheet,
+            sheets=list(window.sheets),
+            first_row=window.first_row,
+            total_rows=window.total_rows,
+            truncated=window.truncated,
+            rows=[
+                {
+                    "row": entry.number,
+                    "cells": [
+                        {
+                            "column": cell.column,
+                            "letter": cell.letter,
+                            "reference": cell.reference,
+                            "value": cell.value,
+                        }
+                        for cell in entry.cells
+                    ],
+                }
+                for entry in window.rows
+            ],
         )
 
     @app.get(
@@ -2126,7 +2327,11 @@ def create_app() -> FastAPI:
                 for info in DOCUMENT_VERSION_STATES
             ],
             "finding_outcomes": [
-                {"outcome": info.outcome.value, "description": info.description}
+                {
+                    "outcome": info.outcome.value,
+                    "description": info.description,
+                    "requires_human_review": info.requires_human_review,
+                }
                 for info in FINDING_OUTCOMES
             ],
             # Published so a client can render the construction chain in the order work happens,
