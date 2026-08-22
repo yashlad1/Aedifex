@@ -11,12 +11,17 @@ probe is exercised in ``tests/integration/test_database.py`` instead.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from apps.api.main import (
     REQUEST_ID_HEADER,
+    FindingResponse,
+    _download_name,
     create_app,
     database_probe_dependency,
     registry_dependency,
@@ -27,6 +32,15 @@ from sqlalchemy.exc import OperationalError
 
 from aedifex.acquisition.registry import load_registry
 from aedifex.config import Environment, Settings
+from aedifex.domain.evidence import FactKind
+from aedifex.domain.files import FileFormat
+from aedifex.infrastructure.database.models import (
+    DerivedFact,
+    ExtractedFact,
+    Finding,
+    FindingEvidence,
+    PolicyProvision,
+)
 
 REGISTRY_DIR = Path(__file__).resolve().parents[2] / "config" / "sources"
 
@@ -438,3 +452,149 @@ class TestProjectIntakeContract:
             == 422
         )
         assert client.post(target, json={"document_type": "bill_of_quantities"}).status_code == 422
+
+
+class TestEvidenceKinds:
+    """A finding's three kinds of evidence, and why the API must keep them apart.
+
+    Pure function over constructed rows, no database. The reason this is worth a test: the provision
+    branch did not exist until 2026-08-21, so a finding that had judged a bid security *against a
+    cited clause* was served with the clause silently missing — the CLI printed it and the API
+    dropped it. A threshold presented as a measurement, or omitted entirely, is the difference
+    between "the bill claims this" and "the rulebook permits this".
+    """
+
+    @staticmethod
+    def _finding() -> tuple[Finding, dict[uuid.UUID, ExtractedFact], dict[uuid.UUID, DerivedFact]]:
+        document_id = uuid.uuid4()
+        fact = ExtractedFact(
+            id=uuid.uuid4(),
+            document_id=document_id,
+            fact_type="bid_security",
+            kind=FactKind.MONEY,
+            literal="Rs. 16.93 Lacs",
+            numeric_value=Decimal("1693000.00"),
+            page=6,
+            span_start=0,
+            span_end=14,
+            snippet="Bid Security Rs. 16.93 Lacs",
+            method="text",
+            extractor="test",
+            extractor_version="1",
+        )
+        computed = DerivedFact(
+            id=uuid.uuid4(),
+            document_id=document_id,
+            fact_type="required_bid_security",
+            kind=FactKind.MONEY,
+            numeric_value=Decimal("1692999.38"),
+            expression="84649969.00 * 0.02",
+            calculation="apply_provision",
+            calculation_version="1",
+            produced_by="test",
+            inputs_fingerprint="x" * 16,
+        )
+        provision = PolicyProvision(
+            id=uuid.uuid4(),
+            document_id=uuid.uuid4(),
+            provision_type="bid_security_share",
+            clause="4.14.1(a)",
+            page=79,
+            span_start=0,
+            span_end=40,
+            snippet="two percent of the estimated cost for works up to Rs. 20 crore",
+            authority="nhai",
+            jurisdiction="IN",
+            applies_to="estimated_cost",
+            applies_to_max=Decimal("200000000.00"),
+            share=Decimal("0.02"),
+            extractor="test",
+            extractor_version="1",
+        )
+        finding = Finding(
+            id=uuid.uuid4(),
+            document_id=document_id,
+            rule_id="bid_security_matches_reference_policy",
+            rule_version="1",
+            outcome="pass",
+            summary="Bid security matches the 2% required by clause 4.14.1(a)",
+            expected="1692999.38",
+            observed="1693000.00",
+            # Both are database-side defaults, so a transient row carries None for them.
+            detail={},
+            evaluated_at=datetime(2026, 8, 21, 12, 0, tzinfo=UTC),
+        )
+        finding.evidence = [
+            FindingEvidence(role="bid_security", fact_id=fact.id),
+            FindingEvidence(role="required", derived_fact_id=computed.id),
+            FindingEvidence(role="provision", provision_id=provision.id, provision=provision),
+        ]
+        return finding, {fact.id: fact}, {computed.id: computed}
+
+    def test_all_three_kinds_are_served_and_distinguishable(self) -> None:
+        finding, facts, derived = self._finding()
+
+        payload = FindingResponse.from_row(finding, facts, derived)
+
+        by_origin = {item.origin: item for item in payload.evidence}
+        assert set(by_origin) == {"extracted", "derived", "policy"}
+
+    def test_a_cited_clause_carries_its_authority_and_band(self) -> None:
+        """A threshold with no authority is an opinion, and a band decides which clause applied."""
+        finding, facts, derived = self._finding()
+
+        policy = next(
+            item
+            for item in FindingResponse.from_row(finding, facts, derived).evidence
+            if item.origin == "policy"
+        )
+
+        assert policy.clause == "4.14.1(a)"
+        assert policy.authority == "nhai"
+        assert policy.band == "up to 200,000,000.00"
+        assert policy.page == 79
+        assert policy.document_id is not None, "the clause lives in a different document"
+
+    def test_a_computed_value_names_no_document_and_shows_its_arithmetic(self) -> None:
+        """A derived fact may draw on several documents; naming one would be a guess."""
+        finding, facts, derived = self._finding()
+
+        computed = next(
+            item
+            for item in FindingResponse.from_row(finding, facts, derived).evidence
+            if item.origin == "derived"
+        )
+
+        assert computed.document_id is None
+        assert computed.page is None
+        assert computed.expression == "84649969.00 * 0.02"
+
+
+class TestArtifactContentBoundary:
+    def test_content_is_not_served_in_production(self, production_client: TestClient) -> None:
+        """Same refusal as the write endpoints, for a different reason.
+
+        The corpus mixes sources whose licence terms differ, so one unauthenticated download
+        endpoint publishes all of them at once under whichever terms are loosest.
+        """
+        response = production_client.get(
+            "/v1/documents/00000000-0000-0000-0000-000000000000/content"
+        )
+        assert response.status_code == 503
+        assert "licence terms differ" in response.json()["detail"]
+
+    @pytest.mark.parametrize(
+        ("stored", "expected"),
+        [
+            ("iitb-h19-priced-bill-of-quantities.pdf", "iitb-h19-priced-bill-of-quantities.pdf"),
+            # A header is one of the classic injection points: a quote or a newline in a filename
+            # rewrites the response headers.
+            ('evil";\r\nSet-Cookie: a=b.pdf', "evilSet-Cookie: a=b.pdf"),
+            (None, "abcdef0123456789.pdf"),
+            ("", "abcdef0123456789.pdf"),
+        ],
+    )
+    def test_a_download_name_cannot_forge_headers(self, stored: str | None, expected: str) -> None:
+        name = _download_name(stored, "abcdef0123456789" + "0" * 48, FileFormat.PDF)
+        assert name == expected
+        assert '"' not in name and "\r" not in name and "\n" not in name

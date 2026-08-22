@@ -72,6 +72,7 @@ from aedifex.extraction.runner import (
     analyse_project,
     analyse_spreadsheet,
     reconcile_work_items,
+    record_analysis_failure,
 )
 from aedifex.extraction.supersede import record_supersession
 from aedifex.infrastructure.database.models import (
@@ -477,6 +478,12 @@ def _analyse(args: argparse.Namespace, settings: Settings) -> int:
             except AedifexError as error:
                 session.rollback()
                 failures += 1
+                # Record the attempt, so the operator path and the product path agree about what
+                # happened. Two paths that disagree about a document's state are worse than either
+                # behaviour on its own.
+                document = session.get(Document, document_id)
+                if document is not None and record_analysis_failure(document, str(error)):
+                    session.commit()
                 print(f"{document_id}  ERROR  {error}")
                 continue
             _print_analysis(session, outcome)

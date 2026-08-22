@@ -34,6 +34,8 @@ from aedifex.domain.evidence import (
     FactOrigin,
     RelationshipType,
 )
+from aedifex.domain.review import ReviewDecision
+from aedifex.domain.workflow import ProcessingStatus, WorkflowCategory
 from aedifex.extraction.pdf_boq import FIELD_LINE_AMOUNT, FIELD_STATED_BILL_TOTAL
 from aedifex.extraction.spreadsheet import (
     FIELD_CLAIMED_RATE,
@@ -73,12 +75,18 @@ __all__ = [
     "DOCUMENT_VERSION_STATES",
     "FACT_TYPES",
     "FINDING_OUTCOMES",
+    "PROCESSING_STATUSES",
     "RELATIONSHIP_TYPES",
+    "REVIEW_DECISIONS",
     "RULE_TYPES",
+    "WORKFLOW_CATEGORIES",
     "FactTypeInfo",
     "FindingOutcomeInfo",
+    "ProcessingStatusInfo",
     "RelationshipTypeInfo",
+    "ReviewDecisionInfo",
     "RuleTypeInfo",
+    "WorkflowCategoryInfo",
 ]
 
 
@@ -525,5 +533,150 @@ FINDING_OUTCOMES: Final[tuple[FindingOutcomeInfo, ...]] = (
         Outcome.INCONCLUSIVE,
         "The rule could not be applied — a value or a threshold was missing. Not a failure of the "
         "document, and never to be displayed as one.",
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowCategoryInfo:
+    """One link of the construction chain, and where it sits in it.
+
+    ``position`` exists so a client can lay the chain out in the order work happens without
+    hardcoding it. A viewer that invents its own order eventually disagrees with the domain, and
+    the order carries meaning: a measurement precedes the bill it justifies, so a project holding
+    bills and no measurements has a gap rather than a backlog.
+
+    ``verifies`` is the sentence a reviewer needs when a category is *absent*: it says which check
+    cannot run, which is the most useful thing an empty slot can tell anybody.
+    """
+
+    category: WorkflowCategory
+    position: int
+    description: str
+    verifies: str
+    is_project_evidence: bool = True
+    """False for reference material, which governs the chain without belonging to it."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessingStatusInfo:
+    status: ProcessingStatus
+    description: str
+    needs_a_person: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewDecisionInfo:
+    decision: ReviewDecision
+    description: str
+    closes_the_finding: bool
+    """Whether recording it stops the finding asking for attention. All three currently do."""
+
+
+# The canonical chain from SRS §14.1, in order, plus the two categories that are not links of it.
+WORKFLOW_CATEGORIES: Final[tuple[WorkflowCategoryInfo, ...]] = (
+    WorkflowCategoryInfo(
+        WorkflowCategory.CONTRACT,
+        1,
+        "The commercial basis: the agreement and the procurement record that produced it.",
+        "Nothing downstream can be checked against entitlement without it.",
+    ),
+    WorkflowCategoryInfo(
+        WorkflowCategory.BOQ,
+        2,
+        "Priced quantities: what was contracted, at what rate.",
+        "Rate and quantity comparisons, and every arithmetic check on a bill.",
+    ),
+    WorkflowCategoryInfo(
+        WorkflowCategory.MEASUREMENT,
+        3,
+        "What was measured on site — a measurement book or joint measurement record.",
+        "Over-certification: whether a claim is supported by measured work. The single most "
+        "valuable check, and the one no public source publishes.",
+    ),
+    WorkflowCategoryInfo(
+        WorkflowCategory.RA_BILL,
+        4,
+        "What is claimed and what is certified: running bills, payment certificates, invoices.",
+        "Claim-against-measurement, cumulative-against-previous, and deduction checks.",
+    ),
+    WorkflowCategoryInfo(
+        WorkflowCategory.VARIATION,
+        5,
+        "Authorised change: variation orders and change orders.",
+        "Whether work beyond the contracted quantity was approved before it was billed.",
+    ),
+    WorkflowCategoryInfo(
+        WorkflowCategory.MATERIAL,
+        6,
+        "The material chain: purchase orders, challans, goods receipt notes.",
+        "Consumption against issue, and whether billed material was received.",
+    ),
+    WorkflowCategoryInfo(
+        WorkflowCategory.QUALITY,
+        7,
+        "Inspection reports and material test certificates.",
+        "Whether work billed as complete was accepted.",
+    ),
+    WorkflowCategoryInfo(
+        WorkflowCategory.REFERENCE,
+        8,
+        "Norms that govern the chain without belonging to it: rate schedules, specifications, "
+        "model agreements, audit reports.",
+        "Applied rate against scheduled rate, and any rule whose threshold must be cited rather "
+        "than configured.",
+        is_project_evidence=False,
+    ),
+    WorkflowCategoryInfo(
+        WorkflowCategory.OTHER,
+        9,
+        "Project evidence nothing reads yet — drawings, guarantees, anything untyped.",
+        "Nothing, and saying so is better than implying a check exists.",
+    ),
+)
+
+PROCESSING_STATUSES: Final[tuple[ProcessingStatusInfo, ...]] = (
+    ProcessingStatusInfo(
+        ProcessingStatus.UPLOADED, "Held, provenanced, and not yet read.", needs_a_person=False
+    ),
+    ProcessingStatusInfo(ProcessingStatus.PROCESSING, "Being read now.", needs_a_person=False),
+    ProcessingStatusInfo(
+        ProcessingStatus.PROCESSED, "Read, and nothing is waiting.", needs_a_person=False
+    ),
+    ProcessingStatusInfo(
+        ProcessingStatus.NEEDS_ATTENTION,
+        "Read, and at least one finding is unreviewed and not a pass.",
+        needs_a_person=True,
+    ),
+    ProcessingStatusInfo(
+        ProcessingStatus.UNSUPPORTED,
+        "No extractor exists for this format. The bytes are stored, hashed and provenanced exactly "
+        "like everything else; what is missing is a reader. Not a failure.",
+        needs_a_person=False,
+    ),
+    ProcessingStatusInfo(
+        ProcessingStatus.FAILED,
+        "A reader existed, ran, and could not finish. Distinct from unsupported.",
+        needs_a_person=True,
+    ),
+)
+
+REVIEW_DECISIONS: Final[tuple[ReviewDecisionInfo, ...]] = (
+    ReviewDecisionInfo(
+        ReviewDecision.ACCEPTED,
+        "The finding is real. Something should happen off-platform.",
+        closes_the_finding=True,
+    ),
+    ReviewDecisionInfo(
+        ReviewDecision.REJECTED,
+        "The finding is wrong — a false positive. Kept, because a rule rejected repeatedly is the "
+        "strongest available evidence that it needs revising.",
+        closes_the_finding=True,
+    ),
+    ReviewDecisionInfo(
+        ReviewDecision.NEEDS_EVIDENCE,
+        "A person looked and cannot decide without a document the corpus does not hold. The rule "
+        "was conclusive; the reviewer is not.",
+        closes_the_finding=True,
     ),
 )

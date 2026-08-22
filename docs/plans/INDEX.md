@@ -10,7 +10,7 @@ of this folder still says when it was written and what its status was.
 
 | Created | Subject | Status |
 |---|---|---|
-| 2026-08-21 | [First product workflow](2026-08-21-first-product-workflow.md) | In progress — review, intake and classification done; viewer next |
+| 2026-08-21 | [First product workflow](2026-08-21-first-product-workflow.md) | Executed — review, intake, classification and the viewer all shipped |
 | 2026-08-20 | [Development priorities](2026-08-20-development-priorities.md) | Standing direction |
 | 2026-08-20 | [Real post-award data — findings](2026-08-20-real-data-findings.md) | Live record |
 | 2026-08-19 | [Vertical slice — known limitations](2026-08-19-vertical-slice-known-limitations.md) | Live record |

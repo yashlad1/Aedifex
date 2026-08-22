@@ -218,6 +218,8 @@ Phase 0 is complete. Implemented and tested:
 | Project workspace: declare, upload, process, read back | [workspace/](src/aedifex/workspace/), `POST /v1/projects`, `POST /v1/projects/{id}/documents`, `/process`, `/summary` |
 | Deterministic document-type suggestion | [classification/](src/aedifex/classification/), `documents.suggested_document_type` |
 | Product-facing status and workflow categories | [domain/workflow.py](src/aedifex/domain/workflow.py) |
+| Artifact content, digest re-verified on the way out | `GET /v1/documents/{id}/content` |
+| Review workspace (React, TypeScript, Vite) | [frontend/](frontend/) |
 
 The pipeline is complete end to end and has been run against a real portal. NHAI's terms were
 reviewed and recorded (ADR 0006, rule 60), its tender API was reverse-engineered from the portal's own
@@ -311,6 +313,48 @@ while `GET /v1/corpus` reports all 45 as held. The project workspace no longer d
 a one-line one: `CatalogEntry` has non-optional `requested_url`, `http_status` and `attempt_count`,
 and an upload has none of them.
 
+## Recorded design debt
+
+Known, deliberate, and not blockers. Each is here so that the next person to hit it finds the
+reasoning rather than rediscovering it, and so that none of them gets fixed by accident in a way that
+loses the distinction it protects.
+
+**1. `documents` has outgrown the retrieval-shaped catalogue.** A document's origin is now either a
+retrieval or an upload, but `CatalogEntry` still requires `requested_url`, `http_status` and
+`attempt_count` — so `GET /v1/documents` describes only crawled documents. The long-term shape
+separates identity from origin:
+
+```text
+Document      identity, digest, filename, format, type, state, storage
+Origin        upload{source, uploaded_by, uploaded_at}
+              OR retrieval{requested_url, final_url, http_status, attempts, retrieved_at}
+```
+
+**Nothing may fabricate HTTP values for an uploaded document.** Until a global catalogue is actually
+needed, the project workspace uses `project_inventory`, which reads memberships and is correct for
+both origins.
+
+**2. `projects.source_id` is an acquisition concept and must not become tenancy.** It made sense when
+every project was inferred from one source's documents. A real customer project holds an
+owner-uploaded BOQ, a contractor's RA bill, a PMC certificate, a RERA filing and CPWD reference
+material — there is no single meaningful evidence source for it. The target ownership model is:
+
+```text
+Organization → Membership/User → Project → Documents → Findings → Reviews
+```
+
+with `Document → Origin(s)` orthogonal to it, and every future authorization query scoped through the
+organization/project boundary rather than through a source id. Changing the column now would be
+churn; **letting "source" quietly mean "tenant" would be a security defect**, because an
+authorization check written against it would look right and scope nothing.
+
+**3. `Document.document_type` and `ProjectDocument.role` answer different questions and must not be
+synchronised.** *What is this document?* versus *what part does it play in this project?* One
+document can be a `contract` by type and reference material by role — a signed agreement from another
+project, held for comparison. Intake sets the role from a **declared** type only, and a classifier
+never touches either. If changing a role independently is ever needed, it becomes an explicit
+human-confirmed operation, not an inferred one.
+
 ## Key decisions and their reasons
 
 Recorded as ADRs in [docs/adr/](docs/adr/). The load-bearing ones:
@@ -363,6 +407,11 @@ Things a reader might expect that are absent on purpose:
   is no authorization and no tenancy and project ids are global UUIDs
   ([0018](docs/adr/0018-declared-projects-and-product-intake.md)). The guard makes the gap loud; it
   does not close it.
+- **No frontend state library, and no truth in the browser.** The viewer fetches and displays;
+  it recomputes no outcome, re-derives no category and ranks nothing. Vocabulary — including the
+  order of the construction chain — comes from `GET /v1/knowledge`, so a category added in Python
+  appears in the UI without an edit. A second implementation of a deterministic decision is a second
+  answer.
 - **No product-specific schema.** The product hypothesis is unvalidated (see
   [README](README.md) and [customer discovery](docs/research/CUSTOMER_DISCOVERY.md)), so the
   pipeline stores documents, provenance, and classification — never invoice-shaped or

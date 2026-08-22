@@ -75,7 +75,12 @@ from aedifex.errors import AedifexError
 from aedifex.extraction import READABLE_FORMATS
 from aedifex.extraction.ingest import ingest_file
 from aedifex.extraction.projects import normalise_project_key
-from aedifex.extraction.runner import analyse_document, analyse_project, analyse_spreadsheet
+from aedifex.extraction.runner import (
+    analyse_document,
+    analyse_project,
+    analyse_spreadsheet,
+    record_analysis_failure,
+)
 from aedifex.infrastructure.database.models import (
     Document,
     DocumentRetrieval,
@@ -585,8 +590,10 @@ def process_project(
                 outcome = analyse_document(session, store, document.id)
         except AedifexError as error:
             # One document's failure must not cost the others their analysis, and it must not be
-            # silent either: the id and the reason go in the report, and the state machine has
-            # already recorded FAILED where the pipeline got to.
+            # silent either. The reason goes in the report *and* the state moves to FAILED, because
+            # a report is read once and the state is read every time the workspace is opened —
+            # without it, a document whose PDF cannot be opened shows as "uploaded" forever.
+            record_analysis_failure(document, str(error))
             _log.warning(
                 "workspace.document_failed",
                 project_id=str(project_id),

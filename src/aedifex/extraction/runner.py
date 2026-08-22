@@ -38,7 +38,12 @@ from aedifex.calculation.engine import (
     compute_required_bid_security,
 )
 from aedifex.calculation.row_arithmetic import ArithmeticConsistency
-from aedifex.domain.documents import DocumentState, DocumentType, assert_transition_allowed
+from aedifex.domain.documents import (
+    DocumentState,
+    DocumentType,
+    assert_transition_allowed,
+    can_transition,
+)
 from aedifex.errors import ExtractionError
 from aedifex.extraction.applicability import ApplicableProvision, select_provision
 from aedifex.extraction.ocr import OCR_MAX_PAGES, default_engine, ocr_document, ocr_method
@@ -103,6 +108,7 @@ __all__ = [
     "analyse_project",
     "analyse_spreadsheet",
     "reconcile_work_items",
+    "record_analysis_failure",
 ]
 
 _log = get_logger(__name__)
@@ -443,6 +449,34 @@ def _advance(document: Document, target: DocumentState) -> None:
         current = DocumentState.VALIDATED
     assert_transition_allowed(current, target)
     document.state = target
+
+
+def record_analysis_failure(document: Document, reason: str) -> bool:
+    """Record that analysis was attempted on this document and could not finish.
+
+    Returns whether the state moved. Found by looking at the workspace rather than the log: a
+    document whose PDF could not be opened stayed in ``DOWNLOADED``, because ``extract_text`` raises
+    before the first state transition — so the product surface showed it as **uploaded**,
+    indistinguishable from one nobody had tried yet, and a reviewer would keep pressing Process
+    forever with nothing to show that anything had happened.
+
+    ``FAILED`` is the state the machine already has for this, and it deliberately re-enters the
+    pipeline so a retry is a legal move rather than a database patch. Transitions that are not legal
+    are skipped rather than forced: a document that was already ``PROCESSED`` and fails a *re*-read
+    keeps its processed state and its facts, because the last successful reading is still the best
+    evidence we hold, and a re-read failing says something about this run rather than about it.
+    """
+    if not can_transition(document.state, DocumentState.FAILED):
+        _log.warning(
+            "analysis.failure_not_recorded",
+            document_id=str(document.id),
+            state=document.state.value,
+            reason=reason,
+        )
+        return False
+    document.state = DocumentState.FAILED
+    _log.info("analysis.failed", document_id=str(document.id), reason=reason)
+    return True
 
 
 @dataclass(frozen=True, slots=True)

@@ -105,6 +105,13 @@ status: ## Show the corpus, the queue depth, and recent crawl runs
 run-api: ## Run the API with reload at http://localhost:8000/docs
 	$(VENV)/bin/uvicorn apps.api.main:app --reload --host 127.0.0.1 --port 8000
 
+viewer: ## Run the review workspace at http://127.0.0.1:5173 (needs `make run-api` in another shell)
+	cd frontend && npm install --silent && npm run dev
+
+viewer-check: ## Typecheck and build the viewer
+	cd frontend && npm install --silent && npm run build
+
 clean: ## Remove caches and build artifacts
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov dist build
+	rm -rf frontend/dist frontend/node_modules/.vite

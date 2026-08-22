@@ -30,9 +30,13 @@ story of a request.
 
 from __future__ import annotations
 
+import hashlib
+import shutil
+import tempfile
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Final
 
 from fastapi import (
@@ -46,9 +50,11 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import selectinload
+from starlette.background import BackgroundTask
 
 from aedifex import __version__
 from aedifex.acquisition.catalog import (
@@ -65,14 +71,17 @@ from aedifex.acquisition.registry import SourceDefinition, SourceRegistry, get_r
 from aedifex.config import Environment, Settings, get_settings
 from aedifex.domain.documents import DocumentType
 from aedifex.domain.evidence import FactOrigin
+from aedifex.domain.files import MEDIA_TYPES_BY_FORMAT, FileFormat, canonical_extension
 from aedifex.domain.review import ReviewDecision
 from aedifex.errors import AedifexError, SourceRegistryError
 from aedifex.infrastructure.database.models import (
     DerivedFact,
+    Document,
     DocumentRelationship,
     ExtractedFact,
     Finding,
     FindingReview,
+    PolicyProvision,
     Project,
     ProjectDocument,
     WorkItem,
@@ -90,8 +99,11 @@ from aedifex.knowledge.registry import (
     DOCUMENT_VERSION_STATES,
     FACT_TYPES,
     FINDING_OUTCOMES,
+    PROCESSING_STATUSES,
     RELATIONSHIP_TYPES,
+    REVIEW_DECISIONS,
     RULE_TYPES,
+    WORKFLOW_CATEGORIES,
 )
 from aedifex.review import ReviewError, record_review
 from aedifex.workspace import (
@@ -103,10 +115,18 @@ from aedifex.workspace import (
     process_project,
     project_inventory,
     project_summary,
+    safe_filename,
 )
 
 API_PREFIX: Final[str] = "/v1"
 REQUEST_ID_HEADER: Final[str] = "X-Request-ID"
+
+# Formats a browser renders in place, and the only ones served ``inline``. Everything else is a
+# download, which matters more than it looks: the corpus contains crawled HTML, and serving that
+# inline from this origin would execute attacker-authored markup as if it were ours.
+_RENDERABLE_INLINE: Final[frozenset[FileFormat]] = frozenset(
+    {FileFormat.PDF, FileFormat.PNG, FileFormat.JPEG}
+)
 
 MAX_UPLOAD_BYTES: Final[int] = 64 * 1024 * 1024
 """Ceiling on one uploaded document, and the reason it is not the 256 MiB download ceiling.
@@ -452,12 +472,57 @@ class FactResponse(BaseModel):
         )
 
 
-class EvidenceResponse(BaseModel):
-    """A finding's citation of one fact: which fact, in what role, and where it came from.
+def _download_name(filename: str | None, digest: str, file_format: FileFormat) -> str:
+    """A filename safe to put in a ``Content-Disposition`` header.
 
-    Covers both kinds. ``origin`` says whether a document stated the value or the calculation layer
-    computed it; ``page`` and ``snippet`` are present only for the former, and ``expression`` only
-    for the latter. A client must not present a computed value as something a document says.
+    The stored name came from a client or a portal, so it is attacker-controlled and this header is
+    one of the classic injection points: a quote or a newline in it rewrites the response headers.
+    ``safe_filename`` already removes control characters and path separators; the quote, semicolon
+    and backslash go here, and an empty result falls back to the digest, which is the one name that
+    is always true.
+    """
+    candidate = safe_filename(filename or "").translate({ord(ch): None for ch in '";\\'})
+    if candidate and candidate != "upload":
+        return candidate
+    return f"{digest[:16]}{canonical_extension(file_format)}"
+
+
+def _band_of(provision: PolicyProvision) -> str:
+    """The range a provision applies to, phrased the way the clause phrases it.
+
+    Built here rather than stored, because it is presentation: the columns are
+    ``applies_from`` / ``applies_to_max`` and either may be absent. "up to Rs 20,00,00,000" and
+    "above Rs 20,00,00,000" are the two real shapes in the corpus, and both bands of NHAI clause
+    4.14.1 contain exactly ₹20 crore as written — which is why an ambiguous applicability is
+    reported rather than resolved.
+    """
+    low, high = provision.applies_from, provision.applies_to_max
+    if low is not None and high is not None:
+        return f"{low:,} to {high:,}"
+    if high is not None:
+        return f"up to {high:,}"
+    if low is not None:
+        return f"above {low:,}"
+    return "all values"
+
+
+class EvidenceResponse(BaseModel):
+    """A finding's citation of one piece of evidence: which one, in what role, and where from.
+
+    Three kinds, and ``origin`` is what tells them apart:
+
+    ``extracted``
+        a value a document states about itself. Carries ``page`` and ``snippet``.
+    ``derived``
+        a value the calculation layer computed. Carries ``expression``, so the arithmetic can be
+        redone by hand, and no page — nobody wrote it down.
+    ``policy``
+        a norm a *reference* document states about other projects: a threshold, a rate, a cap.
+        Carries ``clause``, ``authority`` and its own page.
+
+    A client must keep the three visually distinct. A computed value presented as something a
+    document says is a fabrication, and a threshold presented as a measurement is worse — it is the
+    difference between "the bill claims this" and "the rulebook permits this".
     """
 
     model_config = ConfigDict(frozen=True)
@@ -472,6 +537,23 @@ class EvidenceResponse(BaseModel):
     value: str | None = None
     expression: str | None = None
     """For a derived fact, the arithmetic performed — so the number can be redone by hand."""
+
+    document_id: str | None = None
+    """Which document this evidence came from, when it is one document's to claim.
+
+    Present for an extracted fact and for a provision, absent for a derived fact — a computed value
+    may draw on several documents, and naming one of them would be a guess about which mattered.
+    Exposed so a viewer can jump from a finding to the page without a second request.
+    """
+
+    clause: str | None = None
+    """For a provision, the clause it was read from, e.g. ``4.14.1(a)``."""
+
+    authority: str | None = None
+    """For a provision, whose rule it is. A threshold with no authority is an opinion."""
+
+    band: str | None = None
+    """For a provision, the range it applies to, in the document's own terms."""
 
 
 class ReviewResponse(BaseModel):
@@ -578,21 +660,50 @@ class FindingResponse(BaseModel):
                         page=fact.page,
                         snippet=fact.snippet,
                         value=None if fact.numeric_value is None else str(fact.numeric_value),
+                        document_id=str(fact.document_id),
                     )
                 )
                 continue
-            computed = (derived or {}).get(link.derived_fact_id) if link.derived_fact_id else None
-            if computed is None:
+            if link.derived_fact_id is not None:
+                computed = (derived or {}).get(link.derived_fact_id)
+                if computed is None:
+                    continue
+                cited.append(
+                    EvidenceResponse(
+                        role=link.role,
+                        origin=FactOrigin.DERIVED.value,
+                        fact_id=str(computed.id),
+                        fact_type=computed.fact_type,
+                        literal=f"{computed.calculation} v{computed.calculation_version}",
+                        value=(
+                            None if computed.numeric_value is None else str(computed.numeric_value)
+                        ),
+                        expression=computed.expression,
+                    )
+                )
+                continue
+            # A cited provision. Until 2026-08-21 this branch did not exist and the row was
+            # dropped, so a finding that had judged a bid security against NHAI clause 4.14.1(a)
+            # was served with the threshold it used simply missing — the CLI printed it and the API
+            # did not. Two stored findings cite one, and both are the rule this project is proudest
+            # of: a verdict whose threshold is itself quoted from evidence.
+            provision = link.provision
+            if provision is None:
                 continue
             cited.append(
                 EvidenceResponse(
                     role=link.role,
-                    origin=FactOrigin.DERIVED.value,
-                    fact_id=str(computed.id),
-                    fact_type=computed.fact_type,
-                    literal=f"{computed.calculation} v{computed.calculation_version}",
-                    value=None if computed.numeric_value is None else str(computed.numeric_value),
-                    expression=computed.expression,
+                    origin="policy",
+                    fact_id=str(provision.id),
+                    fact_type=provision.provision_type,
+                    literal=f"clause {provision.clause}",
+                    page=provision.page,
+                    snippet=provision.snippet,
+                    value=None if provision.share is None else str(provision.share),
+                    document_id=str(provision.document_id),
+                    clause=provision.clause,
+                    authority=provision.authority,
+                    band=_band_of(provision),
                 )
             )
         return cls(
@@ -977,6 +1088,29 @@ def require_write_access(settings: SettingsDep) -> None:
         )
 
 
+def require_artifact_access(settings: SettingsDep) -> None:
+    """Refuse to serve raw artifact bytes when the environment is production.
+
+    Separate from :func:`require_write_access` because the reason is different and a real
+    authorization model will treat the two differently: a write needs a role, whereas reading an
+    artifact needs *membership of the project that holds it*.
+
+    The concern is not hypothetical. The corpus mixes sources whose licence terms differ — some
+    permit redistribution and some do not — so an unauthenticated download endpoint publishes all
+    of them at once, under whichever terms are loosest. Serving the bytes is necessary for the
+    viewer to be evidence rather than assertion; serving them to the internet is a licensing
+    decision nobody has made.
+    """
+    if settings.environment is Environment.PRODUCTION:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "artifact content is not served in production: this API has no authentication, and "
+                "the corpus mixes sources whose licence terms differ"
+            ),
+        )
+
+
 # One store per bucket, kept because building a boto3 client sets up connection pools and doing that
 # per request would spend more time on TLS handshakes than on the upload. Keyed by bucket so a
 # settings change is picked up rather than silently ignored.
@@ -1006,6 +1140,7 @@ def database_probe_dependency() -> Callable[[], None]:
 DatabaseProbeDep = Annotated[Callable[[], None], Depends(database_probe_dependency)]
 StoreDep = Annotated[RawObjectStore, Depends(store_dependency)]
 WriteAccess = Depends(require_write_access)
+ArtifactAccess = Depends(require_artifact_access)
 
 
 # ---------------------------------------------------------------------------
@@ -1175,6 +1310,86 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown document {document_id}"
             )
         return DocumentResponse.from_entry(entry)
+
+    @app.get(
+        f"{API_PREFIX}/documents/{{document_id}}/content",
+        dependencies=[ArtifactAccess],
+        tags=["corpus"],
+        response_class=FileResponse,
+        responses={
+            404: {"description": "No such document"},
+            409: {"description": "Stored bytes no longer match their recorded digest"},
+            503: {"description": "Not served in production"},
+        },
+    )
+    def get_document_content(document_id: uuid.UUID, store: StoreDep) -> FileResponse:
+        """The original artifact, byte for byte. The thing every citation ultimately points at.
+
+        This exists because a viewer that renders our *extraction* of a document is an assertion,
+        not evidence. "Page 6 states ₹85,39,81,318.41" is checkable only if the reader can see page
+        6 — so the bytes are served, and the page is reached with a fragment the browser's own PDF
+        viewer understands rather than by rebuilding the document as HTML.
+
+        **The digest is re-verified on the way out.** Object storage is immutable and content
+        addressed, so bytes that no longer hash to their key mean something is wrong with storage
+        rather than with this request — and showing a reviewer bytes that are not the ones the
+        provenance chain records would quietly break the only guarantee this product sells. A
+        mismatch is a 409 with the two digests, never a silent 200.
+
+        Three response headers do the security work, and each is load-bearing:
+
+        * ``Content-Disposition: inline`` only for formats a browser renders safely. The corpus
+          contains crawled HTML; serving that inline from this origin would run someone else's
+          markup as ours.
+        * ``X-Content-Type-Options: nosniff`` so a mislabelled artifact cannot be re-interpreted.
+        * ``Content-Security-Policy: sandbox`` so even a rendered artifact has no origin privileges.
+        """
+        with session_scope() as session:
+            document = session.get(Document, document_id)
+            if document is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown document {document_id}"
+                )
+            storage_key = document.storage_key
+            expected_digest = document.sha256
+            file_format = document.file_format
+            media_type = document.media_type
+            filename = document.original_filename
+
+        scratch = Path(tempfile.mkdtemp(prefix="aedifex-content-"))
+        try:
+            path = store.download_to(storage_key, scratch / "artifact")
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except Exception:
+            shutil.rmtree(scratch, ignore_errors=True)
+            raise
+        if digest != expected_digest:
+            shutil.rmtree(scratch, ignore_errors=True)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"stored bytes for {document_id} hash to {digest} but the document records "
+                    f"{expected_digest}; refusing to serve evidence that does not match its "
+                    f"provenance"
+                ),
+            )
+
+        served = _download_name(filename, expected_digest, file_format)
+        disposition = "inline" if file_format in _RENDERABLE_INLINE else "attachment"
+        return FileResponse(
+            path,
+            media_type=media_type or MEDIA_TYPES_BY_FORMAT[file_format][0],
+            headers={
+                "Content-Disposition": f'{disposition}; filename="{served}"',
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "sandbox",
+                # Content-addressed, so the bytes behind this id can never change. `private`
+                # because the corpus is not public and a shared cache must not hold it.
+                "Cache-Control": "private, max-age=3600, immutable",
+                "X-Content-Digest": f"sha256={expected_digest}",
+            },
+            background=BackgroundTask(shutil.rmtree, scratch, ignore_errors=True),
+        )
 
     @app.get(
         f"{API_PREFIX}/documents/{{document_id}}/facts",
@@ -1567,6 +1782,14 @@ def create_app() -> FastAPI:
             rows = list(
                 session.execute(
                     select(ExtractedFact)
+                    # Eagerly, exactly as the document-level endpoint does, and for the same
+                    # reason: the response is built after the session closes, and
+                    # ``FactResponse.from_row`` reads ``retraction``. Without this the endpoint
+                    # raised DetachedInstanceError for *every* project holding any fact — not only
+                    # ones with a retraction, because the failure is the lazy load itself. Measured
+                    # on three real projects (3,319 / 578 / 120 facts, two with no retractions at
+                    # all): all three returned 500.
+                    .options(selectinload(ExtractedFact.retraction))
                     .where(ExtractedFact.document_id.in_(member))
                     .order_by(ExtractedFact.fact_type, ExtractedFact.document_id)
                 ).scalars()
@@ -1646,6 +1869,55 @@ def create_app() -> FastAPI:
                 )
                 raise HTTPException(status_code=code, detail=str(error)) from error
             return ReviewResponse.from_row(review, review.finding)
+
+    @app.get(
+        f"{API_PREFIX}/findings/{{finding_id}}",
+        response_model=FindingResponse,
+        tags=["analysis"],
+        responses={404: {"description": "No such finding"}},
+    )
+    def get_finding(finding_id: uuid.UUID) -> FindingResponse:
+        """One finding by id, with its evidence and its reviews.
+
+        The sibling of ``/findings/{id}/reviews``, which existed first. Added when the viewer needed
+        a finding to be a *place* — something a reviewer can link to, refresh, and send to a
+        colleague. Resolving one finding by fetching every document's findings and filtering would
+        make the cost of opening one grow with the size of the project.
+
+        Serves both scopes. A document-scoped finding cites facts from its own document; a
+        project-scoped one cites facts from several, so the evidence lookup spans the project's
+        membership either way.
+        """
+        with session_scope() as session:
+            finding = session.get(Finding, finding_id)
+            if finding is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=f"no finding {finding_id}"
+                )
+            document_ids: list[uuid.UUID] = []
+            if finding.document_id is not None:
+                document_ids.append(finding.document_id)
+            if finding.project_id is not None:
+                document_ids.extend(
+                    session.execute(
+                        select(ProjectDocument.document_id).where(
+                            ProjectDocument.project_id == finding.project_id
+                        )
+                    ).scalars()
+                )
+            facts = {
+                row.id: row
+                for row in session.execute(
+                    select(ExtractedFact).where(ExtractedFact.document_id.in_(document_ids))
+                ).scalars()
+            }
+            computed = {
+                row.id: row
+                for row in session.execute(
+                    select(DerivedFact).where(DerivedFact.document_id.in_(document_ids))
+                ).scalars()
+            }
+            return FindingResponse.from_row(finding, facts, computed)
 
     @app.get(
         f"{API_PREFIX}/findings/{{finding_id}}/reviews",
@@ -1856,6 +2128,36 @@ def create_app() -> FastAPI:
             "finding_outcomes": [
                 {"outcome": info.outcome.value, "description": info.description}
                 for info in FINDING_OUTCOMES
+            ],
+            # Published so a client can render the construction chain in the order work happens,
+            # and can explain an *empty* slot, without hardcoding either. A viewer that invents its
+            # own category order eventually disagrees with the domain, and the order carries
+            # meaning: a measurement precedes the bill it justifies.
+            "workflow_categories": [
+                {
+                    "category": info.category.value,
+                    "position": info.position,
+                    "description": info.description,
+                    "verifies": info.verifies,
+                    "is_project_evidence": info.is_project_evidence,
+                }
+                for info in WORKFLOW_CATEGORIES
+            ],
+            "processing_statuses": [
+                {
+                    "status": info.status.value,
+                    "description": info.description,
+                    "needs_a_person": info.needs_a_person,
+                }
+                for info in PROCESSING_STATUSES
+            ],
+            "review_decisions": [
+                {
+                    "decision": info.decision.value,
+                    "description": info.description,
+                    "closes_the_finding": info.closes_the_finding,
+                }
+                for info in REVIEW_DECISIONS
             ],
         }
 

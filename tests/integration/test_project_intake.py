@@ -505,7 +505,17 @@ class TestReadModel:
 
         assert [item for item, _ in report.failed] == [broken.document.id]
         assert len(report.unsupported) == 1
-        assert project_inventory(session, project.id), "and both documents are still listed"
+
+        # The state records the attempt, not just the report. Found by opening the workspace: a
+        # document whose PDF cannot be parsed showed as "uploaded", indistinguishable from one
+        # nobody had tried, because extraction raises before the first state transition. A reviewer
+        # would press Process forever with nothing to show that anything had happened.
+        by_id = {entry.document_id: entry for entry in project_inventory(session, project.id)}
+        assert len(by_id) == 2, "both documents are still listed"
+        assert by_id[broken.document.id].status is ProcessingStatus.FAILED
+        assert [
+            entry.status for entry in by_id.values() if entry.status is ProcessingStatus.UNSUPPORTED
+        ] == [ProcessingStatus.UNSUPPORTED]
 
     def test_the_summary_counts_what_a_reviewer_needs(
         self, session: Session, store: RawObjectStore, source: SourceDefinition

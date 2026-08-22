@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 dist/
+
+# Source archives produced by `git archive` for sharing a snapshot. Regenerate rather than commit.
+/aedifex-*.zip
 build/
 .venv/
 venv/

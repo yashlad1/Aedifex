@@ -136,6 +136,21 @@ make run-api                           # http://localhost:8000/docs
 make test-integration
 ```
 
+### The review workspace
+
+```bash
+make run-api                           # first, in one shell
+make viewer                            # http://127.0.0.1:5173
+```
+
+The first user interface: create a project, give it documents, process them, read the findings, click
+an item of evidence and land on the page of the original PDF that states it, then record a review.
+See [frontend/README.md](frontend/README.md).
+
+**It is not deployable outside a development machine.** The write API has no authentication, no
+authorization and no tenancy, and refuses to serve writes or artifact content when the environment is
+`production`. That guard makes the gap loud; it does not close it.
+
 The full suite passes identically against native PostgreSQL and against the Compose stack
 (**365 tests, 0 skipped, on both**). The container image was built, started, and verified to
 reach Compose PostgreSQL via `/health/ready`.
@@ -173,7 +188,15 @@ src/aedifex/
     database/               ORM models, session management
     storage/                immutable content-addressed key layout
     observability/          structured logging
-apps/api/                   FastAPI read-only metadata API
+  extraction/               classify, extract, persist facts; the analysis pipeline
+  calculation/              derived facts, precision-aware row arithmetic
+  verification/             deterministic rules, single- and cross-document
+  review/                   what a person concluded about a finding
+  workspace/                declare a project, attach documents, read its state back
+  classification/           proposes a document type; never decides one
+apps/api/                   FastAPI: the corpus catalogue, the project workspace, review
+apps/crawler/               operator CLI: crawl, ingest, analyse, review
+frontend/                   the review workspace (React, TypeScript, Vite)
 config/sources/             the source registry (data, not code)
 uv.lock                     pinned dependency graph; installs use --locked
 data/                       raw / processed / normalized / synthetic / labels

@@ -113,10 +113,45 @@ model. On the real project it agreed with five of six declarations and disputed 
 conditions of contract, declared `model_agreement` and proposed `contract`, which is precisely the
 case a person has to settle because nothing in a filename can.
 
-### 4. The viewer — fourth. **Next.**
+### 4. The viewer — fourth. **Done, 2026-08-21.**
 
-The seven surfaces, against Tier 1 documents. Every finding answers the five questions. No risk
-scores.
+[frontend/](../../frontend/) — React, TypeScript, Vite, no state library, no component library, 44
+npm packages. The seven surfaces exist and were verified by driving a real browser against the real
+corpus rather than against a fixture.
+
+Every finding answers the six questions in the order a reviewer asks them, and there are no risk
+scores anywhere — `ARCHITECTURE.md`'s layer diagram lost the "risk engine" box it used to carry,
+because a score collapses the five things a reviewer needs into one number nobody can argue with.
+
+**What the viewer found, which is the point of building it:**
+
+1. `GET /v1/projects/{id}/facts` returned **500 for every project holding any fact** — the response
+   is built after the session closes and reads `retraction`. Three real projects, 3,319 / 578 / 120
+   facts, two with no retractions at all: all three failed. The document-level endpoint had the
+   eager load and the project-level one did not.
+2. **Policy provisions were dropped from the API.** A finding that judged a bid security against
+   NHAI clause 4.14.1(a) was served with the threshold missing; the CLI printed it.
+3. **A failed analysis left no trace on the document.** Extraction raises before the first state
+   transition, so a PDF that could not be opened showed as `uploaded` — indistinguishable from one
+   nobody had tried. A reviewer would press Process forever.
+
+Two additions were needed and are recorded as requirements rather than smuggled in:
+`GET /v1/documents/{id}/content` (the artifact itself, digest re-verified, sandboxed) and
+`GET /v1/findings/{id}` (so a finding is a place a reviewer can link to).
+
+**Deliberately not fixed:** the corpus catalogue still hides uploaded documents, spreadsheets are not
+rendered in the browser, and there are no frontend tests. All three are recorded in
+`ARCHITECTURE.md` or `frontend/README.md`.
+
+## Where this leaves the product
+
+A real building project — IIT Bombay Hostel 19, seven documents, 3,319 facts — goes from a URL to a
+recorded human decision without a shell. What a reviewer sees includes the imperfections, which is
+the point: **Measurement, RA Bill, Variation, Material and Quality are all absent**, so the checks
+that matter most cannot run, and the workspace says so on the first screen rather than presenting a
+clean result.
+
+The next decision should come from using it, not from this document.
 
 ## Explicitly not in this milestone
 
