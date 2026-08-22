@@ -46,8 +46,9 @@ def record_review(
 ) -> FindingReview:
     """Record one person's decision about one finding.
 
-    The outcome and rule version the reviewer was looking at are captured from the finding **at the
-    moment of review**, not supplied by the caller. That is what makes the record honest: a reviewer
+    The conclusion the reviewer was looking at is captured from the finding **at the moment of
+    review** — its fingerprint, plus the outcome and rule version that explain it — and never
+    supplied by the caller. That is what makes the record honest: a reviewer
     can only have been reviewing what the finding said when they read it, and a later change to the
     rule must invalidate this decision rather than inherit it. See
     :attr:`~aedifex.infrastructure.database.models.Finding.current_review`.
@@ -83,6 +84,10 @@ def record_review(
         # Read from the finding, never from the caller. See the docstring.
         reviewed_outcome=finding.outcome,
         reviewed_rule_version=finding.rule_version,
+        # The whole conclusion, so a re-read that changes the numbers under an unchanged outcome
+        # stops this review speaking for the finding. The two columns above remain because they are
+        # what a reader is shown when that happens; this is what detects it.
+        reviewed_fingerprint=finding.conclusion_fingerprint,
         software_version=__version__,
     )
     session.add(review)

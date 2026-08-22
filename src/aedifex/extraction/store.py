@@ -299,6 +299,11 @@ def persist_finding(
         finding.evidence.append(FindingEvidence(provision_id=provision.id, role=role))
 
     session.flush()
+    # Last, because it digests the evidence that was just written. This is the one place with the
+    # links in hand, which is why the value is stored rather than derived on read -- and it is what
+    # makes a prior review of a *different* conclusion go stale even when the outcome is unchanged.
+    finding.conclusion_fingerprint = finding.compute_fingerprint()
+    session.flush()
     return finding
 
 
@@ -338,6 +343,8 @@ def persist_project_finding(
         finding.evidence.append(FindingEvidence(fact_id=result.evidence[role].id, role=role))
     for role, derived in sorted(result.derived_evidence.items()):
         finding.evidence.append(FindingEvidence(derived_fact_id=derived.id, role=role))
+    session.flush()
+    finding.conclusion_fingerprint = finding.compute_fingerprint()
     session.flush()
     return finding
 
@@ -454,6 +461,8 @@ def persist_work_item_finding(
         finding.evidence.append(FindingEvidence(fact_id=result.evidence[role].id, role=role))
     for role, derived in sorted(result.derived_evidence.items()):
         finding.evidence.append(FindingEvidence(derived_fact_id=derived.id, role=role))
+    session.flush()
+    finding.conclusion_fingerprint = finding.compute_fingerprint()
     session.flush()
     return finding
 

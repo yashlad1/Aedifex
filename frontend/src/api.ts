@@ -94,12 +94,24 @@ export interface Review {
   reviewed_outcome: string;
   reviewed_rule_version: string;
   reviewed_at: string;
+  /**
+   * Whether this review still speaks for the finding.
+   *
+   * The server compares a digest of the whole conclusion — verdict, both values, the rule's own
+   * numbers and the citations — not just the outcome. So a re-read that changed the numbers while
+   * leaving the verdict alone marks it stale, and `reviewed_outcome` / `reviewed_rule_version` are
+   * what to *show* when explaining it.
+   */
   stale: boolean;
 }
 
 export interface Finding {
   finding_id: string;
-  document_id: string;
+  /** `document`, `project` or `work_item`. Exactly one of the three ids below is set. */
+  scope: "document" | "project" | "work_item";
+  document_id: string | null;
+  project_id: string | null;
+  work_item_id: string | null;
   rule_id: string;
   rule_version: string;
   outcome: Outcome;

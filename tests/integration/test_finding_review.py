@@ -135,6 +135,143 @@ class TestRecording:
             )
 
 
+class TestConclusionBinding:
+    """A review is bound to the conclusion, not only to the verdict word.
+
+    The defect an independent review found, and the one worth the most: until 2026-08-22 staleness
+    compared ``outcome`` and ``rule_version`` alone, so a re-read that changed every number while
+    leaving the verdict alone kept the old acceptance. Nothing would look wrong afterwards — the
+    finding shows "accepted", the note is there, and the numbers underneath it are different ones.
+    """
+
+    def test_a_changed_observed_value_makes_a_review_stale(self, session: Session) -> None:
+        finding = _finding(session, outcome="fail")
+        finding.observed = "54,518.40"
+        finding.conclusion_fingerprint = finding.compute_fingerprint()
+        session.flush()
+        record_review(
+            session,
+            finding.id,
+            decision=ReviewDecision.ACCEPTED,
+            note="Checked the page: the bill really does state 54,518.40.",
+            reviewer="qs",
+        )
+        assert _current(finding) is not None
+
+        # A re-read of the same document under the same rule, producing a different number. Outcome
+        # and rule version are untouched, which is exactly what used to slip through.
+        finding.observed = "62,900.00"
+        finding.conclusion_fingerprint = finding.compute_fingerprint()
+        session.flush()
+        session.expire(finding)
+
+        assert _current(finding) is None, "an acceptance of 54,518.40 cannot speak for 62,900.00"
+        assert len(finding.reviews) == 1, "and the review is kept, not deleted"
+
+    def test_changed_evidence_makes_a_review_stale(self, session: Session) -> None:
+        """The reviewer clicked through to a cell. A citation that moved has not been checked."""
+        from aedifex.domain.evidence import FactKind
+        from aedifex.infrastructure.database.models import ExtractedFact, FindingEvidence
+
+        finding = _finding(session, outcome="review")
+        fact = ExtractedFact(
+            document_id=finding.document_id,
+            fact_type="claimed_rate",
+            kind=FactKind.MONEY,
+            literal="74500",
+            numeric_value=None,
+            page=1,
+            span_start=0,
+            span_end=0,
+            snippet="RA Bill!G8",
+            method="cell:RA Bill!G8",
+            extractor="test",
+            extractor_version="1",
+            sheet_name="RA Bill",
+            sheet_row=8,
+            sheet_column=7,
+        )
+        session.add(fact)
+        session.flush()
+        finding.evidence.append(FindingEvidence(fact_id=fact.id, role="claimed_rate"))
+        session.flush()
+        finding.conclusion_fingerprint = finding.compute_fingerprint()
+        session.flush()
+        record_review(
+            session,
+            finding.id,
+            decision=ReviewDecision.ACCEPTED,
+            note="Confirmed against RA Bill!G8.",
+            reviewer="qs",
+        )
+        assert _current(finding) is not None
+
+        # Re-extraction now cites a different cell for the same value.
+        fact.sheet_row = 14
+        fact.snippet = "RA Bill!G14"
+        session.flush()
+        finding.conclusion_fingerprint = finding.compute_fingerprint()
+        session.flush()
+        session.expire(finding)
+
+        assert _current(finding) is None
+
+    def test_an_identical_re_analysis_keeps_the_review(self, session: Session) -> None:
+        """The other half, and the reason the digest is content-based rather than row-based.
+
+        Re-running analysis that reaches the same conclusion from the same values must not throw a
+        reviewer's work away. A fingerprint over evidence *row ids* would have done exactly that on
+        every extractor-version bump.
+        """
+        finding = _finding(session, outcome="fail")
+        finding.conclusion_fingerprint = finding.compute_fingerprint()
+        session.flush()
+        record_review(
+            session,
+            finding.id,
+            decision=ReviewDecision.REJECTED,
+            note="The parser paired the wrong rate.",
+            reviewer="senior",
+        )
+
+        finding.conclusion_fingerprint = finding.compute_fingerprint()
+        session.flush()
+        session.expire(finding)
+
+        current = _current(finding)
+        assert current is not None
+        assert current.decision == ReviewDecision.REJECTED.value
+
+
+class TestOrdering:
+    def test_two_reviews_in_one_transaction_are_ordered(self, session: Session) -> None:
+        """``now()`` is the transaction's start time, so both rows shared a timestamp.
+
+        Which review is *current* depended on the order the planner happened to return, and the
+        earlier version of this file asserted an order it could not guarantee. ``reviewed_at`` is
+        now ``clock_timestamp()``, with the id as a tiebreak.
+        """
+        finding = _finding(session)
+        first = record_review(
+            session,
+            finding.id,
+            decision=ReviewDecision.ACCEPTED,
+            note="Looks real.",
+            reviewer="junior",
+        )
+        second = record_review(
+            session,
+            finding.id,
+            decision=ReviewDecision.REJECTED,
+            note="No: the parser paired the wrong rate.",
+            reviewer="senior",
+        )
+        session.expire(finding)
+
+        assert first.reviewed_at < second.reviewed_at, "one transaction, two distinct instants"
+        assert [row.reviewer for row in finding.reviews] == ["junior", "senior"]
+
+
 class TestStaleness:
     """The property whose failure is silent, and therefore the one worth a test.
 

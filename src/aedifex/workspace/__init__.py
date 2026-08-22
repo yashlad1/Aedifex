@@ -362,6 +362,10 @@ def attach_upload(
             # what the role column is for. A *suggested* type is not, and never reaches here.
             role=_role_for(declared_type),
             established_by=f"declared:upload:{uploaded_by.strip()}"[:128],
+            # The name *this* project's uploader used. ``documents.original_filename`` records the
+            # name the bytes first arrived under, which with content-addressed identity means a
+            # second project uploading identical content was shown the first project's filename.
+            filename=display_name,
         )
         session.add(membership)
     session.flush()
@@ -766,7 +770,9 @@ def project_inventory(session: Session, project_id: uuid.UUID) -> tuple[Document
         entries.append(
             DocumentEntry(
                 document_id=document.id,
-                filename=document.original_filename,
+                # This project's name for it, falling back to the name the content first arrived
+                # under — which is all a membership that reconciliation derived can offer.
+                filename=membership.filename or document.original_filename,
                 file_format=document.file_format,
                 size_bytes=document.size_bytes,
                 sha256=document.sha256,

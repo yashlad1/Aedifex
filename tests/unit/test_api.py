@@ -683,3 +683,58 @@ class TestCellProvenance:
         finding.evidence = []
 
         assert FindingResponse.from_row(finding, {}, {}).needs_human_review is False
+
+
+class TestFindingSubject:
+    """What a finding is *about*, stated rather than inferred.
+
+    A project-scoped finding has no document, and ``document_id`` was typed ``str`` — so
+    ``str(row.document_id)`` served the literal string ``"None"``. Every cross-document conclusion,
+    which is the most valuable kind this system produces, arrived that way. Verified against the
+    running API before it was fixed.
+    """
+
+    @staticmethod
+    def _finding(**overrides: object) -> Finding:
+        fields: dict[str, object] = {
+            "id": uuid.uuid4(),
+            "rule_id": "cross_document_fact_agreement",
+            "rule_version": "1",
+            "outcome": "pass",
+            "summary": "All comparable facts agree.",
+            "expected": "identical values",
+            "observed": "0 disagreements",
+            "detail": {},
+            "evaluated_at": datetime(2026, 8, 22, tzinfo=UTC),
+        }
+        fields.update(overrides)
+        finding = Finding(**fields)
+        finding.evidence = []
+        return finding
+
+    def test_a_project_finding_has_a_null_document_and_says_its_scope(self) -> None:
+        project_id = uuid.uuid4()
+        payload = FindingResponse.from_row(self._finding(project_id=project_id), {}, {})
+
+        assert payload.document_id is None
+        assert payload.project_id == str(project_id)
+        assert payload.scope == "project"
+
+    def test_a_document_finding_reports_its_document(self) -> None:
+        document_id = uuid.uuid4()
+        payload = FindingResponse.from_row(self._finding(document_id=document_id), {}, {})
+
+        assert payload.document_id == str(document_id)
+        assert payload.project_id is None
+        assert payload.scope == "document"
+
+    def test_a_work_item_finding_carries_both_ids_and_the_narrower_scope(self) -> None:
+        """An item exists only within a project, so both ids are set and the item wins."""
+        project_id, work_item_id = uuid.uuid4(), uuid.uuid4()
+        payload = FindingResponse.from_row(
+            self._finding(project_id=project_id, work_item_id=work_item_id), {}, {}
+        )
+
+        assert payload.scope == "work_item"
+        assert payload.work_item_id == str(work_item_id)
+        assert payload.project_id == str(project_id)

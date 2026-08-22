@@ -6,7 +6,9 @@ record *different* facts, which is why an upload gets its own provenance row rat
 ``document_retrievals`` entry with an invented HTTP 200 for a request nobody made.
 
 Content addressing is identical to the crawl path: the digest decides the identity and the storage
-key, so ingesting the same bytes twice is a no-op rather than a duplicate. Ingesting a file that was
+key, so ingesting the same bytes twice stores no second artifact. The *upload* is a separate matter:
+one is an event, and two people supplying the same bytes are two events, so a second uploader is
+recorded rather than collapsed into the first. Ingesting a file that was
 previously crawled would resolve to the same document, which is correct — it is the same evidence.
 
 The source must be an approved ``manual_upload`` source. A file cannot be smuggled in under a source
@@ -188,16 +190,24 @@ def ingest_file(
         document.document_type = document_type
         session.flush()
 
+    # An upload is an event, and its identity is who supplied what, under which name. Keyed this
+    # way rather than on (document, source) so two people handing us the same bytes are two rows —
+    # possible the moment a shared `customer_provided` source existed — while one person re-running
+    # the same ingest stays idempotent, which is what the narrower key was protecting.
+    recorded_path = original_path or str(path)
     upload = session.execute(
         select(DocumentUpload).where(
-            DocumentUpload.document_id == document_id, DocumentUpload.source_id == source.id
+            DocumentUpload.document_id == document_id,
+            DocumentUpload.source_id == source.id,
+            DocumentUpload.uploaded_by == uploaded_by,
+            DocumentUpload.original_path == recorded_path,
         )
     ).scalar_one_or_none()
     if upload is None:
         upload = DocumentUpload(
             document_id=document_id,
             source_id=source.id,
-            original_path=original_path or str(path),
+            original_path=recorded_path,
             is_synthetic=is_synthetic,
             note=note,
             uploaded_by=uploaded_by,

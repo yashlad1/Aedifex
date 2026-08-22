@@ -167,6 +167,47 @@ danger the original rule was guarding against, a *second* reader disagreeing wit
 avoided by reading the cells on the server with the same library and the same settings. The workbook
 remains authoritative and the screen says so.
 
+### 6. A second, independent code review — 2026-08-22
+
+Four findings, all valid. Two were things the earlier passes had reasoned about and got wrong, which
+is the more useful kind.
+
+**Reviews were bound to too little.** Staleness compared `outcome` and `rule_version`, on the
+argument that "a review decides a verdict, not a rule id". Half right: the verdict is the whole
+comparison, and a re-read can change every number in it while leaving the word `FAIL` alone. The
+corpus already contains the case — one document's `estimated_cost` moved from ₹73,86,43,489.22 to
+₹85,39,81,318.41 between extractor versions, because v3 read the civil component and v4 read the
+total. Findings and reviews now carry a digest of the whole conclusion.
+
+Two details were decided against the reviewer's suggestion, deliberately. The digest covers the
+citations' **content** rather than their row ids, so an identical re-analysis does not throw a
+reviewer's work away — a fingerprint over primary keys would have invalidated every review on each
+extractor-version bump. And the two old columns are still compared alongside it, so a finding patched
+by hand during an incident still invalidates its reviews; a derived column is only as good as the
+code maintaining it.
+
+**Upload provenance was collapsing independent uploads.** ADR 0018 had called the single row per
+(document, source) a deliberate limitation. It was written when every source had one operator, and
+`customer_provided` broke it: a contractor's bill sent to both the owner and the PMC is identical
+content from two people. The key is now (document, source, uploader, path), and
+`project_documents.filename` records the name each project's uploader used — because
+`documents.original_filename` is content-level, so a second project had been shown the first
+project's filename.
+
+**Project findings served `document_id: "None"`.** Confirmed against the running API before fixing:
+the field was typed `str`, so `str(None)` reached the wire for every cross-document conclusion. Now
+nullable, with `scope` and the project and work-item ids stated explicitly.
+
+**Review ordering was not deterministic.** `now()` is the transaction's start time, so two reviews
+written in one transaction shared a timestamp and their order — which decides which one is *current*
+— was the planner's choice. An earlier test asserted that order and had been passing on luck.
+`clock_timestamp()`, with the id as a tiebreak.
+
+One thing the review did not ask for came out of it: `tests/unit/test_migration_matches_models.py`
+replayed every form of `ALTER` the migrations used except `SET DEFAULT`, so the first default change
+made it report a disagreement that did not exist. It fails closed, which is the right direction, and
+it now understands the statement.
+
 ## Where this leaves the product
 
 A real building project — IIT Bombay Hostel 19, seven documents, 3,319 facts — goes from a URL to a

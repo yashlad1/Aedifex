@@ -613,10 +613,14 @@ class EvidenceResponse(BaseModel):
 class ReviewResponse(BaseModel):
     """One human decision about a finding.
 
-    ``stale`` is the field that matters. A review decides a *verdict*, so if the rule was revised or
-    re-evaluation changed the outcome, an earlier review no longer speaks for this finding and a
-    client must not render it as the current state. Kept and shown rather than hidden, because
-    "someone accepted the previous conclusion" is worth seeing.
+    ``stale`` is the field that matters. A review decides a *conclusion* — the verdict, the values
+    compared, and the citations — so if any of those changed, an earlier review no longer speaks for
+    this finding and a client must not render it as the current state. Kept and shown rather than
+    hidden, because "someone accepted the previous conclusion" is worth seeing.
+
+    ``reviewed_outcome`` and ``reviewed_rule_version`` are what a client can *show* to explain
+    staleness. They are not what detects it: a re-read that changed every number under an unchanged
+    outcome is stale too, and only the fingerprint sees that.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -641,7 +645,8 @@ class ReviewResponse(BaseModel):
             reviewed_rule_version=row.reviewed_rule_version,
             reviewed_at=row.reviewed_at.isoformat(),
             stale=(
-                row.reviewed_outcome != finding.outcome
+                row.reviewed_fingerprint != finding.conclusion_fingerprint
+                or row.reviewed_outcome != finding.outcome
                 or row.reviewed_rule_version != finding.rule_version
             ),
         )
@@ -673,7 +678,21 @@ class FindingResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     finding_id: str
-    document_id: str
+
+    scope: str
+    """``document``, ``project`` or ``work_item`` — what this finding is *about*.
+
+    Exposed so a client never has to infer the subject from which id happens to be set. Exactly one
+    of the three ids below is populated, and until 2026-08-22 ``document_id`` was typed ``str`` and
+    serialised ``str(None)`` for a project-scoped finding — so every cross-document conclusion, the
+    most valuable kind this system produces, arrived carrying the literal string ``"None"``.
+    """
+
+    document_id: str | None
+    project_id: str | None = None
+    work_item_id: str | None = None
+    """Set alongside ``project_id``, never instead of it: an item exists only within a project."""
+
     rule_id: str
     rule_version: str
     outcome: str
@@ -777,7 +796,14 @@ class FindingResponse(BaseModel):
             )
         return cls(
             finding_id=str(row.id),
-            document_id=str(row.document_id),
+            scope=(
+                "work_item"
+                if row.work_item_id is not None
+                else "document" if row.document_id is not None else "project"
+            ),
+            document_id=None if row.document_id is None else str(row.document_id),
+            project_id=None if row.project_id is None else str(row.project_id),
+            work_item_id=None if row.work_item_id is None else str(row.work_item_id),
             rule_id=row.rule_id,
             rule_version=row.rule_version,
             outcome=row.outcome,

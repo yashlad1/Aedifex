@@ -14,6 +14,11 @@ column to an existing table contributes nothing to a ``CREATE TABLE`` statement,
 that read only creates would report a clean match while the schema and the models disagreed about
 every column added after the table was first made. Revisions are therefore applied base to head, in
 order, with each ``ALTER`` mutating the table it names.
+
+The replay has to understand every form of ``ALTER`` the migrations actually use, and an unhandled
+one fails *closed* — as a mismatch — which is how ``SET DEFAULT`` came to be added: a migration
+changed a column default and this file reported the schema and the models as disagreeing when they
+did not.
 """
 
 from __future__ import annotations
@@ -145,6 +150,27 @@ def _apply_alter(definitions: set[str], action: str) -> None:
     drop_column = re.match(r"DROP COLUMN (\w+)", action, flags=re.IGNORECASE)
     if drop_column is not None:
         _discard_matching(definitions, rf"{drop_column.group(1)}\b")
+        return
+
+    # ALTER COLUMN ... SET/DROP DEFAULT. Added when a migration first changed a default —
+    # `finding_reviews.reviewed_at` from now() to clock_timestamp() — and this checker reported the
+    # models and the migrations as disagreeing because it replayed every other kind of ALTER and
+    # silently ignored this one. The type and nullability are not restated in this form of the
+    # statement, so the existing definition is rewritten rather than replaced.
+    default = re.match(
+        r"ALTER COLUMN (\w+) (?:SET DEFAULT (.+)|DROP DEFAULT)$", action, flags=re.IGNORECASE
+    )
+    if default is not None:
+        column, expression = default.group(1), default.group(2)
+        for definition in [
+            item for item in definitions if re.match(rf"{column}\b", item, flags=re.IGNORECASE)
+        ]:
+            definitions.discard(definition)
+            suffix = " NOT NULL" if definition.upper().endswith(" NOT NULL") else ""
+            body = definition[: len(definition) - len(suffix)] if suffix else definition
+            body = re.sub(r"\s+DEFAULT\s+.*$", "", body, flags=re.IGNORECASE)
+            rebuilt = body if expression is None else f"{body} DEFAULT {expression}"
+            definitions.add(_normalize(f"{rebuilt}{suffix}"))
         return
 
     # ALTER COLUMN ... DROP/SET NOT NULL. The column keeps its type and only its nullability

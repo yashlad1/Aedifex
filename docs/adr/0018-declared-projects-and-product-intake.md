@@ -152,6 +152,24 @@ to redistribute — which required scoping the registry's "restricted sources ca
 to *fetching* methods. That rule exists because collecting from behind an access control would mean
 bypassing the control; a document its owner hands over bypasses nothing.
 
+## Correction, 2026-08-22: an upload is an event
+
+Decision 2 above stated the deduplication table and called the single upload row per
+(document, source) "a deliberate limitation... the one thing here a future provenance change may want
+to revisit". An independent review revisited it, and it was wrong rather than merely limited.
+
+The limitation was written while every source had one operator. `customer_provided` broke that: a
+contractor's bill sent to both the owner and the PMC is **identical content supplied by two
+different people**, and the narrow key discarded the second uploader, their filename, their timestamp
+and their note. `document_retrievals` had been append-only from the start — one row per retrieval,
+deliberately — so the asymmetry was inconsistent as well as lossy.
+
+The key is now `(document_id, source_id, uploaded_by, original_path)`. Two people are two events;
+one person re-running the same ingest is still idempotent, which is what the narrow key was actually
+protecting. And `project_documents.filename` records the name *this* project's uploader used, because
+`documents.original_filename` is content-level and content is shared — so a second project uploading
+identical bytes had been shown the first project's filename.
+
 ## Consequences
 
 **Good.** A real building project moves create → upload → process → findings → evidence → review
@@ -171,3 +189,6 @@ public.
 - Uploading the same bytes under a *second* source writes a redundant object under a second storage
   key, because `raw_key` includes the source id. Content-addressed and verified, so nothing is
   corrupted; it is wasted bytes.
+- A repeated upload of identical bytes by the *same* person under the *same* filename is still one
+  row. That is idempotence for a re-run rather than a lost event, and the membership's `linked_at`
+  carries when each project received it.

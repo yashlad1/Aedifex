@@ -230,6 +230,121 @@ class TestIntake:
         )
         assert again.document.document_type is DocumentType.BILL_OF_QUANTITIES
 
+    def test_two_uploaders_of_the_same_bytes_are_two_upload_events(
+        self, session: Session, store: RawObjectStore, source: SourceDefinition
+    ) -> None:
+        """An upload is an event, and the second one used to be discarded.
+
+        Found by an independent review. The unique key was ``(document_id, source_id)``, which was
+        tolerable while every source had one operator and became wrong the moment a shared
+        ``customer_provided`` source existed: a contractor's bill sent to both the owner and the PMC
+        is identical content from two people, and the second uploader, their filename, their
+        timestamp and their note were simply not recorded.
+        """
+        from aedifex.infrastructure.database.models import DocumentUpload
+
+        first = _project(session, source, name="Owner")
+        second = _project(session, source, name="PMC")
+        content = _unique_pdf("two uploaders")
+
+        attach_upload(
+            session,
+            store,
+            project=first,
+            source=source,
+            content=content,
+            filename="Final_RA_Bill.xlsx.pdf",
+            uploaded_by="owner.finance",
+        )
+        outcome = attach_upload(
+            session,
+            store,
+            project=second,
+            source=source,
+            content=content,
+            filename="Contractor_Claim_07.pdf",
+            uploaded_by="pmc.lead",
+            note="Received by email from the contractor.",
+        )
+
+        uploads = list(
+            session.execute(
+                select(DocumentUpload).where(DocumentUpload.document_id == outcome.document.id)
+            ).scalars()
+        )
+        assert len(uploads) == 2, "two people supplied these bytes; that is two events"
+        assert {row.uploaded_by for row in uploads} == {"owner.finance", "pmc.lead"}
+        assert {row.original_path for row in uploads} == {
+            "upload:Final_RA_Bill.xlsx.pdf",
+            "upload:Contractor_Claim_07.pdf",
+        }
+        assert any(row.note is not None for row in uploads), "and the second one's note survives"
+
+    def test_each_project_sees_the_name_its_own_uploader_used(
+        self, session: Session, store: RawObjectStore, source: SourceDefinition
+    ) -> None:
+        """``documents.original_filename`` is content-level, and content is shared.
+
+        So a second project uploading identical bytes was shown the *first* project's filename. For
+        a shared rate schedule that is merely odd; for a bill one contractor sent to two parties it
+        displays one customer's naming inside another customer's project.
+        """
+        first = _project(session, source, name="Owner")
+        second = _project(session, source, name="PMC")
+        content = _unique_pdf("naming")
+
+        attach_upload(
+            session,
+            store,
+            project=first,
+            source=source,
+            content=content,
+            filename="Final_RA_Bill.pdf",
+            uploaded_by="owner.finance",
+        )
+        attach_upload(
+            session,
+            store,
+            project=second,
+            source=source,
+            content=content,
+            filename="Contractor_Claim_07.pdf",
+            uploaded_by="pmc.lead",
+        )
+
+        assert [entry.filename for entry in project_inventory(session, first.id)] == [
+            "Final_RA_Bill.pdf"
+        ]
+        assert [entry.filename for entry in project_inventory(session, second.id)] == [
+            "Contractor_Claim_07.pdf"
+        ]
+
+    def test_the_same_person_re_ingesting_the_same_file_is_still_idempotent(
+        self, session: Session, store: RawObjectStore, source: SourceDefinition
+    ) -> None:
+        """What the narrower key was protecting, and what the wider one must keep protecting."""
+        from aedifex.infrastructure.database.models import DocumentUpload
+
+        project = _project(session, source)
+        content = _unique_pdf("rerun")
+        for _ in range(3):
+            outcome = attach_upload(
+                session,
+                store,
+                project=project,
+                source=source,
+                content=content,
+                filename="boq.pdf",
+                uploaded_by="qs",
+            )
+
+        uploads = session.execute(
+            select(func.count())
+            .select_from(DocumentUpload)
+            .where(DocumentUpload.document_id == outcome.document.id)
+        ).scalar_one()
+        assert uploads == 1
+
     def test_one_artifact_can_belong_to_two_projects(
         self, session: Session, store: RawObjectStore, source: SourceDefinition
     ) -> None:

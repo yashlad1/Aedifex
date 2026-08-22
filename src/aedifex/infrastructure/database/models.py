@@ -69,6 +69,7 @@ from aedifex.domain.evidence import (
     RelationshipType,
 )
 from aedifex.domain.files import FileFormat
+from aedifex.domain.review import conclusion_fingerprint
 
 __all__ = [
     "Base",
@@ -750,6 +751,21 @@ class Finding(Base):
     detail: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
     """The numbers the rule used, as strings, so the arithmetic can be re-checked by hand."""
 
+    conclusion_fingerprint: Mapped[str] = mapped_column(
+        String(64), default="", server_default=text_clause("''")
+    )
+    """A digest of this conclusion: the rule, the verdict, the values compared, and the citations.
+
+    Stored rather than computed on read, and the reason is not only speed. It is written once by
+    whichever persister wrote the finding, at the moment the evidence links are in hand — so reading
+    it later is a column comparison rather than a walk through ``finding_evidence`` and out into
+    three possible evidence tables. That walk would run on every project summary and every document
+    inventory, which is how a page becomes hundreds of queries.
+
+    Its purpose is :attr:`current_review`. See
+    :func:`aedifex.domain.review.conclusion_fingerprint` for what goes into it and why.
+    """
+
     evaluated_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     document: Mapped[Document | None] = relationship(back_populates="findings")
@@ -760,7 +776,12 @@ class Finding(Base):
     reviews: Mapped[list[FindingReview]] = relationship(
         back_populates="finding",
         cascade="all, delete-orphan",
-        order_by="FindingReview.reviewed_at",
+        # Both columns, because a timestamp alone does not order these reliably. Two reviews written
+        # in one transaction shared a ``reviewed_at``: ``now()`` is the transaction's start time,
+        # not the statement's, so their order — and therefore *which one is current* — was whatever
+        # the planner returned. ``reviewed_at`` is now ``clock_timestamp()`` and the id breaks any
+        # remaining tie, so the sequence is fixed rather than incidental.
+        order_by="FindingReview.reviewed_at, FindingReview.id",
     )
     """Every human decision recorded against this finding, oldest first.
 
@@ -769,21 +790,102 @@ class Finding(Base):
     run. Use :attr:`current_review` rather than the last element — the last element may be stale.
     """
 
+    def compute_fingerprint(self) -> str:
+        """Derive this finding's conclusion fingerprint from its evidence links.
+
+        Walks ``finding_evidence`` and out into the fact, derived-fact and provision tables, so it
+        is only called where those rows are already at hand: immediately after a persister writes
+        them. Everything that reads a fingerprint reads the stored column.
+
+        Each citation is described by its **content** — role, kind, value, location — rather than by
+        its row id, so a re-extraction that rewrites a row carrying the same value at the same place
+        does not invalidate a review of it.
+        """
+        citations: list[tuple[str | None, ...]] = []
+        for link in sorted(self.evidence, key=lambda item: item.role):
+            if link.fact is not None:
+                citations.append(
+                    (
+                        link.role,
+                        "extracted",
+                        link.fact.fact_type,
+                        link.fact.literal,
+                        None if link.fact.numeric_value is None else str(link.fact.numeric_value),
+                        f"page:{link.fact.page}",
+                        link.fact.sheet_name,
+                        None if link.fact.sheet_row is None else str(link.fact.sheet_row),
+                    )
+                )
+            elif link.derived_fact is not None:
+                citations.append(
+                    (
+                        link.role,
+                        "derived",
+                        link.derived_fact.fact_type,
+                        link.derived_fact.expression,
+                        (
+                            None
+                            if link.derived_fact.numeric_value is None
+                            else str(link.derived_fact.numeric_value)
+                        ),
+                    )
+                )
+            elif link.provision is not None:
+                citations.append(
+                    (
+                        link.role,
+                        "policy",
+                        link.provision.provision_type,
+                        link.provision.clause,
+                        None if link.provision.share is None else str(link.provision.share),
+                        f"page:{link.provision.page}",
+                    )
+                )
+        return conclusion_fingerprint(
+            rule_id=self.rule_id,
+            rule_version=self.rule_version,
+            outcome=self.outcome,
+            expected=self.expected,
+            observed=self.observed,
+            detail=self.detail or {},
+            evidence=citations,
+        )
+
     @property
     def current_review(self) -> FindingReview | None:
         """The newest review that was made against *this* conclusion, or ``None``.
 
-        A review decides a specific verdict, not a rule identifier. If the rule is revised or
-        re-evaluation changes the outcome, every earlier review becomes **stale** and must stop
-        counting as the current state — otherwise an accepted ``FAIL`` would silently present as an
-        accepted ``PASS``, which loses a finding without deleting it.
+        A review decides a conclusion, and a conclusion is more than its verdict word. Until
+        2026-08-22 this compared only ``outcome`` and ``rule_version``, which meant a re-read that
+        changed every number while leaving the outcome alone silently kept the old acceptance:
 
-        Staleness is decided by comparing what the reviewer saw against what the finding now says,
-        which is why each review stores both.
+        .. code-block:: text
+
+            reviewed:  FAIL  claim 520 m3 exceeds the measured 470 m3      accepted
+            re-read:   FAIL  claim 900 m3 exceeds the measured 470 m3      still "accepted"
+
+        So the comparison is now the whole conclusion — rule, verdict, both values, the rule's own
+        numbers, and the citations — via :attr:`conclusion_fingerprint`. Everything earlier becomes
+        **stale** and stops counting as the current state, which is what stops an accepted ``FAIL``
+        presenting as an accepted ``PASS`` and, now, an accepted ₹54,518 presenting as an accepted
+        ₹62,900.
+
+        All three columns are compared, not just the fingerprint, and the redundancy is deliberate.
+        The fingerprint catches what the other two cannot see — a changed value under an unchanged
+        verdict. The other two catch what the fingerprint cannot: a finding whose outcome or rule
+        version was changed *without* going through a persister, which is what a hand-written UPDATE
+        during an incident looks like. A derived column is only as good as the code maintaining it,
+        and inheriting an acceptance is the failure that matters here, so the cheaper check stays.
+
+        They also serve a second purpose: they are what a reader is *shown* when a review goes
+        stale. The fingerprint can only say that something changed.
         """
         for review in reversed(self.reviews):
+            # An empty stored fingerprint means "written before fingerprints existed", and the
+            # migration backfilled both sides together, so equality still holds for those rows.
             if (
-                review.reviewed_outcome == self.outcome
+                review.reviewed_fingerprint == self.conclusion_fingerprint
+                and review.reviewed_outcome == self.outcome
                 and review.reviewed_rule_version == self.rule_version
             ):
                 return review
@@ -997,6 +1099,20 @@ class ProjectDocument(Base):
     )
     role: Mapped[DocumentRole] = mapped_column(_DOCUMENT_ROLE, default=DocumentRole.UNCLASSIFIED)
     established_by: Mapped[str] = mapped_column(String(128))
+
+    filename: Mapped[str | None] = mapped_column(String(128), default=None)
+    """What *this* project's uploader called the file.
+
+    ``documents.original_filename`` is content-level and records the name the bytes first arrived
+    under, which is the right thing for a catalogue and the wrong thing for a workspace: with
+    content-addressed identity, a second project uploading identical bytes was shown the *first*
+    project's filename. For a shared rate schedule that is merely odd; for a bill a contractor sent
+    to two parties it displays one customer's naming inside another customer's project.
+
+    Null for a membership that reconciliation derived rather than an upload creating, where there is
+    no per-project name to record.
+    """
+
     linked_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     project: Mapped[Project] = relationship(back_populates="memberships")
@@ -1358,7 +1474,24 @@ class DocumentUpload(Base):
     document: Mapped[Document] = relationship(back_populates="uploads")
 
     __table_args__ = (
-        UniqueConstraint("document_id", "source_id", name="one_upload_per_document_and_source"),
+        # An upload is an *event*, and two people handing us the same bytes are two events. The
+        # constraint used to be (document_id, source_id), which was tolerable while every source had
+        # one operator and became wrong the moment `customer_provided` existed: two customers
+        # uploading identical content — a contractor's bill sent to the owner and the PMC — were
+        # collapsed into whichever arrived first, and the second uploader, their filename, their
+        # timestamp and their note were simply not recorded.
+        #
+        # The uploader and the stated path are in the key so a repeated *identical* ingest — the
+        # same person re-running the same script — stays idempotent, which is what the original
+        # constraint was protecting. What is no longer deduplicated is two different people, or one
+        # person filing the same bytes under a different name.
+        UniqueConstraint(
+            "document_id",
+            "source_id",
+            "uploaded_by",
+            "original_path",
+            name="one_upload_per_document_source_and_uploader",
+        ),
     )
 
 
@@ -1419,7 +1552,24 @@ class FindingReview(Base):
     reviewed_rule_version: Mapped[str] = mapped_column(String(32))
     """What the finding said at the moment of review. See the class docstring."""
 
-    reviewed_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    reviewed_fingerprint: Mapped[str] = mapped_column(
+        String(64), default="", server_default=text_clause("''")
+    )
+    """The conclusion this review was made against, as a digest.
+
+    What decides whether the review still speaks for the finding. The two columns above are kept
+    because they are how a reader is *told* what changed; this is what detects it, including the
+    cases they cannot see — a different observed value, a different comparison, a different cited
+    cell, under the same outcome and the same rule version.
+    """
+
+    reviewed_at: Mapped[datetime] = mapped_column(server_default=func.clock_timestamp())
+    """When, by the wall clock at the moment of the insert.
+
+    ``clock_timestamp()`` rather than ``now()``, which returns the *transaction's* start time: two
+    reviews recorded in one transaction shared a timestamp, leaving their order — and so which is
+    current — up to the query planner.
+    """
     software_version: Mapped[str] = mapped_column(String(32))
 
     finding: Mapped[Finding] = relationship(back_populates="reviews")
