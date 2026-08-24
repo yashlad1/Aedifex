@@ -74,7 +74,7 @@ ocr = [
     # locking. Exact rather than a range because 1.2.13 is equally untested; widen this
     # deliberately, and re-measure when you do.
     "rapidocr-onnxruntime==1.2.3",
-    "pillow>=11,<12",
+    "pillow>=11,<13",
 ]
 dev = [
     "pytest>=9.0.3,<10",
