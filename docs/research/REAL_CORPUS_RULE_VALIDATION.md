@@ -343,3 +343,91 @@ more rules than the entire 48-document public corpus has.
   at Measurement and RA Bill. F7 is that gap, measured on a real project.
 - [BUILDING_CORPUS_AVAILABILITY.md](BUILDING_CORPUS_AVAILABILITY.md) records why the priced-BOQ
   reader could not read these bills. F1 removes one of the reasons.
+
+---
+
+## 7. SCRUM-17: why priced rows went unread
+
+Investigated 2026-08-24 against the three real IIT Bombay building bills and the NHAI bid document,
+before changing any code. The instrument is each bill's **own section subtotals**: a section whose
+accepted rows equal its stated subtotal is fully read, and anything else localises the gap to a span
+of pages small enough to read by eye. That is what turns "1.25% short" into a cause.
+
+### 7.1 The five questions
+
+**1. How many rows, and how much?** On Hostel 19 the instrument accounts for the shortfall exactly:
+41 leaf sections summing to ₹85,43,91,859.42 against a stated total of ₹85,43,91,859.40, and a net
+of **−₹1,06,71,647.23** against the finding's −₹1,06,71,647.21. 31 of 41 sections reconciled to
+within 5 paise; 10 were short.
+
+**2. Which documents?** All three IIT Bombay bills. The NHAI bid document reconciles exactly — its
+37 rows equal its stated ₹8,46,49,969.01 — so this is specific to the anchorless line reader, not to
+the module.
+
+**3. Systematic or isolated?** Systematic and localised. The civil schedules are near-exact: Hostel
+19's civil half had **one** miss in 21 sections. The gaps are in the MEP schedules, and the
+**fire-pump section under-reads in all three bills** — Hostel 19 −₹32,84,495.42, VMCC −₹3,22,670.00,
+COPTB −₹17,42,506.00.
+
+**4. Would recovery materially improve construction evidence?** Yes, and not only in money. Each
+unread row is a work item with a quantity and a rate. A BOQ row that is absent gives a future RA-bill
+claim for that item nothing to be verified against, which is the whole of `claim_within_measured_quantity`.
+
+**5. Is the current behaviour actually incorrect?** For Hostel 19, **yes, provably**: its own leaf
+sections sum to its own stated total, so nothing is un-itemised and every gap is a row the reader
+missed. For COPTB, **unproven** — that bill states no grand total, so its extraction cannot be
+validated against itself at all. Said plainly rather than assumed either way.
+
+### 7.2 Classification
+
+| Cause | Class | Rows | Amount (H19) | Action |
+| --- | --- | --- | --- | --- |
+| Unit spelled `RM`, `Pt.`, `pts.`, `sets` | **parser defect** | 13 | ₹48,56,587.46 | **Fixed** |
+| Unit borrowed a letter from the description (`conductorMtr` → `rMtr`) | **parser defect** | 1 (COPTB) | — wrong label, not lost money | **Fixed** |
+| Row split across lines: unit and quantity apart from rate and amount | **unsupported document structure** | ~24 | ₹58,15,059.75 | SCRUM-24 |
+| Source states no unit for the row | **corrupt/malformed source** | 1 (+18 VMCC) | ₹7,81,570.88 | SCRUM-25 |
+| Section subtotals differing by 1–2 paise | **intentionally non-data** | — | ±₹0.02 | None — the bill's own rounding |
+
+Nothing was classified "ambiguous evidence" or "extraction defect": every case resolved to one of
+the above once the page was read.
+
+### 7.3 What was fixed, and what proves it
+
+Four unit spellings, and `Rmtr` moved under the same guard. **The bills' own subtotals prove each
+one, which is the difference between a fix and a coverage number:** Hostel 19's electrical section A
+stated ₹1,19,52,516.44 against 12 rows worth ₹73,34,366.51, and the two rows measured in `RM` are
+worth exactly the ₹46,18,149.93 difference. Sections D and E closed the same way on `pts.` and `Pt.`
+— to the paisa, not to a tolerance.
+
+| | Before | After |
+| --- | --- | --- |
+| Hostel 19 rows | 661 | **674** |
+| Hostel 19 read | ₹84,37,20,212.19 | **₹84,85,76,799.65** |
+| Shortfall against its own total | −₹1,06,71,647.21 (1.2490%) | **−₹58,15,059.75 (0.6806%)** |
+| Sections reconciling | 31 of 41 | **34 of 41** |
+| VMCC / COPTB / NHAI rows | 455 / 1193 / 37 | **455 / 1193 / 37** — unchanged |
+
+Three NHAI rows additionally gained a unit (`Rm`) that they previously carried as null, with the row
+count and total untouched.
+
+**A regression test caught the fix trying to fabricate a row.** Adding `RM` unguarded made
+"Providing and laying the platform 12 100.00 1200.00" a priced row measured in `rm`, taking the unit
+from inside "platform" and asserting a quantity and a rate nobody wrote down. The first guard tried —
+a word boundary on every unit — then refused **12 genuine COPTB rows**, because a flattened PDF really
+does glue a unit to the last word of its description (`worksKg`, `4885No.`, `conductorMtr`). The
+guard now applies only to the short names being added, which refuses the fabrication and keeps all
+twelve.
+
+The extractor version moved to **5**. A row that was absent is now present and a unit that was null
+now has a value; both belong to a new version rather than silently replacing what v4 recorded, which
+is what lets `_newest_per_claim` prefer the better reading per row while the earlier one stays
+queryable.
+
+### 7.4 Deliberately not fixed
+
+`SCRUM-24` (exploded rows, ₹58,15,059.75) and `SCRUM-25` (rows with no unit) are filed with the
+evidence. Neither is a regex widening: the first would run a positional block parser over pages where
+90% of rows are already read correctly by the line reader, so the real question is how two readers
+cooperate over one document without counting a row twice — and over-reading money is worse than
+under-reading it, because a missing row is a gap the bill's own total exposes and a double-counted one
+is not.

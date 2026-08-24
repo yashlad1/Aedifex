@@ -91,7 +91,19 @@ EXTRACTOR: Final[str] = "nhai_tender_notice"
 #   * `nit_number` was "IITB/Dean", truncated from "IITB/Dean (IPS)/CACI/H-19/NIT/R1" at the space
 #     before a parenthesis. The third truncation of this identifier in the corpus, and the one that
 #     matters most, because a project workspace groups documents by this key.
-EXTRACTOR_VERSION: Final[str] = "4"
+#
+# Bumped to "5" on 2026-08-24. Four unit spellings the priced-bill reader did not recognise — `RM`,
+# `Pt`, `Pts`, `Sets` — meant 13 priced rows of the Hostel 19 bill were never read, and the bill's
+# own section subtotals prove it: three sections that were short by ₹46,18,149.93, ₹2,191.14 and
+# ₹876.81 now reconcile to the paisa. Three rows of the NHAI bill gain a unit they previously
+# carried as null.
+#
+# The version moves because the *reading* changed, not merely the code. A row that was absent is now
+# present and a unit that was null now has a value, and both belong to a new version rather than
+# silently replacing what v4 recorded — that is what lets `_newest_per_claim` prefer the better
+# reading per row while the earlier one stays queryable. See `_UNIT_NAMES` in
+# `aedifex.extraction.pdf_boq`.
+EXTRACTOR_VERSION: Final[str] = "5"
 
 # How much surrounding text a snippet carries. Enough to read the value in its own sentence, so a
 # reviewer can judge it without opening the PDF; short enough to store per fact.

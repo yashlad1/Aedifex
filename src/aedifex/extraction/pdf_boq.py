@@ -103,15 +103,58 @@ _BOQ_HEADING: Final[re.Pattern[str]] = re.compile(
 # the many spellings of a metre (``Rmtr``, ``Mtr``, ``Mtrs.``, ``Metre``, ``meter``). Measured: the
 # metre spellings alone were 104 unparsed rows across two bills, and adding them moved the civil+MEP
 # bill from 5.7% short of its own stated total to 0.47%.
+#
 # Longer spellings first: with IGNORECASE, "MT" would otherwise claim the first two characters of
 # "Mtrs" and the match would depend on backtracking to recover.
-_UNIT_NAMES: Final[str] = (
-    r"Cumt|Cum|Sqmt|SQMT|Sqm|Rmtr|Rmt|Mtrs|Metre|Meter|Mtr|Litres|Litre|Ltr|"
-    r"Quintal|Tonne|Km|MT|Nos|No|Each|Kg|Set|Job|LS|Pair|Point|Joint|Month|Day|CM|m2|m3"
-)
+#
 # Bare "m" is deliberately absent. It would make any description line ending in the letter m look
 # like a unit to _unit_in, and no observed priced row needs it.
-_UNIT: Final[re.Pattern[str]] = re.compile(rf"^(?:{_UNIT_NAMES})\.?$", re.IGNORECASE)
+_UNIT_NAMES: Final[str] = (
+    r"Cumt|Cum|Sqmt|SQMT|Sqm|Rmt|Mtrs|Metre|Meter|Mtr|Litres|Litre|Ltr|"
+    r"Quintal|Tonne|Km|MT|Nos|No|Each|Kg|Set|Job|LS|Pair|Points|Point|"
+    r"Joint|Month|Day|CM|m2|m3"
+)
+
+# Spellings recognised only where no letter precedes them: four added on 2026-08-24, plus ``Rmtr``
+# moved here the same day.
+#
+# ``Rmtr`` moved because the guard corrects it rather than restricting it. The COPTB bill prices
+# "...(For horizontal run on terrace)-Down conductorMtr 600 101.00", where the unit is ``Mtr`` and
+# the unguarded alternation read ``rMtr`` — borrowing the last letter of "conductor". The row was
+# always accepted; its unit was simply wrong, which matters because a unit is half of what makes two
+# quantities the same claim in `aedifex.extraction.selection`. Guarded, the same row reads ``Mtr``,
+# and the six ``Rmtr`` rows of the Hostel 19 bill and seven of the VMCC bill are untouched.
+#
+# The bill's own subtotals prove each one, rather than a coverage count doing it. The Hostel 19
+# electrical schedule states ₹1,19,52,516.44 for section A against 12 rows worth ₹73,34,366.51, and
+# the two rows measured in ``RM`` are worth exactly the ₹46,18,149.93 difference; sections D and E
+# close the same way on ``pts.`` and ``Pt.``, to the paisa rather than to a tolerance. Thirteen
+# priced rows in all, ₹48,56,587.46.
+#
+# Held apart from the list above, and guarded, because these four also end ordinary English words
+# where the established spellings mostly do not. Unguarded, "Providing and laying the platform 12
+# 100.00 1200.00" reads as a row measured in ``rm`` — taking the unit from inside "platform" and
+# asserting a quantity and a rate nobody wrote down. A missing row is a gap the bill's own total
+# exposes; a fabricated one is money from nothing, and it looks ordinary downstream.
+#
+# Guarding *everything* was tried first and was wrong. A flattened PDF really does glue a unit to
+# the last word of its description, and the COPTB bill prices twelve rows so: "...similar worksKg
+# 12200 140.22", "...IS : 4885No. 19 11,398.00", "...Down conductorMtr 600 101.00". A blanket
+# boundary refused all twelve. This guard refuses none, because none is spelled with one of these
+# four.
+#
+# Plurals are listed explicitly and longest-first, as ``Nos|No`` and ``Mtrs|Mtr`` already are: with
+# IGNORECASE, ``Set`` would otherwise claim three characters of ``sets`` and leave an ``s`` where
+# the quantity has to start.
+_GUARDED_UNIT_NAMES: Final[str] = r"Sets|Pts|Pt|Rmtr|RM"
+
+_ANY_UNIT: Final[str] = rf"(?:(?<![A-Za-z])(?:{_GUARDED_UNIT_NAMES})|{_UNIT_NAMES})"
+
+# A line that is nothing but a unit. Anchored at both ends, so the guard is redundant here and the
+# two name lists are simply concatenated.
+_UNIT: Final[re.Pattern[str]] = re.compile(
+    rf"^(?:{_GUARDED_UNIT_NAMES}|{_UNIT_NAMES})\.?$", re.IGNORECASE
+)
 
 # An item row starts either with the number alone on a line, or -- when the description is short
 # enough to fit on one line -- with the number, the description and even the unit run together:
@@ -398,8 +441,9 @@ _QUANTITY_FIGURE: Final[str] = r"\(?\d[\d,]*(?:\.\d+)?\)?"
 _MONEY_FIGURE: Final[str] = r"\(?\d[\d,]*\.\d{2}\)?"
 
 # ``Nos.30`` really occurs, so the gap between unit and quantity is optional.
+#
 _ROW_LINE: Final[re.Pattern[str]] = re.compile(
-    rf"(?P<head>.*?)(?P<unit>{_UNIT_NAMES})\.?\s*"
+    rf"(?P<head>.*?)(?P<unit>{_ANY_UNIT})\.?\s*"
     rf"(?P<quantity>{_QUANTITY_FIGURE})\s+"
     rf"(?P<rate>{_MONEY_FIGURE})\s+"
     rf"(?P<amount>{_MONEY_FIGURE})\s*$",

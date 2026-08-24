@@ -341,3 +341,68 @@ def test_a_reviewed_discrepancy_states_money_in_rupees_and_paise() -> None:
     assert result.expected == "854391859.40"
     assert "1900000000" not in result.summary
     assert "add up to 843720212.19, which is 10671647.21 under" in result.summary
+
+
+def test_units_the_bills_own_subtotals_prove() -> None:
+    """``RM``, ``Pt.``, ``pts.`` and ``sets`` are units, and the document says so by arithmetic.
+
+    Thirteen priced rows of the IIT Bombay Hostel 19 bill were never read because their unit was
+    spelled in a way the reader did not recognise. What makes this a defect rather than a coverage
+    number is that the bill's own section subtotals identify the missing rows exactly: the
+    electrical
+    section stated ₹1,19,52,516.44 against 12 rows worth ₹73,34,366.51, and the two rows measured in
+    ``RM`` are worth precisely the ₹46,18,149.93 difference. Sections D and E close the same way on
+    ``pts.`` and ``Pt.``.
+
+    The plural forms matter on their own: with ``IGNORECASE``, ``Set`` claims three characters of
+    ``sets`` and leaves an ``s`` where the quantity has to begin, so the row is refused rather than
+    misread.
+    """
+    boq = read_pdf_boq(_document("""1 Wiring for light point with PVC insulated copper conductor
+Pt. 108 1245.94 134562.03
+2 2 Core x 1.5 sq. mm cable in conduit RM  11000 356.86 3925471.28
+3 Supply and fixing of socket outlet for television pts. 6 140.29 841.74
+4 20 pair tag box sets 4 4164.84 16659.36
+"""))
+
+    assert [row.unit for row in boq.rows] == ["Pt", "RM", "pts", "sets"]
+    assert [row.amount for row in boq.rows] == [
+        Decimal("134562.03"),
+        Decimal("3925471.28"),
+        Decimal("841.74"),
+        Decimal("16659.36"),
+    ]
+
+
+def test_a_description_ending_in_a_unit_name_is_not_a_priced_row() -> None:
+    """``RM`` is two letters that end ordinary words, and a false row is worse than a missing one.
+
+    The unit is matched inside the line rather than anchored to its start — ``Nos.30`` requires that
+    — so a short unit name raises the risk that a description's own letters are read as one. A row
+    invented this way would carry a quantity and a rate that no one wrote down.
+    """
+    boq = read_pdf_boq(_document("""1 Providing and laying the platform 12 100.00 1200.00
+2 Excavation in ordinary soil Cum 100.00 6.00 600.00
+"""))
+
+    assert [row.unit for row in boq.rows] == ["Cum"]
+    assert boq.total_amount == Decimal("600.00")
+
+
+def test_a_unit_glued_to_its_description_keeps_its_own_spelling() -> None:
+    """``conductorMtr`` is "conductor" and ``Mtr``, not "conducto" and ``rMtr``.
+
+    A flattened PDF glues a unit to the last word of its description, and the COPTB bill prices
+    twelve rows that way. The row was always read; its *unit* was wrong, because the alternation
+    borrowed the description's final letter. A unit is half of what makes two quantities the same
+    claim in :mod:`aedifex.extraction.selection`, so a wrong one can make a contracted and a
+    measured quantity look like different claims when they are not.
+    """
+    boq = read_pdf_boq(
+        _document("""1 Down conductor for lightning protection-Down conductorMtr 600 101.00 60600.00
+2 In gratings, frames, guard bar, ladder, railings and similar worksKg 12200 140.22 1710684.00
+""")
+    )
+
+    assert [row.unit for row in boq.rows] == ["Mtr", "Kg"]
+    assert boq.total_amount == Decimal("1771284.00")
