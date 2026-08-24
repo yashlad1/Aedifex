@@ -204,3 +204,50 @@ def test_a_retracted_revision_does_not_hide_a_good_one() -> None:
 
     assert selected.fact is good
     assert selected.resolved
+
+
+def test_two_rows_of_one_document_are_two_claims_not_two_readings() -> None:
+    """A composite bill restarts its numbering, so one item key can hold rows that disagree.
+
+    The IIT Bombay Hostel 19 bill states 661 priced rows whose hierarchical numbers repeat across
+    its four parts: 49 different rows normalise to item "1.3", with quantities from 102 to 1,250.
+    Selection keyed candidates on the document alone, so 48 of the 49 were discarded — not because
+    anything superseded them, but because ``4 > 4`` is false — and the survivor was whichever row
+    the database returned first. The reason recorded was "the only active document stating
+    contracted_quantity", which was not true of the evidence.
+
+    Row order was an authority again, which is the one thing this module exists to prevent.
+    """
+    bill = a_document(name="composite-bill.pdf")
+    facts = [
+        a_fact(bill, Decimal("910")),
+        a_fact(bill, Decimal("102")),
+        a_fact(bill, Decimal("1250")),
+    ]
+    for row, fact in enumerate(facts, start=203):
+        fact.sheet_row = row
+
+    selected = select_one("contracted_quantity", facts, {bill.id: bill})
+
+    assert selected.fact is None
+    assert selected.conflicting is True
+    assert len(selected.considered) == 3
+    # Named as rows of one document, not as documents: there is one document here, and a reason
+    # that miscounts the evidence is the same defect as a fact that misreads it.
+    assert selected.reason == (
+        "3 rows of one document state different values for contracted_quantity, so which of those "
+        "rows is this item cannot be determined"
+    )
+
+
+def test_two_readings_of_one_row_still_resolve_to_the_newer() -> None:
+    """The behaviour keying on the document was there to protect: same row, better extractor."""
+    bill = a_document(name="bill.pdf")
+    old = a_fact(bill, Decimal("470"), version="3")
+    new = a_fact(bill, Decimal("520"), version="4")
+    old.sheet_row = new.sheet_row = 12
+
+    selected = select_one("contracted_quantity", [old, new], {bill.id: bill})
+
+    assert selected.fact is new
+    assert selected.conflicting is False

@@ -367,6 +367,34 @@ project, held for comparison. Intake sets the role from a **declared** type only
 never touches either. If changing a role independently is ever needed, it becomes an explicit
 human-confirmed operation, not an inferred one.
 
+**4. The product path does not run the work-item reconciliation pass, and fixing that needs a
+work-item key first.** `process_project` analyses each document and then runs the project rules; the
+CLI additionally runs `reconcile_work_items`, inside the committing transaction, with a comment
+explaining that it must. So no project created through the API or the viewer has ever had a work
+item, and the four payment-reconciliation rules — the primary product value — have never run for a
+customer.
+
+Adding the call is one line and is deliberately not done, because `normalise_item` treats a
+hierarchical item number as unique within a project and a composite building bill restarts its
+numbering in each part. Measured on the real Hostel 19 bill: **84 identifiers collide and swallow 383
+of its 661 priced rows**, item `1.3` alone appearing on 49 rows across 13 pages. Wiring the pass
+today would take that project's review queue from 1 finding to 169, of which 168 restate the same
+ambiguity.
+
+What a work item's canonical key *is* for a composite bill — part plus section plus number, the
+description, or a customer's own item code — is a domain question for a real design-partner bundle,
+not one to invent against a single university tender. Wire the call and fix the key together. See
+[docs/research/REAL_CORPUS_RULE_VALIDATION.md](docs/research/REAL_CORPUS_RULE_VALIDATION.md) §4.
+
+**5. Bill-versus-estimate is document-scoped, and real bundles are not.**
+`priced_bill_matches_advertised_estimate` requires a bill's stated total and an advertised estimated
+cost from **one** document. Building tenders put them in two: Hostel 19 states ₹85,43,91,859.40 in the
+priced bill and ₹85,39,81,318.41 in the notice, ₹4,10,540.99 apart. Aedifex holds both, in one
+project, and produces no finding comparing them — the first question a quantity surveyor asks of a
+priced bill. `PROJECT_RULES` already exists and already has two members, so the counterpart is
+horizontal expansion rather than new architecture. Left unbuilt because one project cannot say what
+0.048% *means* when a percentage-rate tender invites bids above or below the estimate by design.
+
 ## Key decisions and their reasons
 
 Recorded as ADRs in [docs/adr/](docs/adr/). The load-bearing ones:

@@ -423,11 +423,62 @@ _BARE_TRIPLE: Final[re.Pattern[str]] = re.compile(
 _HIERARCHICAL_ITEM: Final[re.Pattern[str]] = re.compile(r"^(\d+(?:\.\d+)*)(?=\s|[A-Za-z])\s*(.*)$")
 
 # A section subtotal, which states an amount and is not a row. Excluded explicitly because it would
-# otherwise be picked up by nothing -- it has one figure, not three -- but naming it documents that
-# the omission is deliberate and that these bills state no single total of their own.
+# otherwise be picked up by nothing -- it has one figure, not three.
+#
+# This comment used to end "and that these bills state no single total of their own". That was
+# wrong, and the wrongness was load-bearing: page 1 of the IIT Bombay Hostel 19 bill states
+# ``Total 854,391,859.40``, this pattern matched that line, and the reader skipped it as a section
+# subtotal. Two rules then reported that the document states no total -- an assertion the document
+# itself contradicts -- and the 1.25% by which the accepted rows fall short of it went unreported.
 _SECTION_TOTAL: Final[re.Pattern[str]] = re.compile(
     r"^(?:Sub-?)?Total\b.*?[\d,]+\.\d{2}\s*$", re.IGNORECASE
 )
+
+# The bill's own total where the label and the figure share one line: ``Total 854,391,859.40``.
+#
+# Separate from :data:`_TOTAL_LABEL`, which the heading-anchored reader uses and which requires the
+# label to stand alone on its line. Both spellings occur; this reader meets the second.
+#
+# A *section* total names what it sums -- "TOTAL OF SECTION A", "TOTAL OF (I+II+III+IV)",
+# "TOTAL OF SUPER STRUCTURE WORKS", "Total with GST" -- so requiring a bare label excludes all of
+# them, and excludes the GST-inclusive figure in particular: comparing rows quoted without tax
+# against a total quoted with it would report an 18% discrepancy that does not exist.
+#
+# Necessary but not sufficient. A sub-bill states a bare "GRAND TOTAL" too, which is why
+# :func:`_bill_total` still has to choose.
+_INLINE_TOTAL: Final[re.Pattern[str]] = re.compile(
+    r"^(?:Grand\s+)?Total\s+(\(?[\d,]+\.\d{2}\)?)$", re.IGNORECASE
+)
+
+
+def _bill_total(
+    candidates: list[tuple[int, str, Decimal]], row_sum: Decimal
+) -> tuple[int, str, Decimal] | None:
+    """Choose the bill's own total from every bare total line the bill states.
+
+    Takes the first candidate in document order that is not smaller than what the accepted rows add
+    up to. The guard is what separates the bill's total from a sub-bill's: this reader can miss a
+    priced row but never invents one, so the rows it accepted are a subset of the work any total of
+    the *whole* bill covers. A candidate below their sum therefore totals a part, and adopting it
+    would report a discrepancy of the entire remainder of the bill -- a false finding about money,
+    which is worse than the ``INCONCLUSIVE`` that not choosing produces.
+
+    Hostel 19 needs exactly this. Page 1 states ``Total 854,391,859.40``; page 35 states
+    ``GRAND TOTAL 108,244,551.90`` for the electrical sub-bill and page 74 ``GRAND TOTAL 799014.47``
+    for the fire pumps. All three are bare labels, so only the sum can tell them apart — and the
+    ₹10.8 crore one shows why magnitude rather than page order has to do it.
+
+    Its page 3 is the counter-case the *label* handles: ``GRAND TOTAL (I TO IV) 854,391,859`` is the
+    same total rounded to the rupee, and adopting it over page 1's would report a ₹0.40 discrepancy
+    that exists only in the rounding.
+
+    Returns the page, the literal as written, and the value -- or ``None`` when no candidate
+    qualifies, which leaves the two rules that read this fact ``INCONCLUSIVE`` as before.
+    """
+    for page_number, literal, value in candidates:
+        if value >= row_sum:
+            return page_number, literal, value
+    return None
 
 
 def _read_line_layout(document: DocumentText) -> PdfBoq:
@@ -441,11 +492,19 @@ def _read_line_layout(document: DocumentText) -> PdfBoq:
     context: list[str] = []
     identifier = ""
     previous_unit: str | None = None
+    # Every bare total line the bill states, in document order. Collected rather than decided here
+    # because the choice needs the row sum, and a bill states its total on page 1 -- before the rows
+    # this reader is about to accept.
+    totals: list[tuple[int, str, Decimal]] = []
 
     for page in document.pages:
         for raw in page.text.splitlines():
             line = raw.strip()
             if not line or _PAGE_MARKER.match(line) or _SECTION_TOTAL.match(line):
+                if (inline_total := _INLINE_TOTAL.match(line)) is not None:
+                    value = _to_decimal(inline_total.group(1))
+                    if value is not None and value > 0:
+                        totals.append((page.number, line, value))
                 previous_unit = None
                 continue
 
@@ -507,7 +566,15 @@ def _read_line_layout(document: DocumentText) -> PdfBoq:
             )
             context = []
 
-    return PdfBoq(rows=tuple(rows), first_page=rows[0].page if rows else None, rejected=())
+    chosen = _bill_total(totals, sum((row.amount for row in rows), Decimal(0)))
+    return PdfBoq(
+        rows=tuple(rows),
+        first_page=rows[0].page if rows else None,
+        rejected=(),
+        stated_total=chosen[2] if chosen else None,
+        stated_total_page=chosen[0] if chosen else None,
+        stated_total_literal=chosen[1] if chosen else None,
+    )
 
 
 def _stated_total(

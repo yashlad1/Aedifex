@@ -240,3 +240,104 @@ def test_a_document_with_no_bill_is_inconclusive_rather_than_zero() -> None:
     result = evaluate_bill_total(TenderNotice(fields=(), unsupported=()))
     assert result.outcome is Outcome.INCONCLUSIVE
     assert result.expected == NOT_SOURCED
+
+
+def test_a_bill_stating_its_total_beside_the_label_is_read() -> None:
+    """``Total 854,391,859.40`` is the bill's own total, and the reader used to skip it.
+
+    The layout is the IIT Bombay Hostel 19 bill's: no "Bill of Quantities" heading anywhere, a
+    summary page stating the total with the label and the figure on one line, and priced rows
+    afterwards. The section-subtotal pattern matched that summary line, so the reader discarded it —
+    and two rules then reported that the document states no total of its own, which the document's
+    own page 1 contradicts. The 1.25% by which the accepted rows fell short of it went unreported.
+    """
+    boq = read_pdf_boq(
+        _document(
+            """PART - I CIVIL WORK 1,000.00
+PART - II MEP WORK 200.00
+TOTAL OF (I+II) 1,200.00
+Total 1,200.00
+Add 18% GST 216.00
+Total with GST 1,416.00
+""",
+            """1 Excavation in ordinary soil
+Cum 100.00 6.00 600.00
+2 Plain cement concrete 1:4:8
+Cum 50.00 11.00 550.00
+""",
+        )
+    )
+
+    assert boq.stated_total == Decimal("1200.00")
+    assert boq.stated_total_page == 1
+    assert boq.stated_total_literal == "Total 1,200.00"
+    # Read, not summed: what the rows add up to is a separate figure, and the 50.00 between them is
+    # the discrepancy a rule exists to report.
+    assert boq.total_amount == Decimal("1150.00")
+
+
+def test_the_bills_total_is_not_a_sub_bills_grand_total() -> None:
+    """A sub-bill states a bare "GRAND TOTAL" too, and taking it would invent a discrepancy.
+
+    Both figures here are labelled the way the bill's own total is labelled, so the label cannot
+    choose between them. The VMCC bill needs this: four bare totals of ₹4.33 lakh to ₹2.72 crore
+    precede its real total of ₹23.90 crore, and adopting the first would have reported 87% of the
+    bill as missing.
+    """
+    boq = read_pdf_boq(_document("""1 Excavation in ordinary soil
+Cum 100.00 6.00 600.00
+2 Plain cement concrete 1:4:8
+Cum 50.00 11.00 550.00
+GRAND TOTAL 600.00
+Total 1,200.00
+"""))
+
+    assert boq.total_amount == Decimal("1150.00")
+    assert boq.stated_total == Decimal("1200.00")
+    assert boq.stated_total_literal == "Total 1,200.00"
+
+
+def test_a_bill_stating_only_section_totals_states_no_total_of_its_own() -> None:
+    """ "TOTAL OF SECTION A" totals a section, and there is no figure to compare the bill against.
+
+    The IIT Bombay COPTB bill is this case: 1,193 priced rows and twenty-odd "TOTAL OF ..." lines,
+    none of which is the bill's. Reporting one of them as the bill's total would be worse than
+    reporting none, so this stays ``None`` and the rules stay ``INCONCLUSIVE``.
+    """
+    boq = read_pdf_boq(_document("""1 Excavation in ordinary soil
+Cum 100.00 6.00 600.00
+TOTAL OF SECTION A 600.00
+2 Plain cement concrete 1:4:8
+Cum 50.00 11.00 550.00
+TOTAL OF SECTION B 550.00
+"""))
+
+    assert boq.total_amount == Decimal("1150.00")
+    assert boq.stated_total is None
+
+
+def test_a_reviewed_discrepancy_states_money_in_rupees_and_paise() -> None:
+    """The sentence a reviewer reads must not carry the storage column's spare decimals.
+
+    ``derived_facts.numeric_value`` is ``numeric(28,10)``, so a summed bill total arrives as
+    ``843720212.1900000000``. Every other branch of this rule sends its figures through ``_money``;
+    the REVIEW branch interpolated them raw and had never been reached by a derived total until the
+    Hostel 19 bill reached it. The reviewer was told that 661 rows "add up to 843720212.1900000000,
+    which is 10671647.2100000000 under 854391859.40" — eight meaningless zeros on a rupee figure, in
+    the one sentence written to be read and acted on.
+    """
+    notice = TenderNotice(
+        fields=(
+            _field(FIELD_LINE_AMOUNT, "843720212.19", row=1),
+            _field(FIELD_STATED_BILL_TOTAL, "854391859.40"),
+        ),
+        unsupported=(),
+    )
+
+    result = evaluate_bill_total(notice, bill_total=_derived("843720212.1900000000"))
+
+    assert result.outcome is Outcome.REVIEW
+    assert result.observed == "843720212.19"
+    assert result.expected == "854391859.40"
+    assert "1900000000" not in result.summary
+    assert "add up to 843720212.19, which is 10671647.21 under" in result.summary

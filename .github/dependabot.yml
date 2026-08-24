@@ -20,6 +20,17 @@ updates:
     commit-message:
       prefix: "deps"
       include: scope
+    ignore:
+      # The OCR engine is pinned exactly, not loosely, and the reason is in pyproject.toml: 1.2.3 is
+      # the version every OCR measurement in this repository was taken on, and moving it changes the
+      # transcription of stored evidence while the recorded benchmarks, page limits and pixel budget
+      # all still describe 1.2.3. Raising the PR weekly does not make that decision any easier to
+      # take, and a standing PR against a deliberate pin trains a reviewer to dismiss Dependabot.
+      #
+      # Re-measure first, then widen the pin by hand and delete this. See
+      # docs/plans/2026-08-24-dependency-review.md.
+      - dependency-name: rapidocr-onnxruntime
+        update-types: [version-update:semver-major, version-update:semver-minor]
     groups:
       # Patch bumps are low-risk and noisy individually; batch them.
       python-patch:

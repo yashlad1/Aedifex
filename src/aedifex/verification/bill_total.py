@@ -191,15 +191,21 @@ def evaluate_bill_total(
             derived_evidence=derived,
         )
 
+    # Every figure through _money, like the branches above. This branch interpolated the raw values
+    # and had never been reached by a derived total until the Hostel 19 bill reached it: the derived
+    # column is numeric(28,10), so the reviewer was shown "843720212.1900000000 is
+    # 10671647.2100000000 under 854391859.40" — eight meaningless zeros on a rupee figure, in
+    # the one sentence whose job is to be read and acted on.
     direction = "over" if difference > 0 else "under"
     return _result(
         Outcome.REVIEW,
-        f"The bill's {priced} priced rows add up to {total}, which is {abs(difference)} "
-        f"{direction} the total of {stated.value} the document states for itself. Either the "
-        f"document does not add up or it was not read correctly, and this rule cannot tell which — "
-        f"the summed total cites every row it used, so the addition can be redone by hand.",
-        expected=f"{stated.value}",
-        observed=f"{total}",
+        f"The bill's {priced} priced rows add up to {_money(total)}, which is "
+        f"{_money(abs(difference))} {direction} the total of {_money(stated.value)} the document "
+        f"states for itself. Either the document does not add up or it was not read correctly, and "
+        f"this rule cannot tell which — the summed total cites every row it used, so the addition "
+        f"can be redone by hand.",
+        expected=_money(stated.value),
+        observed=_money(total),
         detail=detail,
         evidence=evidence,
         derived_evidence=derived,
