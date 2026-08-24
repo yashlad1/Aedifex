@@ -182,6 +182,23 @@ ignore_errors = true
 module = ["rapidocr_onnxruntime.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# numpy and Pillow arrive with the optional `ocr` extra, and no install path this project documents
+# includes it: CI and the Makefile both run `uv sync --locked --extra dev`. So `mypy`, whose `files`
+# covers `src`, could not find them and failed on the two lazy imports in `extraction/ocr.py` —
+# every push from 2026-08-21 to 2026-08-24, ten commits, red on a machine where they were absent and
+# green on one where they were not. Local runs said "clean" the whole time.
+#
+# Ignored rather than installed, because the extra is genuinely optional and the tests already say
+# so: `test_ocr.py` guards on `pytest.importorskip("PIL.Image", reason="Pillow ships with the ocr
+# extra")`. An optional dependency must not be able to decide whether the type gate passes.
+#
+# Both are imported inside one function, five lines apart, behind the same OcrEngine boundary as
+# rapidocr above. When the extra *is* installed mypy uses the real packages and checks them properly,
+# so this only relaxes the case where they cannot be found at all.
+module = ["numpy.*", "PIL.*"]
+ignore_missing_imports = true
+
 [tool.pydantic-mypy]
 init_typed = true
 warn_required_dynamic_aliases = true

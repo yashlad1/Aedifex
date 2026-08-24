@@ -5,8 +5,15 @@ reader cannot verify by reading it: whether the page, character and wall-clock b
 stop the loop is a question about behaviour. A 361-page scan is roughly half an hour of CPU, so a
 budget that silently fails to bind is not a cosmetic defect.
 
-Every test drives a stub engine through the :class:`OcrEngine` protocol, which is why none of them
-loads an ONNX model or needs the optional extra installed. That is what the protocol is for.
+Every test drives a stub engine through the :class:`OcrEngine` protocol, so none of them loads an
+ONNX model. That is what the protocol is for.
+
+This used to add "or needs the optional extra installed", and that was wrong in a way that stayed
+hidden for three days. Stubbing the *engine* does not remove the extra: getting a page's images goes
+through pypdf, which needs Pillow, so on a machine without the `ocr` extra these pages yield nothing
+and every count asserted here is zero. CI never reported it, because the job died at the typecheck
+step — which was failing for the same missing packages — and the test step after it never ran. See
+`_real_scan_bytes`.
 """
 
 from __future__ import annotations
@@ -231,7 +238,13 @@ def _real_scan_bytes(pages: int) -> bytes:
     Built through pypdf rather than hand-rolled, because what is under test is "how many pages did
     we hand to the engine", and that depends on pypdf discovering the images the same way it does on
     the 361-page contract scan.
+
+    Which is exactly why this needs Pillow. pypdf raises "pillow is required to do image extraction"
+    when asked for a page's images without it, so the pages yield nothing, the stub engine is never
+    called, and seven tests here assert on counts that are all zero. Guarded in the builder rather
+    than in each test because every test that needs a page image comes through here.
     """
+    pytest.importorskip("PIL.Image", reason="pypdf needs Pillow to extract a page's images")
     writer = pypdf.PdfWriter()
     for _ in range(pages):
         page = writer.add_blank_page(width=72, height=72)
