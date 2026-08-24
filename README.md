@@ -30,6 +30,26 @@ Architecture is now **frozen pending real-corpus evidence.** The gating need is 
 project data — a Measurement Book, an IPC, a variation order — because no public procurement portal
 publishes them. See [docs/plans/2026-08-20-development-priorities.md](docs/plans/2026-08-20-development-priorities.md).
 
+**Measured, as of 2026-08-24.** Every registered rule was run against a real ₹85 crore building
+tender and the numbers are not flattering, which is the point of recording them:
+
+| | |
+| --- | --- |
+| Findings across the whole corpus | 254 `INCONCLUSIVE`, 51 `PASS`, 5 `REVIEW`, **0 `FAIL`** |
+| Rules validated on real *building* evidence | **4 of 10** |
+| Findings awaiting review on the one real project | **1** |
+| Why | no measurement sheet, RA bill, variation, material or quality document exists in any corpus tier |
+
+Four of the ten rules verify the payment chain — claim against measurement, rate against contract —
+and **none of them has ever run against a real measurement sheet**, because none exists to run
+against. That is a missing-document problem, not an engineering one, and no amount of code changes
+it. The full per-rule record, including which `INCONCLUSIVE` results are honest and which turned out
+to be defects, is in
+[docs/research/REAL_CORPUS_RULE_VALIDATION.md](docs/research/REAL_CORPUS_RULE_VALIDATION.md).
+
+**If you can help with that**, the ask is one page:
+[docs/DATA_REQUEST.md](docs/DATA_REQUEST.md).
+
 If discovery points somewhere else — contract obligation tracking, tender intelligence, rate
 benchmarking, specification compliance — the acquisition layer should need no rewrite. That property
 is the reason to build it first.
@@ -173,6 +193,100 @@ colima start --cpu 2 --memory 4 --disk 20 --vm-type=vz
 ```
 
 See [RUNBOOK.md](RUNBOOK.md) for the `~/.docker/config.json` requirement.
+
+## How the code flows
+
+Read this section to follow one real document from arrival to a reviewed finding. Every name below
+is a real function or module, in the order it actually runs, so you can open them side by side.
+
+**Two ways in, one pipeline.** A document either arrives by upload or is fetched by the crawler.
+After the first step they are indistinguishable to everything downstream — origin changes provenance
+and nothing else.
+
+```
+        upload  (a customer, an operator)          crawl  (a public portal)
+                       │                                    │
+        workspace.attach_upload                acquisition.crawl.runner
+                       │                                    │
+                       └──────────► extraction.ingest ◄─────┘
+                                    ingest_file()
+                                          │
+                            content-addressed, immutable
+```
+
+### 1 — Arrival, and why nothing can be overwritten
+
+| Step | Where | What happens |
+| --- | --- | --- |
+| Bytes in | [`workspace/__init__.py`](src/aedifex/workspace/__init__.py) `attach_upload` | A file becomes a temp file, nothing is trusted yet |
+| Identity | [`acquisition/content.py`](src/aedifex/acquisition/content.py) | SHA-256 of the bytes → a UUIDv5. **The digest is the identity**, so the same bytes twice are one artifact |
+| Storage | [`infrastructure/storage/objects.py`](src/aedifex/infrastructure/storage/objects.py) `RawObjectStore.put` | Written to `raw/<source>/<aa>/<bb>/<digest>.pdf`. This class has **no delete and no overwrite**, deliberately |
+| Provenance | [`extraction/ingest.py`](src/aedifex/extraction/ingest.py) `ingest_file` | A `document_uploads` row: who supplied it, under what name, when. A crawl writes `document_retrievals` instead, with the HTTP facts. **An upload never fabricates an HTTP status** |
+| Membership | `workspace.attach_upload` | A `project_documents` row. Artifact identity and project membership are separate: two customers can upload identical bytes and each sees their own filename |
+
+### 2 — Reading: bytes become facts that cite their source
+
+`POST /v1/projects/{id}/process` → `workspace.process_project` → per document, by format:
+
+- **PDF** → [`extraction/runner.py`](src/aedifex/extraction/runner.py) `analyse_document`
+  - [`extraction/pdftext.py`](src/aedifex/extraction/pdftext.py) `extract_text` — bounded text layer, page by page
+  - [`extraction/tender_notice.py`](src/aedifex/extraction/tender_notice.py) `extract_tender_notice` — document-scoped values: estimated cost, bid security, dates
+  - [`extraction/pdf_boq.py`](src/aedifex/extraction/pdf_boq.py) `read_pdf_boq` — priced bill rows: item, unit, quantity, rate, amount
+  - [`extraction/ocr.py`](src/aedifex/extraction/ocr.py) — only for a scan with no text layer
+- **XLSX** → `analyse_spreadsheet` → [`extraction/spreadsheet.py`](src/aedifex/extraction/spreadsheet.py), which keeps the **cell reference**
+
+Then [`extraction/store.py`](src/aedifex/extraction/store.py) `persist_facts`. Every row in
+`extracted_facts` carries the page and character span, or the sheet, row and column, that it came
+from. **A value with no citation is not stored.**
+
+### 3 — Calculating, without judging
+
+[`calculation/engine.py`](src/aedifex/calculation/engine.py) — `compute_bill_items_total`,
+`compute_bid_security_share`, `compute_quantity_variance`. A derived fact records **its own inputs**,
+so a total that looks wrong unfolds into the rows it was summed from. Nothing here decides whether a
+number is acceptable.
+
+### 4 — Judging, deterministically
+
+[`verification/`](src/aedifex/verification/) — `evaluate_all` for one document, `evaluate_project`
+across documents, `evaluate_work_item` for the payment chain. Ten rules, each ordinary Python
+arithmetic: no model, same answer every time, auditable line by line.
+
+Two supporting pieces matter more than they look:
+
+- [`extraction/selection.py`](src/aedifex/extraction/selection.py) — when two documents state
+  different quantities for one item, this **refuses to choose** and records why. Picking one would be
+  a guess wearing the clothes of a finding.
+- Outcomes are `PASS`, `FAIL`, `REVIEW`, `INCONCLUSIVE`. `INCONCLUSIVE` means *the evidence was
+  absent* and must never be displayed as a failure.
+
+### 5 — Findings, and a person deciding
+
+`persist_finding` writes the conclusion plus a `finding_evidence` row per citation.
+[`review/__init__.py`](src/aedifex/review/__init__.py) `record_review` appends what a person
+concluded — append-only, so a second reviewer disagreeing with the first is preserved. Each review
+stores a fingerprint of the conclusion it saw, so if the numbers change underneath it the review is
+shown as **stale** rather than silently inherited.
+
+### 6 — Out
+
+- [`apps/api/main.py`](apps/api/main.py) — the project workspace, findings, evidence, and the
+  artifact itself at the cited page
+- [`frontend/`](frontend/) — the reviewer's screen: original document on the left, extracted evidence
+  on the right, click a citation to jump to the page or cell
+- [`apps/crawler/main.py`](apps/crawler/main.py) — the operator CLI: `crawl`, `ingest`, `analyse`,
+  `review`
+
+### The one invariant worth remembering
+
+```
+Finding → Evidence → Derived Fact → Fact → Document → Page/Cell → Immutable Raw Artifact
+```
+
+Every finding walks back to bytes nobody can edit.
+[`scripts/audit_traceability.py`](scripts/audit_traceability.py) walks that chain over every stored
+finding and **fails the build** if a `PASS`, `FAIL` or `REVIEW` cannot be traced. That script is the
+shortest honest answer to "does this actually work".
 
 ## Repository layout
 
