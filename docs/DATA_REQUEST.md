@@ -108,16 +108,21 @@ Two smaller preferences, neither of them blocking:
 ```
 You send the files
         ↓
-Stored unchanged, and never modified afterwards          — the original file is kept byte-for-byte
+Stored unchanged, and never modified afterwards
+        the original file is kept byte for byte
         ↓
-Read: items, quantities, rates, amounts, dates            — each value recorded with its page or cell
+Read: items, quantities, rates, amounts, dates
+        each value keeps the page or cell it came from
         ↓
-Checked against each other                                — claim vs measurement, rate vs contract,
-                                                            cumulative vs previous, items vs total
+Checked against each other
+        claim vs measurement; rate vs contract;
+        cumulative vs previous; items vs stated total
         ↓
-Findings, each one citing its evidence                    — "this, because of that page and that page"
+Findings, each one citing its evidence
+        "this, because of that page and that page"
         ↓
-A person reviews each finding and records a decision      — the software never decides
+A person reviews each finding and records a decision
+        the software never decides
 ```
 
 Nothing is deleted, overwritten or edited. Nothing is sent to any third party. Nothing is used to
