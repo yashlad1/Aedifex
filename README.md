@@ -26,9 +26,13 @@ reconciliation over work items, and document-type-aware extraction all now exist
 a real document demanded it. What still does not exist is an invoice-shaped schema, a rules DSL, or
 any document type privileged over another.
 
-Architecture is now **frozen pending real-corpus evidence.** The gating need is real post-award
-project data — a Measurement Book, an IPC, a variation order — because no public procurement portal
-publishes them. See [docs/plans/2026-08-20-development-priorities.md](docs/plans/2026-08-20-development-priorities.md).
+Architecture is **frozen**, and as of 2026-08-24 so is engineering: new work needs an evidence ID —
+a real document or an observed reviewer workflow that forced it — and speculative tickets are not
+created. The gating need is real post-award project data: a Measurement Book, an RA bill, a variation
+order, none of which any public procurement portal publishes. See
+[docs/plans/2026-08-24-reality-sprint.md](docs/plans/2026-08-24-reality-sprint.md), and
+[docs/plans/2026-08-20-development-priorities.md](docs/plans/2026-08-20-development-priorities.md)
+for the priority order it inherits.
 
 **Measured, as of 2026-08-24.** Every registered rule was run against a real ₹85 crore building
 tender and the numbers are not flattering, which is the point of recording them:
@@ -87,8 +91,10 @@ work and is deliberately unresolved until a real Schedule of Rates exists to set
 ## Current status: the pipeline runs end to end on real data
 
 The engineering foundation, the source registry, and reproducibility/supply-chain controls are done,
-and so is the vertical slice: real NHAI documents reach evidence-backed findings. No agent framework,
-graph database, OCR engine or rules DSL exists, and nothing here fabricates one.
+and so is the vertical slice: real documents reach evidence-backed findings that a person can review.
+No agent framework, graph database, rules DSL or risk score exists, and nothing here fabricates one.
+The one recogniser in the codebase — OCR — is deliberately a gateway around an external engine rather
+than an engine of our own.
 
 | Area | State |
 | --- | --- |
@@ -100,8 +106,8 @@ graph database, OCR engine or rules DSL exists, and nothing here fabricates one.
 | Structured logging | ✅ Implemented, tested |
 | Database models + initial migration | ✅ Verified against real PostgreSQL 17.11 (`alembic check` clean, downgrade/upgrade round-trip) |
 | Read-only API (`/health`, `/sources`) | ✅ Implemented, tested |
-| Integration tests (22) | ✅ Executed and passing against real PostgreSQL |
-| Reproducible dependency lock (`uv.lock`) | ✅ 73 packages; `--locked` installs everywhere |
+| Integration tests (98) | ✅ Executed and passing against real PostgreSQL |
+| Reproducible dependency lock (`uv.lock`) | ✅ 102 packages; `--locked` installs everywhere |
 | Docker Compose stack (PostgreSQL + MinIO) | ✅ Executed via Colima; both healthy, bucket created with versioning |
 | Container image | ✅ Built and smoke-tested; serves `/health`, reaches Compose PostgreSQL, runs as uid 1001 |
 | CI: lint, types, unit tests (3.12 + 3.13) | ✅ Green on GitHub Actions |
@@ -113,15 +119,20 @@ graph database, OCR engine or rules DSL exists, and nothing here fabricates one.
 | **CodeQL taint tracking** | ❌ **Known gap** — needs Advanced Security on a private repo; Semgrep CE covers SAST meanwhile. See [SECURITY.md](SECURITY.md) |
 | SSRF guard + fetch policy layer (timeouts, retry, redirects) | ✅ Implemented, tested — pure policy, no network |
 | HTTP transport boundary (IP-pinned, hostname TLS identity) | ✅ Implemented — verified over real sockets and a real TLS handshake; 14/14 security mutations caught |
-| Crawlers, downloaders | ❌ Phase 1 — the transport exists, but nothing drives it and no source is enabled |
-| OCR, parsing, classification | ❌ Phase 4 |
-| Synthetic generator, anomaly injection | ❌ Phase 2 |
-| Evidence graph, rules, risk engine | ❌ Phases 5–6 |
+| Crawler: discovery, frontier, resumable acquisition | ✅ Implemented — a real NHAI crawl put the first documents in the corpus |
+| Classification, PDF and XLSX extraction | ✅ Implemented — 674 priced rows read from a real ₹85 crore building bill, each citing its page |
+| OCR, for scans with no text layer only | ✅ Implemented — RapidOCR behind a gateway; never run on a PDF that already has text |
+| Derived facts, deterministic rules, findings | ✅ Implemented — 10 rules, of which **4 have been validated against real building evidence and 6 are starved of it** |
+| Review workspace: API, frontend, recorded decisions | ✅ Implemented — click a citation, land on the page that states it |
+| Synthetic project with deliberately injected anomalies | ✅ Implemented — `scripts/generate_synthetic_project.py`, byte-reproducible, with a ground-truth file |
+| Evidence graph database, rules DSL, risk scoring | ❌ **Not built, and not scheduled.** No graph database, no DSL, no risk score. See [ARCHITECTURE.md](ARCHITECTURE.md) |
+| Authentication, authorization, tenancy | ❌ **Not built.** The write API refuses writes and artifact content when the environment is `production` |
 
-**No data source is enabled.** Every source in `config/sources/` ships
-`verification_status: unverified` and `enabled: false`, because nobody has yet reviewed
-those portals' terms of use. The registry schema makes it impossible to enable one until
-somebody does. See [DATA_SOURCES.md](DATA_SOURCES.md).
+**8 of 14 registered sources are approved and collectable**; the other 6 ship
+`verification_status: unverified` and `enabled: false`, because nobody has yet reviewed those
+portals' terms of use, and the registry schema makes it impossible to enable one until somebody
+does. Run `.venv/bin/python -m scripts.validate_registry` to see the current split. See
+[DATA_SOURCES.md](DATA_SOURCES.md).
 
 ## Quick start
 
@@ -172,8 +183,8 @@ authorization and no tenancy, and refuses to serve writes or artifact content wh
 `production`. That guard makes the gap loud; it does not close it.
 
 The full suite passes identically against native PostgreSQL and against the Compose stack
-(**365 tests, 0 skipped, on both**). The container image was built, started, and verified to
-reach Compose PostgreSQL via `/health/ready`.
+(**2,130 unit and 98 integration tests** on both). The container image was built, started, and
+verified to reach Compose PostgreSQL via `/health/ready`.
 
 If you have no container runtime, PostgreSQL alone is enough for everything except the image:
 

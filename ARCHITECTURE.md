@@ -175,7 +175,9 @@ Rules, enforced in review:
 
 ## What exists today
 
-Phase 0 is complete. Implemented and tested:
+**Phase language no longer describes this repository, and using it understates what is built.** The
+whole path — acquisition, understanding, reasoning, review — runs end to end on real documents.
+Implemented and tested:
 
 | Component | Where |
 | --- | --- |

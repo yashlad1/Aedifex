@@ -33,6 +33,39 @@ note that it exists rather than what it says, and ask before quoting anyone by n
 
 ---
 
+## The one question that matters most
+
+> **"Show me how you checked the last bill."**
+
+Not *"how do you usually check bills"*. People describe workflows badly in the abstract and
+demonstrate them accurately. If confidentiality allows a screen share, better still. Watching someone
+say *"first I open this workbook, then I copy this, then I look up the previous RA, then I ask site
+engineering because this item number changed"* is worth more than twenty feature questions — and it
+is where Aedifex's business-object model is expected to come from, rather than from design.
+
+Ask it every time, and record what was demonstrated separately from what was described.
+
+## Who to talk to
+
+People who **touch payment evidence**, in rough order of usefulness:
+
+quantity surveyors · billing engineers · project controls · PMC / consultant QS · contracts
+engineers · developer-side finance and project accounting · internal construction auditors ·
+contractor billing teams.
+
+Less useful at this stage, and it is worth being deliberate about it: generic civil engineers,
+architects who do not certify bills, senior executives far from the documents, and construction-tech
+enthusiasts. The subject is a workflow. Talk to the person who has the Excel file open.
+
+## Getting the conversation at all
+
+Do not open by sending [../DATA_REQUEST.md](../DATA_REQUEST.md). Four pages as a first contact asks
+for too much commitment. Stage 1 is fifteen minutes and no documents; stage 2, only if they recognise
+the workflow, is asking for a sanitised sample; stage 3 is the data request as supporting material.
+See [../plans/2026-08-24-reality-sprint.md](../plans/2026-08-24-reality-sprint.md).
+
+---
+
 ## Interview template
 
 ```markdown
@@ -55,6 +88,14 @@ note that it exists rather than what it says, and ask before quoting anyone by n
 | Exact pain points (their words) | |
 | Seen in previous interviews? | |
 | Potential product implication (guess, not conclusion) | |
+
+**Demonstrated or described?** Did they actually walk through the last bill they checked — screen
+share, or step by step from memory of that specific bill — or did they describe their general
+practice? Record which. A described workflow and a demonstrated one are different strengths of
+evidence and must not be tallied together.
+
+**The demonstration, step by step:** what they opened, in what order, what they compared against
+what, and where they had to ask somebody else. Verbatim where possible.
 
 **Volunteered vs prompted:** which pain points came up unprompted.
 
@@ -83,9 +124,10 @@ company types, not by being mentioned emphatically once.
 
 Status values: `too early` · `recurring` · `strong signal` · `contradicted` · `not a real problem`.
 
-Review checkpoints: **15 interviews** (first look for patterns, no decisions) and **30 interviews**
-(direction decision). Recording a review below is required even when the conclusion is "still too
-early", because a review that only gets written up when it finds something is not a sample.
+Review checkpoints: **10 interviews** (start thinking — do not wait for 30 to have a first thought),
+**15 interviews** (first look for patterns, no decisions) and **30 interviews** (direction decision).
+Recording a review below is required even when the conclusion is "still too early", because a review
+that only gets written up when it finds something is not a sample.
 
 ### Reviews
 

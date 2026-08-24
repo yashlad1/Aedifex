@@ -10,6 +10,7 @@ of this folder still says when it was written and what its status was.
 
 | Created | Subject | Status |
 |---|---|---|
+| 2026-08-24 | [The Reality Sprint](2026-08-24-reality-sprint.md) | **Standing direction — engineering frozen** |
 | 2026-08-24 | [Dependency review](2026-08-24-dependency-review.md) | Executed — one merge, two rejections, ten deferrals |
 | 2026-08-21 | [First product workflow](2026-08-21-first-product-workflow.md) | Executed — review, intake, classification and the viewer all shipped |
 | 2026-08-20 | [Development priorities](2026-08-20-development-priorities.md) | Standing direction |
@@ -49,6 +50,15 @@ everything real data reveals.
 data demonstrates otherwise, priority 1 is acquiring real post-award documents, and every feature
 must name the construction decision it improves. Records why priorities 2–5 are gated on 1, and the
 one design conclusion current evidence does support.
+
+**2026-08-24 — The Reality Sprint.** Supersedes the cadence of the 2026-08-20 priorities while
+keeping their order. Engineering is frozen: new work needs an **evidence ID** — a real document or an
+observed reviewer workflow — and speculative tickets are not created. Separates the technical
+hypothesis from the commercial one, and records what is currently true of each: strong evidence for
+the first, **none at all** for the second. Contains the outreach funnel, the ten-interview target,
+the protocol for the first authentic bundle (run HEAD unchanged, five failure buckets), the
+acceptance criteria that replace "it processed successfully", the Evidence Coverage definition, and
+the standing disposition of SCRUM-24, SCRUM-25, SCRUM-14 and the US DOT corpus.
 
 ## How real documents enter the pipeline
 

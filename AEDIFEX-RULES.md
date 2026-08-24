@@ -798,6 +798,9 @@ The current repository has 22 integration tests that have never run locally.
 
 That is now a priority.
 
+[Met, 2026-08-24. The original sentence is kept because it is the reviewer's, and the count it names
+is no longer current: 98 integration tests now run against real PostgreSQL, locally and in CI.]
+
 Before Phase 1 is considered stable:
 
 Docker Compose must actually start.
@@ -2307,6 +2310,44 @@ create unnecessary architecture
 ClaudeCode should explain the conflict and propose the safer implementation.
 
 Do not blindly implement a technically harmful request.
+
+⸻
+
+101. Engineering Requires an Evidence ID
+
+In force from 2026-08-24. See docs/plans/2026-08-24-reality-sprint.md.
+
+The platform is complete enough for the next experiment, and the constraint has moved from
+engineering to evidence. Zero authentic measurement books, zero authentic RA bills, and zero
+customer interviews exist. Writing more code against that backdrop reduces learning rather than
+increasing it.
+
+So: new engineering must carry an evidence ID — a real document, or an observed reviewer
+workflow, that forced it to exist.
+
+Legitimate:
+
+REAL-001
+RA bill from project X repeats BOQ item numbers per floor.
+The current canonical key merges 17 unrelated lines into one work item.
+→ SCRUM-XX  work-item identity redesign
+
+Not legitimate:
+
+We might eventually need fuzzy item matching.
+
+A hypothetical is not an evidence ID. Neither is a benchmark number, a coverage percentage, or a
+plausible-looking input probed into a function. File the ticket with its evidence attached, leave it
+in the backlog, and do not manufacture tickets to fill a sprint.
+
+Two corollaries.
+
+Do not optimise a metric in place of fixing a defect. Recovering rows to raise coverage is not the
+goal; reading correctly is. Under-reading is visible to the reader and bounded by the document's own
+stated totals. A fabricated priced row is money from nothing, and no coverage figure justifies one.
+
+When a real bundle arrives, run it through HEAD unchanged before altering anything. The first run is
+the experiment. A preparatory fix destroys the only measurement that was available.
 
 ⸻
 

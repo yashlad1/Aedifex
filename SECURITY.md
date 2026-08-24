@@ -48,11 +48,13 @@ an explicit human decision, so a bad payload cannot loop back into the pipeline 
 
 ### Known gaps
 
-Honest about what is not yet built, because these matter before any crawler is enabled:
+Honest about what is not yet built. **These are live exposures, not future ones.** This section
+once read "before any crawler is enabled"; the crawler now exists, 8 of 14 sources are approved and
+enabled, and real documents have been fetched from public portals.
 
 - **Decompression bombs.** ZIP archives are recognised but not yet expanded. Bounded
-  expansion (entry count, total uncompressed size, nesting depth) must land with the
-  downloader in Phase 1.
+  expansion (entry count, total uncompressed size, nesting depth) must land before any source
+  that serves archives is enabled.
 - **Malicious PDFs.** No PDF sanitisation yet. Parsers must run without network access and
   with resource limits; embedded JavaScript and external references must be ignored.
 - **SSRF.** ~~Not built.~~ **Implemented** in
@@ -62,9 +64,9 @@ Honest about what is not yet built, because these matter before any crawler is e
   connection so no second DNS lookup can occur. See
   [the threat model](docs/security/threat-model-http-fetch.md),
   [ADR 0010](docs/adr/0010-fetch-retry-ssrf-policy.md), and
-  [ADR 0011](docs/adr/0011-transport-boundary.md). The transport now exists and enforces the
-  address/identity split over real TLS, but no crawler drives it and no source is enabled, so
-  nothing makes outbound requests today.
+  [ADR 0011](docs/adr/0011-transport-boundary.md). The transport enforces the address/identity
+  split over real TLS, and **is now driven**: the crawl runner uses it and 8 of 14 registered
+  sources are approved and enabled, so outbound requests do happen.
 - **PII detection and redaction.** Sources that publish personal data are flagged
   (`contains_personal_data`), but no screening is implemented. This must exist before the
   corpus is used for training.
