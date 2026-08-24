@@ -7,7 +7,16 @@ Date: 2026-08-20
 **Almost everything is blocked by missing corpus. Essentially nothing is blocked by missing
 architecture.**
 
-Of the **9 registered rules**, on the real NHAI tender:
+> **Count corrected 2026-08-24.** This said "9 registered rules". The registry held 10 by then, and
+> holds 10 now: 4 document-scoped in `RULES`, 2 project-scoped in `PROJECT_RULES`, and 4
+> work-item-scoped evaluated through `evaluate_work_item`. Everything below is a **snapshot dated
+> 2026-08-20** and is left as it was written — the analysis was about the NHAI tender on that day and
+> re-running it is a separate exercise. Read counts here as of that date, and
+> `aedifex.verification.RULES` / `PROJECT_RULES` / `reconciliation` as authoritative now. The
+> per-rule outcomes on a real *building* bundle are in
+> [REAL_CORPUS_RULE_VALIDATION.md](REAL_CORPUS_RULE_VALIDATION.md).
+
+Of the **9 registered rules** *(as of 2026-08-20)*, on the real NHAI tender:
 
 | | Count | |
 | --- | --- | --- |

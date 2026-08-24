@@ -1310,6 +1310,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Masked: the DSN contains a password.
         database=settings.safe_database_url(),
         storage_bucket=settings.storage_bucket,
+        # The bucket alone does not say which store. Both the local MinIO and the real S3 account
+        # hold a bucket named `aedifex-dev`, only one of them holds the corpus, and a read against
+        # the wrong one 404s rather than saying why — which cost a session an hour on 2026-08-24.
+        # "aws" rather than the URL, because an unset endpoint *is* the information.
+        storage_endpoint=settings.storage_endpoint_url or "aws",
     )
     yield
     logger.info("api.shutdown", version=__version__)

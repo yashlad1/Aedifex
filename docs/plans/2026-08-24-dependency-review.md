@@ -2,6 +2,16 @@
 
 Date: 2026-08-24
 
+> **Corrected the same day, after SCRUM-20.** The verdict table below deferred five GitHub Action
+> majors as having "no named benefit". The benefit was named all along and I had not looked for it:
+> all five are Node 20 → Node 24 migrations, **GitHub removes Node 20 from the runner on 16
+> September 2026**, and eight of this repository's pinned actions declared `runs.using: node20`. That
+> is a dated pipeline outage, not modernisation. All eight were upgraded in `085e4f9`; see §7.
+>
+> The lesson is not "read release notes" — I did read them. It is that I judged *benefit* from the
+> changelog's feature list, where the benefit lived in the runtime field of a manifest I had not
+> opened. The five deferrals below were each individually defensible and collectively wrong.
+
 Nothing auto-merges here by design. Each branch is judged on five questions: is it security related,
 does it change runtime behaviour, does it require code changes, does it provide measurable benefit,
 and does it increase risk *before* product validation. The last question is doing most of the work
@@ -92,3 +102,65 @@ workflow to be rebuilt and re-verified, and none of them is on the path to answe
 that matters this phase — whether a quantity surveyor can upload a real bundle, understand the
 findings, reach the evidence and record a review. They are worth one batched afternoon after that
 question has an answer, not thirteen individual merges before it.
+
+---
+
+## 7. Correction: the action majors were a deadline, not modernisation
+
+Determined by reading `runs.using` out of every pinned manifest at its pinned ref, which is the field
+that actually decides whether an action runs:
+
+| Action | Was | Runtime | Now |
+| --- | --- | --- | --- |
+| actions/checkout | v4 | node20 | **v7.0.1** |
+| astral-sh/setup-uv | v5 | node20 | **v10.0.1** |
+| actions/setup-node | v4.4.0 | node20 | **v7.0.0** |
+| actions/upload-artifact | v4 | node20 | **v7.0.1** |
+| actions/dependency-review-action | v4 | node20 | **v5.0.0** |
+| docker/setup-buildx-action | v3 | node20 | **v4.3.0** |
+| docker/build-push-action | v6 | node20 | **v7.3.0** |
+| gitleaks/gitleaks-action | v2 | node20 | **v3.0.0** |
+| github/codeql-action | v3 | node20 | **v4.37.8** |
+| aquasecurity/trivy-action | v0.36.0 | composite | unchanged — no Node runtime |
+| anchore/sbom-action | v0 | node24 | unchanged — already migrated |
+
+Timeline, from GitHub's own changelog: runners began defaulting to Node 24 on **16 June 2026**, and
+Node 20 is **removed from the runner on 16 September 2026**. After that an action declaring `node20`
+runs only if the workflow sets `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true`, which is named for
+what it is.
+
+**Dependabot had raised three of the eight.** It is capped at five open pull requests and five were
+already open, so the other five actions had no PR at all and the deadline was invisible from the PR
+list. That is more useful than any single upgrade: *the absence of a Dependabot PR is not evidence
+that a dependency is current.*
+
+Every input this repository passes was checked against each target's own manifest and none was
+removed, so the upgrade is pins only. `setup-buildx` v4 removed its deprecated `install` input, which
+this repository never passed.
+
+`codeql-action` had to move as one change rather than three: `init`, `analyze` and `upload-sarif`
+share a single SHA across three workflow files, and Dependabot raised only two of the three, so
+merging either of its PRs alone would have left `init@v3` driving `analyze@v4`.
+
+### CI result
+
+PR #24: **7 of 7 jobs pass** — lint/types/unit on 3.12 and 3.13, migrations and integration, viewer
+build, container build and scan, Semgrep, and secret scanning (which is where gitleaks v3 runs).
+
+Two upgrades are **not** exercised by that run, and saying so matters more than the seven that are:
+
+* `dependency-review-action` v5 — its job is gated on `vars.ENABLE_DEPENDENCY_REVIEW`, unset, so it
+  skipped. Unverified until Advanced Security is available.
+* `codeql-action` v4 — `codeql.yml` is manual-only. Dispatched deliberately: `init` and `analyze`
+  **succeeded**, scanning 163 of 163 Python files and 3 of 3 workflow files, and the SARIF was
+  exported with fingerprints added — which incidentally exercises the one v4 behaviour change, that
+  post-processing now runs even when the upload does not. It then failed at the upload with "Code
+  scanning is not enabled for this repository". The v3 run of 2026-08-18 failed with the identical
+  error, so the failure is pre-existing and the upgrade neither caused nor fixed it.
+
+### Verdicts that stand
+
+`rapidocr-onnxruntime` remains rejected and ignored; `dev-tooling` remains rejected for widening
+mypy to `<3`; `structlog` and `pillow` remain deferred, `pillow` with its trigger. The three npm
+majors (typescript 7, vite 8, plugin-react 6) remain deferred — they are build-time only, the viewer
+job passes, and none of them is on a runner deadline.

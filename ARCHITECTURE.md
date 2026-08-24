@@ -395,6 +395,22 @@ priced bill. `PROJECT_RULES` already exists and already has two members, so the 
 horizontal expansion rather than new architecture. Left unbuilt because one project cannot say what
 0.048% *means* when a percentage-rate tender invites bids above or below the estimate by design.
 
+**6. There are two object stores, and only one holds the corpus.** AWS S3 bucket `aedifex-dev` is
+authoritative for development: it holds the 48 raw artifacts that the 48 rows in `documents` cite,
+reached by leaving `AEDIFEX_STORAGE_ENDPOINT_URL` unset. The local MinIO is for integration tests,
+which `tests/integration/conftest.py` points at by default and which create and clean their own
+buckets. Its `aedifex-live` (45 objects) and `aedifex-smoke` (2) buckets are unreferenced leftovers
+from ad-hoc runs; nothing in the repository reads them.
+
+The failure this causes is quiet, which is why it is written down. **Both stores hold a bucket named
+`aedifex-dev`**, so the bucket name never distinguished them, and a read against the wrong one
+answers 404 rather than naming the cause. It fails closed — keys are content-addressed and
+`GET /v1/documents/{id}/content` re-verifies the digest, so a wrong store can never serve wrong bytes
+— but it cost a session an hour on 2026-08-24. Two things now prevent a silent repeat: `.env.example`
+comments the endpoint out, so a developer who copies it gets the store the corpus is in, and the API
+logs `storage_endpoint` beside `storage_bucket` at startup. Raw evidence is immutable and is not
+mirrored between stores to make a configuration convenient.
+
 ## Key decisions and their reasons
 
 Recorded as ADRs in [docs/adr/](docs/adr/). The load-bearing ones:
