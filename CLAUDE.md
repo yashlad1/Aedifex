@@ -34,6 +34,7 @@ Then read, as the task requires:
 | [docs/research/BUILDING_CORPUS_AVAILABILITY.md](docs/research/BUILDING_CORPUS_AVAILABILITY.md) | Where Indian **building** construction documents actually are, classified A–F: what was acquired, why the priced-BOQ reader cannot read them yet, and the one link no reachable source publishes |
 | [docs/research/PRODUCT_FIRST_CORPUS_DISCOVERY.md](docs/research/PRODUCT_FIRST_CORPUS_DISCOVERY.md) | Product-first corpus discovery: 152 ranked sources, the workflow coverage matrix, the structural gap at Measurement and RA Bill, the three-layer canonical corpus, and the OCR gateway recommendation |
 | [docs/research/REAL_CORPUS_RULE_VALIDATION.md](docs/research/REAL_CORPUS_RULE_VALIDATION.md) | Every rule run against a real building bundle: which `INCONCLUSIVE` results are honest and which were defects, the reviewer friction log, and what the next bundle must contain |
+| [docs/DATA_REQUEST.md](docs/DATA_REQUEST.md) | The forwardable one-pager for procuring a real project bundle: the ask, what may be redacted, and what the partner gets back |
 | [docs/plans/](docs/plans/) | Implementation plans, newest first |
 | [docs/requirements/functional.md](docs/requirements/functional.md) | Numbered requirements and their status |
 
