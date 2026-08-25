@@ -8,18 +8,34 @@
 readonly MIN_FREE_GB=12
 readonly REACHABILITY_HOST="nhai.gov.in"
 
+# Set by the checks below and acted on by install.sh. A missing prerequisite is not fatal here: it
+# is a thing to install. Nothing else in preflight installs, starts or writes anything.
+NEED_PYTHON=0
+NEED_DOCKER=0
+
 preflight() {
     step "Checking this computer..."
 
     _check_macos || return 1
     _check_arch
-    _check_python || return 1
+    # Before the disk check, because what has to be downloaded decides how much room is needed.
+    _check_python
+    _check_container_runtime
+    _check_memory
     _check_disk || return 1
     _check_writable || return 1
     _check_network || return 1
-    _check_container_runtime || return 1
 
     return 0
+}
+
+# Run after install.sh. By this point a missing prerequisite *is* fatal: it means an install
+# reported success and left nothing behind, and continuing would fail later with a worse message.
+recheck_prerequisites() {
+    (( NEED_PYTHON == 0 )) || die 20 "Python is still missing after being installed." \
+        "Please send the log file below."
+    (( NEED_DOCKER == 0 )) || die 20 "Docker is still missing after being installed." \
+        "Please send the log file below."
 }
 
 _check_macos() {
@@ -63,26 +79,53 @@ _check_python() {
         esac
     done
     if [[ -z "$found" ]]; then
-        die 10 "Python 3.12 or 3.13 is not installed on this Mac." \
-                "" \
-                "To fix this:" \
-                "  1. Open https://www.python.org/downloads/macos/ in Safari" \
-                "  2. Download and install Python 3.13" \
-                "  3. Double-click 'Run Aedifex.command' again"
+        NEED_PYTHON=1
+        warn "Python is not installed yet -- it will be installed for you"
+        return 0
     fi
     export PYTHON_BOOTSTRAP
 }
 
+# Docker asks for 4 GB of RAM, and a Linux VM plus PostgreSQL plus MinIO on an old Mac with less
+# than that will thrash rather than fail cleanly -- which is much harder for an operator to report.
+_check_memory() {
+    local bytes gb
+    bytes="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
+    gb=$(( bytes / 1073741824 ))
+    if (( gb == 0 )); then
+        warn "Could not measure memory -- continuing"
+        return 0
+    fi
+    if (( gb < 4 )); then
+        die 10 "This Mac has ${gb} GB of memory, and at least 4 GB is needed." \
+                "" \
+                "The database and the collection software cannot run reliably in less." \
+                "This is a limit of the computer, not something you can change."
+    fi
+    if (( gb < 8 )); then
+        warn "Memory: ${gb} GB -- enough, but it will be slow"
+    else
+        ok "Memory: ${gb} GB"
+    fi
+}
+
 _check_disk() {
-    local free_gb
+    local free_gb needed=$MIN_FREE_GB
+    # Docker Desktop is a 640 MB download that unpacks to roughly 2.5 GB; Python is small but not
+    # free. Asking for the full amount up front beats running out three quarters of the way in.
+    (( NEED_DOCKER )) && needed=$(( needed + 5 ))
+    (( NEED_PYTHON )) && needed=$(( needed + 1 ))
+
     free_gb="$(df -g "$REPO_ROOT" | awk 'NR==2 {print $4}')"
     if [[ ! "$free_gb" =~ ^[0-9]+$ ]]; then
         warn "Could not measure free disk space -- continuing"
         return 0
     fi
-    if (( free_gb < MIN_FREE_GB )); then
-        die 10 "This Mac has only ${free_gb} GB of free disk space." \
-                "At least ${MIN_FREE_GB} GB is needed for the database, the downloads and the result file." \
+    if (( free_gb < needed )); then
+        die 10 "This Mac has only ${free_gb} GB of free disk space, and ${needed} GB is needed." \
+                "" \
+                "That covers the database, the software that has to be installed, the documents" \
+                "collected, and the result file." \
                 "" \
                 "Please empty the Trash or delete some large files, then try again."
     fi
@@ -127,11 +170,7 @@ _check_container_runtime() {
         ok "Colima is installed"
         return 0
     fi
-    die 10 "Docker Desktop is not installed on this Mac." \
-            "" \
-            "To fix this:" \
-            "  1. Open https://www.docker.com/products/docker-desktop/ in Safari" \
-            "  2. Download Docker Desktop for Mac and install it" \
-            "  3. Open Docker Desktop once, so it finishes setting itself up" \
-            "  4. Double-click 'Run Aedifex.command' again"
+    NEED_DOCKER=1
+    warn "Docker is not installed yet -- it will be installed for you"
+    return 0
 }

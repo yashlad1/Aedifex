@@ -40,11 +40,15 @@ not an engineering task, and this runner deliberately cannot substitute for it.
 
 1. Download the ZIP.
 2. Double-click **`Run Aedifex.command`**.
-3. Wait.
-4. Send back the file that appears on the Desktop.
+3. On the very first run only: press Enter when asked, and type the Mac's password when macOS asks.
+4. Wait.
+5. Send back the file that appears on the Desktop.
 
-There is nothing else. No Terminal, no Docker commands, no Python, no editing files, no choosing
-sources, no migrations.
+There is nothing else. No Terminal commands, no installing anything by hand, no Docker commands, no
+Python, no editing files, no choosing sources, no migrations.
+
+**The first run installs what is missing** — Python and Docker — and takes 20 to 40 minutes. Every
+run after that skips straight to collecting and takes minutes.
 
 A finished run looks like this:
 
@@ -114,6 +118,7 @@ Run Aedifex.command                 double-clickable launcher; finds the folder,
   └── scripts/india/run.sh          the orchestrator: stage order, and what a finished run says
         ├── lib/logging.sh          console lines, the run log, and the one way a run fails
         ├── lib/preflight.sh        1  can this Mac do the job          (read-only)
+        ├── lib/install.sh         1b  Python and Docker, from signed vendor installers
         ├── lib/python.sh           2  virtual environment              (make install)
         │   scripts/india/manifest.py  3  the run list, checked against the real registry
         ├── lib/environment.sh      4  .env if absent; manifest values into the environment
@@ -172,6 +177,66 @@ default.
 No bot-info URL accompanies it, deliberately. This repository is private, so a `+https://...` link
 would 404 for the one person it exists to serve, and a contact that looks reachable but is not is
 worse than an address on its own.
+
+---
+
+## 3a. What the first run installs, and why those choices
+
+Two things, each from its vendor's own signed and notarized installer, downloaded over TLS:
+
+| | | |
+| --- | --- | --- |
+| Python 3.13 | `python.org` `.pkg` | `Developer ID Installer: Python Software Foundation (BMM5U3QVKW)` |
+| Docker Desktop | `docker.com` `.dmg` | `Developer ID Application: Docker Inc (9BNSXJN65R)` |
+
+**Both checks must pass before anything is run.** Gatekeeper (`spctl`) proves Apple notarized the
+artifact, and the team identifier proves *which* developer signed it. Notarization on its own is not
+enough: it would accept any notarized software, so a substituted download that happened to be
+notarized would pass. The pair together will not. Verified against six cases, including a genuine
+package with one byte altered, and a legitimately notarized package from a different developer —
+both refused.
+
+A refusal is terminal. Nothing is installed, and the message says so.
+
+### Why not Homebrew
+
+The obvious question, since `brew install docker` looks like one command. Three reasons, all
+measured rather than assumed:
+
+- **`brew install docker` installs only the CLI client** — the formula has no dependencies and ships
+  no daemon. macOS has no native Docker daemon; Linux containers need a Linux VM, so the client
+  alone cannot start a container. A working setup needs `colima` as well, which needs `lima`.
+- **Homebrew's own signed `.pkg` installs to `/opt/homebrew` on every architecture**, and Homebrew's
+  prebuilt bottles for Intel are built for `/usr/local`. An Intel Homebrew at that prefix **builds
+  from source** — for `qemu` on an old Mac that is hours, not minutes.
+- **That same `.pkg` refuses outright without Xcode Command Line Tools**: *"Fatal — You must install
+  the Command Line Tools (CLT) before installing Homebrew."* That is a separate GUI dialog and a
+  multi-gigabyte download before anything else can start. The `curl | bash` installer does pick
+  `/usr/local` on Intel and can install the tools itself, but it cannot be signature-verified, which
+  is a step backwards for a repository that pins Docker image digests.
+
+So Docker Desktop is not the nicer option. It is the only one of the three that installs from a
+verifiable signed artifact without dragging in a compiler toolchain.
+
+### The administrator password
+
+Installing software on macOS requires it. The runner explains what is about to happen, then calls
+`sudo -v` once so the operator types the password a single time rather than repeatedly.
+
+Nothing reads, stores, caches beyond `sudo`'s own timeout, or works around that password. There is
+no `NOPASSWD` edit, no keychain scraping, no expect script. If it cannot be obtained the run stops
+and says to ask whoever set the Mac up.
+
+### macOS 13 is a real risk
+
+Docker's stated policy is that Docker Desktop supports **"the current and two previous major macOS
+releases."** With macOS 26 current, that means 26, 15 and 14 — so **macOS 13 is outside the
+supported window** and the install may not work.
+
+The runner warns rather than refuses, because an unsupported-but-working install beats a tool that
+declines to try. If the setup then fails, the message names the macOS version as the likely cause
+instead of showing a generic error. There is no workaround if it does fail: the Mac needs a macOS
+upgrade, or the acquisition needs a different machine.
 
 ---
 
@@ -258,8 +323,11 @@ The operator is not expected to do any of this. It is here for whoever they call
 
 | What the run says | What it means |
 | --- | --- |
-| `Python 3.12 or 3.13 is not installed` | Install Python 3.13 from python.org. macOS's own `python3` may be older or absent |
-| `Docker Desktop is not installed` | Install Docker Desktop, then **open it once** so it finishes setting itself up |
+| `it will be installed for you` | Not an error. The first run installs Python or Docker and continues |
+| `Refused to install …, because …` | **Stop.** The download did not match what the vendor published. Nothing was installed. Send the log and do not retry until told to |
+| `Could not get permission to install` | The password was mistyped three times, or the account is not an administrator of the Mac |
+| `macOS N is older than Docker now supports` | A warning, not a stop. If the install then fails, this Mac needs a newer macOS or the run needs a different machine |
+| `only N GB of memory` | Hard limit. Docker needs 4 GB; below that nothing runs reliably |
 | `Docker did not finish starting` | Open Docker Desktop by hand, wait for the whale to stop animating, run again |
 | `This Mac cannot reach the internet` | Wi-Fi, or the portal is down. Both are worth retrying later |
 | `only N GB of free disk space` | Needs 12 GB for the database, downloads and the archive |

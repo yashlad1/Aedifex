@@ -10,6 +10,7 @@
 # Stages, and the exit code each uses:
 #
 #     10  preflight      can this Mac do the job at all
+#     20  install        Python and Docker, from their vendors' signed installers, if missing
 #     20  python         the virtual environment and the locked dependency set
 #     30  run list       config/india_runner.yaml, validated against the real source registry
 #     40  configuration  .env if absent; the manifest's three settings into the environment
@@ -39,6 +40,8 @@ readonly LIB="$REPO_ROOT/scripts/india/lib"
 source "$LIB/logging.sh"
 # shellcheck source=lib/preflight.sh
 source "$LIB/preflight.sh"
+# shellcheck source=lib/install.sh
+source "$LIB/install.sh"
 # shellcheck source=lib/python.sh
 source "$LIB/python.sh"
 # shellcheck source=lib/environment.sh
@@ -122,6 +125,8 @@ main() {
     log "runner starting in $REPO_ROOT"
 
     preflight
+    install_prerequisites
+    recheck_prerequisites
     python_environment
     read_run_list
     configure_environment
