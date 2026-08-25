@@ -211,16 +211,22 @@ architecture is built to say, and is the honest version of a confidence score.
 
 Not seven engineering tickets.
 
-| Objective | Success |
-| --- | --- |
-| Authentic data | 1 real building bundle in hand |
-| Customer discovery | 10 interviews recorded |
-| Workflow observation | ≥3 people actually demonstrate billing or reconciliation |
-| Product signal | A recurring pain, quantified, from independent people |
-| Technical validation | First bundle run through **unchanged** HEAD |
-| Evidence validation | A human checks the generated findings and citations |
-| Architecture decision | Only changes the bundle demanded are approved |
-| Engineering | Bugs required by the above, and nothing else |
+Tracked as **Sprint 2 — reality**, 31 August to 6 September, on board SCRUM.
+
+| Objective | Success | Ticket |
+| --- | --- | --- |
+| Authentic data | 1 real building bundle in hand | SCRUM-10, carried from Sprint 1 |
+| Customer discovery | 10 interviews recorded | SCRUM-28 |
+| Workflow observation | ≥3 people actually demonstrate billing or reconciliation | SCRUM-29 |
+| Product signal | A recurring pain, quantified, from independent people | SCRUM-30 |
+| Technical validation | First bundle run through **unchanged** HEAD | SCRUM-31 |
+| Evidence validation | A human checks the generated findings and citations | SCRUM-32 |
+| Architecture decision | Only changes the bundle demanded are approved | *Not a ticket — rule 101* |
+| Engineering | Bugs required by the above, and nothing else | *Not a ticket — rule 101* |
+
+The last two are deliberately not tickets. They are standing policy, and turning a policy into a
+sprint item is how it quietly becomes optional. Epic **SCRUM-27 — Customer discovery** is new; the
+board had four epics and none of them covered talking to anybody.
 
 **Stretch:** a second project. One project tells you what is possible; two begin telling you what is
 general.
