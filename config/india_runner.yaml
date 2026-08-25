@@ -15,14 +15,15 @@ schema_version: 1
 
 # The contact a site operator can use to reach a human about our crawler traffic.
 #
-# THE OWNER MUST SET THIS BEFORE SHIPPING. It is deliberately left as a placeholder that the runner
-# refuses, because the application already treats an unreachable contact as a hard limit that holds
-# regardless of review (DATA_SOURCES.md, and Settings.user_agent_names_a_real_contact). Choosing
-# what address to publish to a government portal is the owner's decision, not the tool's.
+# Set by the owner on 2026-08-24. The application treats an unreachable contact as a hard limit that
+# holds regardless of review (DATA_SOURCES.md, and Settings.user_agent_names_a_real_contact), so
+# this is evidence of a decision rather than a default: the address below is a real inbox that a
+# portal operator can write to.
 #
-# Replace BOTH the URL and the address, then commit:
-#   user_agent: "AedifexBot/0.1 (+https://github.com/you/aedifex; contact: you@example.com)"
-user_agent: "AedifexBot/0.1 (+https://example.invalid/bot; contact: ops@example.invalid)"
+# No bot-info URL is given, deliberately. The repository is private, so a `+https://...` link would
+# 404 for the one person it exists to serve, and a contact that looks reachable but is not is worse
+# than an address on its own. Add one here if a public page ever exists.
+user_agent: "AedifexBot/0.1 (contact: lad.yas@northeastern.edu)"
 
 # Object storage for this machine. Deliberately a *separate bucket* from the development corpus:
 # it makes "everything acquired on the India Mac" an exact set rather than a guess, which is what

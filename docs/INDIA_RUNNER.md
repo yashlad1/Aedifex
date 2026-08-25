@@ -164,10 +164,14 @@ A crawl of a real portal must offer a contact a site operator can reach. Aedifex
 `Settings.user_agent_names_a_real_contact()`, and [DATA_SOURCES.md](../DATA_SOURCES.md) lists it
 under limits that hold regardless of review outcome.
 
-`config/india_runner.yaml` ships with a **placeholder that the runner refuses**. The owner sets a
-real URL and address once and commits it. This is not something the operator can or should do, and
-the runner does not invent one: choosing what address to publish to a government portal is a
-decision, not a default.
+`config/india_runner.yaml` shipped with a **placeholder that the runner refuses**, and the owner set
+a real address on 2026-08-24. This is not something the operator can or should do, and the runner
+does not invent one: choosing what address to publish to a government portal is a decision, not a
+default.
+
+No bot-info URL accompanies it, deliberately. This repository is private, so a `+https://...` link
+would 404 for the one person it exists to serve, and a contact that looks reachable but is not is
+worse than an address on its own.
 
 ---
 
