@@ -336,6 +336,7 @@ tests/{unit,integration}
 | Document | Contents |
 | --- | --- |
 | **[docs/DATA_REQUEST.md](docs/DATA_REQUEST.md)** | **What the project needs from the outside world**, and what it gives back. Forwardable as-is |
+| [docs/INDIA_RUNNER.md](docs/INDIA_RUNNER.md) | Running the existing acquisition pipeline on a Mac in India, operated by somebody who cannot use Terminal. Orchestration only — no new capability, and it can refuse a source but never permit one |
 | [docs/SPRINT_1_REPORT.md](docs/SPRINT_1_REPORT.md) | Sprint 1 status: what was done, what was not, and what was learned. Separates engineering completed from hypothesis validated |
 | **[SRS.md](SRS.md)** | **Read first.** Vision, mission, the evidence pipeline, personas, guiding principles |
 | [CLAUDE.md](CLAUDE.md) | Orientation for an agent or a new contributor: what to read, and in what order |

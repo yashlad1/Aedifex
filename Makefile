@@ -8,7 +8,7 @@ VENV := .venv
 .DEFAULT_GOAL := help
 .PHONY: help install lock check lint format typecheck test test-integration test-all \
         validate-registry audit migrate migration downgrade up down logs run-api clean \
-        sources crawl status
+        sources crawl status india
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -103,6 +103,11 @@ crawl: ## Crawl one source: make crawl s=nhai [dry=1] [max=25]
 
 status: ## Show the corpus, the queue depth, and recent crawl runs
 	$(PYTHON) -m apps.crawler.main status
+
+india: ## Run the India acquisition runner (what 'Run Aedifex.command' does)
+	# Orchestration only: it calls install, up, alembic and `apps.crawler.main crawl` in order.
+	# Here so the owner can exercise exactly the path the operator will, without double-clicking.
+	bash scripts/india/run.sh
 
 run-api: ## Run the API with reload at http://localhost:8000/docs
 	$(VENV)/bin/uvicorn apps.api.main:app --reload --host 127.0.0.1 --port 8000

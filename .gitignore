@@ -36,6 +36,11 @@ data/labels/*
 # Semgrep self-test report, written by CI and by anyone reproducing the SAST gate locally.
 selftest.json
 
+# India Acquisition Runner: per-run logs and the staging directory the bundle is built in. Both are
+# outputs of a run on an operator's machine, not source.
+logs/
+.india-bundle/
+
 # Editors / OS
 .idea/
 .vscode/

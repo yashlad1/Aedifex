@@ -1,0 +1,47 @@
+# The India Acquisition Runner's run list.
+#
+# THIS FILE IS NOT A SOURCE REGISTRY, AND IT CANNOT APPROVE ANYTHING.
+#
+# The registry is `config/sources/`, and it is the only place a source's terms of use, rate limits,
+# permitted formats and approval status are decided. This file only names which *already approved*
+# sources the India machine should run, and how far each run may go. Naming a source here that is
+# not `enabled: true` and `verification_status: approved` makes the runner stop with an error; it
+# does not make the source collectable. See DATA_SOURCES.md.
+#
+# The operator never edits this file. It is changed here, reviewed, committed, and reaches the India
+# Mac in the next download.
+
+schema_version: 1
+
+# The contact a site operator can use to reach a human about our crawler traffic.
+#
+# THE OWNER MUST SET THIS BEFORE SHIPPING. It is deliberately left as a placeholder that the runner
+# refuses, because the application already treats an unreachable contact as a hard limit that holds
+# regardless of review (DATA_SOURCES.md, and Settings.user_agent_names_a_real_contact). Choosing
+# what address to publish to a government portal is the owner's decision, not the tool's.
+#
+# Replace BOTH the URL and the address, then commit:
+#   user_agent: "AedifexBot/0.1 (+https://github.com/you/aedifex; contact: you@example.com)"
+user_agent: "AedifexBot/0.1 (+https://example.invalid/bot; contact: ops@example.invalid)"
+
+# Object storage for this machine. Deliberately a *separate bucket* from the development corpus:
+# it makes "everything acquired on the India Mac" an exact set rather than a guess, which is what
+# the result file has to contain. MinIO runs locally in Docker, so no cloud credentials exist on
+# this machine and none are needed.
+storage:
+  bucket: aedifex-india
+  endpoint_url: http://localhost:9000
+
+# The run list, in order. Limits are per source and per run.
+#
+# `nhai` is here because it is currently the ONLY approved source with a base URL -- every other
+# approved source is a manual-upload source with nothing to crawl. It is also reachable from the
+# United States, so this first run proves the machine, the pipeline and the packaging work from
+# India rather than reaching anything new. Add a state PWD or RERA portal here once it has been
+# through the approval process in DATA_SOURCES.md; that is the run that will actually be worth the
+# trip, and it needs no change to this runner beyond one entry.
+sources:
+  - id: nhai
+    max_documents: 25
+    max_pages: 40
+    max_seconds: 1800
