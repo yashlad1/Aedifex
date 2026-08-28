@@ -153,6 +153,24 @@ introductions are the untried half of it.
 
 ---
 
+### S-02 — 2026-08-28 — desk research, not people
+
+A full pass over forums, competitor products and academic surveys is written up in
+[MARKET_AND_COMPETITOR_SIGNALS.md](MARKET_AND_COMPETITOR_SIGNALS.md). Three things from it belong
+here:
+
+- **The practitioner forums are closed to automated access.** Reddit, Eng-Tips and Quora all return
+  403, and were not worked around. Desk research therefore cannot reach the one thing it was for.
+- **The Indian market is not empty.** SuperWise, Site Setu, Powerplay, RDash, Onsite and several ERPs
+  already do RA bills and measurement books — all on the *generation* side, where Aedifex is on the
+  *verification* side.
+- **A peer-reviewed survey (n=62) ranks the payment pain as finance and variations, not verification.**
+  Nobody in it said they could not tell whether a bill was correct.
+
+None of this is an interview and none of it counts toward the 10.
+
+---
+
 ## Pattern tally
 
 Filled in as interviews accumulate. A row earns attention by recurring across **different** roles and
