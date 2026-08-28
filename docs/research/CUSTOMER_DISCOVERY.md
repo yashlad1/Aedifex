@@ -113,6 +113,46 @@ _None recorded yet._
 
 ---
 
+## Signals that are not interviews
+
+Kept separate from the interview count on purpose. An interview is a conversation with a named role
+where a workflow was described or demonstrated; the count of those is what the 10/15/30 checkpoints
+mean, and letting weaker evidence into it would quietly inflate the one number the direction
+decision rests on.
+
+These are recorded because they are the only external evidence the project has, not because they
+carry the weight of an interview.
+
+### S-01 — 2026-08-27 — anonymous commenter, r/ConstructionMNGT
+
+A recruiting post asking for 15–20 minute conversations with people in construction, civil
+engineering, QS, procurement or real estate development. **333 views, 1 substantive reply.**
+
+The reply, unprompted, after being told the poster was building something:
+
+> "If you're targeting that space, automating away the manual Excel and WhatsApp invoice chaos is
+> definitely where the real pain point is."
+
+The owner notes having heard the same from a few other people, not recorded individually.
+
+**What this is evidence of.** One anonymous person, role unknown, company type unknown, nothing
+quantified, no workflow described and none demonstrated. It cannot support a direction change and is
+not counted toward the 10.
+
+**What is worth noticing anyway.** The volunteered pain is **invoice chaos in Excel and WhatsApp** —
+adjacent to RA-bill verification but not the same thing. Verification asks *is this claim supported*;
+this describes documents arriving in the wrong form, in the wrong place, and being re-keyed. If that
+recurs in real interviews it points at intake and reconciliation of messy inbound paperwork rather
+than at the payment-chain rules, and [../plans/2026-08-24-reality-sprint.md](../plans/2026-08-24-reality-sprint.md)
+already says the interviews must be allowed to kill payment verification.
+
+**What it says about the channel, which is separate.** 333 views to 1 reply is roughly 0.3%. A cold
+post asking strangers for a call converts badly; that is a fact about the outreach method, not about
+the problem. The three-stage funnel in the Reality Sprint plan exists for this reason, and warm
+introductions are the untried half of it.
+
+---
+
 ## Pattern tally
 
 Filled in as interviews accumulate. A row earns attention by recurring across **different** roles and
