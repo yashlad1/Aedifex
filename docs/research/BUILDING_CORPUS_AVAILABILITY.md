@@ -48,7 +48,7 @@ flow without belonging to it.
 | **Measurement** (format) | **D** | CPWA Book of Forms; WB Form 2900 | **acquired** |
 | **Claim / RA bill** | **A** | **Odisha PPMS** `merge_bill_msrmt/*.pdf` | **identified, unreachable** |
 | **Claim / RA bill** (format) | **D** | CPWA Book of Forms | **acquired** |
-| **Claim / RA bill** (quoted) | **B** | CAG reports; Delhi HC / arbitration judgments | reachable, not acquired |
+| **Claim / RA bill** (quoted) | **B** | CAG reports; Delhi HC / arbitration judgments | **partly acquired 2026-08-28** — see §Building-sector CAG |
 | **Certification** | B / F | audit reports; otherwise private | not acquired |
 | **Payment** | **A** | eGramSwaraj public vouchers; MGNREGA MIS | reachable, tabular not documentary |
 | **Variation** | B / F | audit reports; otherwise private | not acquired |
@@ -75,6 +75,43 @@ human-dependent track** — it needs one person on an Indian connection, not mor
 Reachable from here, and verified: `wbpwd.gov.in`, `cpwd.gov.in`, `cag.gov.in`, `egramswaraj.gov.in`,
 `nrega.nic.in`, `eprocure.gov.in`, `etenders.gov.in`, `pwd.kerala.gov.in`, `pwd.rajasthan.gov.in`,
 `pwd.py.gov.in`, `indiankanoon.org`, `iitb.ac.in`.
+
+### Building-sector CAG, acquired 2026-08-28
+
+Every CAG document in the corpus before this date was **roads, irrigation or metro**: Indo-Nepal
+border road, Karnataka compliance, Polavaram irrigation, Bangalore metro. Against a standing
+direction of *buildings, not highways*, the audit corpus was pointed the wrong way.
+
+Eight building-sector reports were searched out on `cag.gov.in` (reachable; no `robots.txt` exists,
+so nothing is disallowed) and **six were ingested** under the already-approved `india_audit_reports`
+source. Corpus **48 → 54 documents**, verified against the authoritative store: 54 objects in S3,
+54 rows, and a deliberate re-ingest reported `already present` without duplicating.
+
+| Report | Pages | Text | ₹ figures | "contract" | "excess payment" |
+| --- | --- | --- | --- | --- | --- |
+| Social & Economic Sectors + Urban Local Bodies, 2023 | 232 | 499k | 487 | 70 | **17** |
+| Smart City Mission, Report 11 of 2025 (PA-Civil) | 110 | 238k | 358 | 80 | **8** |
+| Goa Public Health Infrastructure, Report 4 of 2024 | 140 | 212k | 5 | 47 | 0 |
+| Odisha Smart City Mission, Chapter III | 28 | 74k | 0 | 63 | 2 |
+| Uttar Pradesh PMAY-Gramin, Report 8 of 2025 | 108 | 191k | 73 | 3 | 0 |
+| Jharkhand PMAY-Gramin, Report 2 of 2026 | 100 | 168k | 83 | 0 | 0 |
+
+The first two are the find. The two PMAY reports are the weakest: rural housing **scheme** audits
+about beneficiary payments rather than contractor billing, which the `contract` counts of 3 and 0
+show plainly — worth keeping, not worth mistaking for payment-chain evidence.
+
+**Two of the eight were rejected as scans and are not in the corpus.** Tamil Nadu *Housing for Urban
+Poor* (Report 2 of 2023) is 99 pages and **182 characters** — 61 MB with no text layer — and Haryana
+*Allotment of Builders/Group Housing Plots* is 59 pages and **zero**. Both were checked by running
+them through `extract_text` rather than assumed readable. They are identified and re-fetchable if
+the OCR burden is ever judged worth it; ingesting them now would have added 61 MB of unreadable
+bytes and an OCR bill for no evidence.
+
+**What this is and is not.** A CAG report quotes figures from measurement books and running bills
+that Aedifex does not hold. Those quotes are the auditor's reading, at the auditor's precision, in
+service of the auditor's point. They are primary evidence of **the audit finding** — the rule
+invoked, the comparison, the arithmetic, the money consequence — and secondary evidence of
+everything else. The source registration already says this, and it still governs.
 
 ### What is *not* worth pursuing, and why
 
