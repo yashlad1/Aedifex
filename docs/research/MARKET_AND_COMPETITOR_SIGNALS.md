@@ -22,6 +22,18 @@ These are technical access controls and were **not** worked around: no spoofed b
 proxy, no rotation. That is a hard limit in [DATA_SOURCES.md](../../DATA_SOURCES.md) and it holds
 whether or not the content would have been useful.
 
+**The front door is shut too, and this was tested rather than assumed.** Reddit's official API was
+the obvious legitimate route — free for non-commercial and academic use at 100 queries/minute. But
+Reddit closed **self-service app creation** in November 2025 under the Responsible Builder Policy:
+new access goes through manual approval, and reports are that most requests are refused. Verified by
+attempting it on 2026-08-28 with a fresh account and a completed developer registration — the
+create-app form accepts everything, the CAPTCHA passes, and the button silently does nothing but
+surface the policy link.
+
+**Do not retry this.** Reddit also skews UK, US and Australia, so even full access would barely
+touch the Indian billing-engineer population this product is aimed at. Reading a few threads by hand
+in a browser is the remaining route, and it is a person's job rather than a pipeline's.
+
 So everything below comes from **vendor marketing, competitor product pages, and academic surveys**.
 None of it is a practitioner talking freely. **Desk research cannot substitute for the interviews,
 and this attempt is the evidence for that claim rather than an opinion about it.**
