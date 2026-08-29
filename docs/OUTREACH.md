@@ -139,3 +139,113 @@ not interviews" instead — the 10, 15 and 30 checkpoints only mean something if
 honest.
 
 Ask everyone, every time: **"show me how you checked the last bill."**
+
+---
+
+# LinkedIn: the search strings, and who to send to
+
+Added 2026-08-29. LinkedIn requires a login, so none of this is automatable — these are strings to
+paste into the search bar yourself. Boolean works in the keyword box: `AND`, `OR`, `NOT`, quotes,
+parentheses. Set **People** and a **Location** filter after searching, not inside the query.
+
+A free account has a monthly search ceiling and a "commercial use limit". Spend it on the searches
+in order.
+
+## 1. The people who actually do the work — India
+
+The target market. Prefer **3–10 years' experience** over directors: they still open the spreadsheet.
+
+```
+("billing engineer" OR "quantity surveyor") AND ("RA bill" OR "running account" OR "measurement book" OR BOQ)
+```
+
+```
+"quantity surveyor" AND (BOQ OR "bill of quantities" OR "interim payment" OR "extra items")
+```
+
+```
+("billing engineer" OR "QS engineer") AND (contractor OR "site engineer") AND billing
+```
+
+Filters: **People**, Location **India**. Then sort by 2nd-degree first — a shared connection roughly
+doubles reply rate.
+
+## 2. The people who *check* the work — the likely buyer
+
+This is the segment that decides whether Aedifex has a customer at all, because everything in
+[research/MARKET_AND_COMPETITOR_SIGNALS.md](research/MARKET_AND_COMPETITOR_SIGNALS.md) says the
+existing products serve the people who *prepare* bills.
+
+```
+("project management consultant" OR PMC OR "owner's representative") AND construction AND (billing OR certification OR "bill checking")
+```
+
+```
+("quantity audit" OR "construction audit" OR "bill verification") AND (consultant OR auditor)
+```
+
+```
+("contracts manager" OR "commercial manager") AND (developer OR "real estate") AND construction
+```
+
+## 3. Northeastern alumni — warmest, use first
+
+Do not use the search bar for this. Use the alumni tool:
+
+**`https://www.linkedin.com/school/northeastern-university/people/`**
+
+Then type `construction` — or `quantity surveyor`, `project controls`, `estimating` — into the
+"search alumni by title, keyword or company" box. It surfaces people who already share a school with
+you, which is the only cold-outreach advantage you have.
+
+Repeat with `Northeastern University College of Professional Studies`, whose Construction Management
+certificate is explicitly aimed at "owners' reps, engineers, architects, contractors" — so its
+alumni are practising, not students.
+
+## 4. Named people worth contacting directly
+
+Found on public Northeastern pages, 2026-08-29.
+
+| Who | Why them |
+| --- | --- |
+| **Robert Tess** — Adjunct Faculty, MS Project Management, CPS. `linkedin.com/in/robert-tess-0829675` | The best single lead. NEU faculty **and** a working Program Manager at CCI Construction Services, 26+ years, design-build up to $315M, PMP and PE. He teaches your university's students and runs real projects |
+| **Ali Touran** — Professor, Civil & Environmental Engineering. `atouran@coe.neu.edu`, 423 Snell, (617) 373-5508 | Teaches construction management, cost analysis and scheduling; researches construction cost/schedule uncertainty and integrated project delivery, funded by the Construction Industry Institute. **The CII connection is the real prize** — that is an industry consortium of owners and contractors |
+| **Joseph A. Griffin** — Senior Associate Dean, Teaching Professor, MS Project Management | Wrote *Residential Construction Management*. Runs the programme whose alumni you want |
+
+Email the faculty (template in §1 of this document). DM Robert Tess on LinkedIn.
+
+## 5. The connection note — 300 characters, so this is the whole thing
+
+```
+Hi ——, I'm a grad student at Northeastern researching how RA bills get checked
+against measurements on real projects. Not selling anything. Could I ask you one
+question about how you do it? Happy to keep it to a single message if that's easier.
+```
+
+The last sentence is doing the work. It offers a yes that costs ninety seconds.
+
+**If they reply, ask exactly one thing:**
+
+> When you checked the last RA bill, what did you actually open, and in what order?
+
+## 6. The question that decides the product
+
+The space is crowded on the **generation** side — SuperWise, Site Setu, Powerplay, RDash, Onsite and
+several ERPs already build RA bills from measurements captured in their own app. Aedifex reads bills
+and measurements that already exist, from someone else's system.
+
+So one question matters more than the rest, and it should go to everyone in §2:
+
+> **Who checks the bill, and do they trust the system it came out of?**
+
+If the answer is "the contractor's own app produces it and we accept it", verification is a much
+smaller business than it looks. If the answer is "a PDF arrives from the contractor and I check it by
+hand against my own spreadsheet", that is the product.
+
+**Ten answers to that question are worth more than everything else on this page.**
+
+## 7. Tracking
+
+One row per person in `CUSTOMER_DISCOVERY.md`. Sent / replied / call booked / documents offered.
+A reply is not an interview; only a conversation where a workflow was described or demonstrated
+counts toward the 10.
