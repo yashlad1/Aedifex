@@ -444,9 +444,15 @@ cannot be quietly promoted from one to another.
 | **2** | **Engineering corpus** | NHAI, highways, bridges, other public infrastructure | **Validation, regression and stress testing only.** It exists to prove the pipeline survives hostile input. It defines nothing |
 | **3** | **Reference corpus** | CPWD DSR, IS 1200, CPWA Code and Book of Forms, CAG manuals, AIA, FIDIC | **Knowledge sources, not uploads.** They state norms a rule may cite; they are never project evidence |
 | **4** | **Customer Reality Corpus** | anonymised real documents from design partners | **The eventual benchmark.** See §18b |
+| **5** | **Synthetic benchmark** | generated building bundles with planted, documented defects | **Executability and regression only.** It proves a rule *runs* and is *specific*; it never proves a rule is *right about real documents*. See [ADR 0019](docs/adr/0019-synthetic-benchmark-corpus-and-conditional-unfreeze.md) and rule 102 |
 
 A Tier 2 document may never justify a feature on its own. If the only evidence for a capability is a
 highway document, the capability is deferred.
+
+A Tier 5 document may never justify a claim about accuracy. It is the only tier this project writes
+itself, which makes it the easiest to obtain and therefore the most likely to start defining the
+product — the failure §20 records for Tier 2, with the brakes off. When a real bundle disagrees with
+Tier 5, the real bundle wins and Tier 5 is rebuilt.
 
 ## 18b. The Customer Reality Corpus
 

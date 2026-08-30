@@ -1,6 +1,13 @@
 # The Reality Sprint — from 2026-08-24
 
-Status: **standing direction.** Supersedes the engineering cadence of
+> **Amended 2026-08-30.** The freeze clause is lifted by
+> [ADR 0019](../adr/0019-synthetic-benchmark-corpus-and-conditional-unfreeze.md); its premise was
+> that time not spent engineering would be spent acquiring market evidence, and six days later the
+> interview count is still zero. **Targets 1 and 2 below stand unchanged and are still the goal.**
+> The *Do not build* list stands unchanged. What changed is that a Tier 5 synthetic document is now
+> an admissible evidence ID, and the reason is in the ADR.
+
+Status: **standing direction, freeze clause superseded.** Supersedes the engineering cadence of
 [2026-08-20-development-priorities.md](2026-08-20-development-priorities.md), whose priority order it
 keeps. Origin: a full repository review on 2026-08-24 that read the architecture, SRS, ADRs, corpus
 strategy, API, frontend, verification code and requirements, not just the Sprint 1 report.

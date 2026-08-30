@@ -2315,7 +2315,19 @@ Do not blindly implement a technically harmful request.
 
 101. Engineering Requires an Evidence ID
 
-In force from 2026-08-24. See docs/plans/2026-08-24-reality-sprint.md.
+In force from 2026-08-24. **Amended 2026-08-30 by docs/adr/0019-synthetic-benchmark-corpus-and-conditional-unfreeze.md.**
+See docs/plans/2026-08-24-reality-sprint.md.
+
+The amendment, first, because the rule below is otherwise read as still freezing everything.
+
+The freeze assumed that time not spent engineering would be spent acquiring market evidence. Six
+days later the interview count is still zero, the outreach conversion is measured at 0.3%, and the
+forums that were to supply unprompted complaints are closed. The freeze was therefore not trading
+engineering for evidence; it was trading engineering for nothing.
+
+**A Tier 5 synthetic document is now an admissible evidence ID**, under rule 102's quarantine. The
+rest of this rule stands unchanged and still governs work on the real corpus — most importantly the
+second corollary, which matters more now rather than less.
 
 The platform is complete enough for the next experiment, and the constraint has moved from
 engineering to evidence. Zero authentic measurement books, zero authentic RA bills, and zero
@@ -2348,6 +2360,37 @@ stated totals. A fabricated priced row is money from nothing, and no coverage fi
 
 When a real bundle arrives, run it through HEAD unchanged before altering anything. The first run is
 the experiment. A preparatory fix destroys the only measurement that was available.
+
+⸻
+
+102. Synthetic Evidence Is Quarantined
+
+In force from 2026-08-30. See docs/adr/0019-synthetic-benchmark-corpus-and-conditional-unfreeze.md.
+
+Synthetic documents are the most dangerous material this project holds, because they are
+indistinguishable from progress. They exist as corpus Tier 5, and five constraints hold without
+exception.
+
+Tier 5 never mixes with Tiers 1–4. Separate directory, SYNTHETIC in every filename, a banner in
+every sheet and on every rendered page. A reader who meets one of these files out of context must be
+unable to mistake it for a real document.
+
+A synthetic document may make a rule executable. It may never make a rule correct. That a planted
+over-claim produces a REVIEW proves the rule runs and cites the right cells. It proves nothing about
+whether real billing engineers over-claim that way.
+
+Ground truth is written before generation and the pipeline never reads it. The defect specification
+is an input to the generator and the comparison for the run — never an input to extraction,
+classification, calculation or verification. Scoring is a separate pass over stored findings.
+
+Clean rows are mandatory and are the real test. A benchmark of nothing but defects measures recall
+and hides false positives. Most items carry no defect, and the false-positive count is reported with
+equal prominence to the detection count. A run that finds every planted defect and also flags forty
+clean rows has failed.
+
+No synthetic finding leaves this repository without the word synthetic attached — not in a demo, not
+in a deck, not in an outreach message. A Tier 5 detection rate stated as a product accuracy figure is
+the exact species of unsourced number this project exists to refuse.
 
 ⸻
 

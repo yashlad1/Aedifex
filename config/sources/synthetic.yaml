@@ -41,6 +41,8 @@ sources:
     document_types:
       - contract
       - bill_of_quantities
+      - measurement_book
+      - running_bill
       - purchase_order
       - invoice
       - delivery_challan
