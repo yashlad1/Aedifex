@@ -207,6 +207,59 @@ See [RUNBOOK.md](RUNBOOK.md) for the `~/.docker/config.json` requirement.
 
 ## How the code flows
 
+```mermaid
+flowchart LR
+    subgraph s1["1 · Arrival"]
+        direction TB
+        crawl["crawl_jobs<br/>discovered_urls"]
+        up["document_uploads"]
+        ret["document_retrievals"]
+        doc[("documents<br/>content-addressed<br/>immutable")]
+        crawl --> doc
+        up --> doc
+        ret --> doc
+    end
+
+    subgraph s2["2 · Reading"]
+        ef["extracted_facts<br/><i>each cites a page span<br/>or a spreadsheet cell</i>"]
+        pp["policy_provisions"]
+    end
+
+    subgraph s3["3 · Calculating"]
+        df["derived_facts"]
+        dfi["derived_fact_inputs<br/><i>records which facts<br/>produced this one</i>"]
+    end
+
+    subgraph s4["4 · Judging"]
+        fnd["findings<br/><i>deterministic rules</i>"]
+    end
+
+    subgraph s5["5 · Review"]
+        fe["finding_evidence"]
+        fr["finding_reviews<br/><i>a person decides</i>"]
+    end
+
+    doc --> ef
+    doc --> pp
+    ef --> dfi --> df
+    pp --> dfi
+    df --> fnd
+    ef --> fnd
+    fnd --> fe
+    fnd --> fr
+    fe -.->|"walks back to"| doc
+
+    style doc fill:#0d1117,stroke:#58a6ff,color:#c9d1d9
+    style dfi fill:#0d1117,stroke:#3fb950,color:#c9d1d9
+    style fe fill:#0d1117,stroke:#3fb950,color:#c9d1d9
+```
+
+The two green boxes are the ones that make the traceability claim structural rather than
+aspirational. `derived_fact_inputs` and `finding_evidence` are join tables whose only job is
+to record *what produced this*. Because they exist, walking from a published finding back to
+the bytes it came from is a query, not a reconstruction.
+
+
 Read this section to follow one real document from arrival to a reviewed finding. Every name below
 is a real function or module, in the order it actually runs, so you can open them side by side.
 
@@ -298,6 +351,61 @@ Every finding walks back to bytes nobody can edit.
 [`scripts/audit_traceability.py`](scripts/audit_traceability.py) walks that chain over every stored
 finding and **fails the build** if a `PASS`, `FAIL` or `REVIEW` cannot be traced. That script is the
 shortest honest answer to "does this actually work".
+
+## Data model
+
+Seventeen tables. Every arrow below is a real foreign key in `src/`, not an idealised sketch.
+
+```mermaid
+erDiagram
+    projects ||--o{ work_items : "scoped into"
+    projects ||--o{ project_documents : "indexes"
+    projects ||--o{ document_relationships : "groups"
+    projects ||--o{ derived_facts : "scopes"
+    projects ||--o{ findings : "scopes"
+
+    documents ||--o{ project_documents : "belongs to"
+    documents ||--o{ document_retrievals : "fetched by"
+    documents ||--o{ document_uploads : "uploaded by"
+    documents ||--o{ discovered_urls : "sourced from"
+    documents ||--o{ extracted_facts : "yields"
+    documents ||--o{ policy_provisions : "yields"
+    documents ||--o{ derived_facts : "supports"
+    documents ||--o{ findings : "evidences"
+    documents ||--o{ document_relationships : "linked to"
+
+    crawl_jobs ||--o{ discovered_urls : "enqueues"
+
+    work_items ||--o{ extracted_facts : "measured by"
+    work_items ||--o{ findings : "assessed by"
+
+    extracted_facts ||--o{ fact_retractions : "withdrawn by"
+    extracted_facts ||--o{ derived_fact_inputs : "feeds"
+    extracted_facts ||--o{ finding_evidence : "supports"
+
+    policy_provisions ||--o{ derived_fact_inputs : "feeds"
+    policy_provisions ||--o{ finding_evidence : "supports"
+
+    derived_facts ||--o{ derived_fact_inputs : "composed of"
+    derived_facts ||--o{ finding_evidence : "supports"
+
+    findings ||--o{ finding_evidence : "cites"
+    findings ||--o{ finding_reviews : "reviewed by"
+```
+
+**Three roots, and everything else hangs off them.** `documents` and `projects` are the two
+real entities; `crawl_jobs` is the acquisition frontier. Nothing else exists without a
+document or a project behind it.
+
+**Retraction is a table, not a delete.** `fact_retractions` withdraws an extracted fact by
+recording the withdrawal rather than removing the row. A conclusion published last month
+stays explicable even after the fact underneath it is retracted, which is the difference
+between an audit trail and a database.
+
+**Provenance is many-to-many on purpose.** A single finding usually rests on several
+extracted facts, one or more derived facts and a contract provision at once. Flattening that
+into a single foreign key would have been simpler and would have thrown away the thing the
+system exists to preserve.
 
 ## Repository layout
 
