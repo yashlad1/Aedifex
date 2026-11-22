@@ -11,7 +11,7 @@
 # Dependencies install from uv.lock with --locked, so the image resolves to exactly the
 # dependency graph committed alongside the source.
 
-FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS builder
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS builder
 
 # UV_PROJECT_ENVIRONMENT installs into a self-contained venv we can copy wholesale into the
 # runtime stage. UV_PYTHON points at the interpreter already in the image so uv never fetches a
@@ -53,7 +53,7 @@ COPY alembic.ini ./
 RUN uv sync --locked --no-dev --no-editable
 
 
-FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS runtime
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
