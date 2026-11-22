@@ -11,7 +11,7 @@
 # Dependencies install from uv.lock with --locked, so the image resolves to exactly the
 # dependency graph committed alongside the source.
 
-FROM python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a AS builder
+FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS builder
 
 # UV_PROJECT_ENVIRONMENT installs into a self-contained venv we can copy wholesale into the
 # runtime stage. UV_PYTHON points at the interpreter already in the image so uv never fetches a
@@ -53,7 +53,7 @@ COPY alembic.ini ./
 RUN uv sync --locked --no-dev --no-editable
 
 
-FROM python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a AS runtime
+FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -74,7 +74,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # so waiting for a new digest was not an option.
 RUN apt-get update \
  && apt-get install --only-upgrade --no-install-recommends -y \
-      bsdutils libblkid1 libmount1 libsmartcols1 libuuid1 mount util-linux \
+      bsdutils libblkid1 libmount1 libsmartcols1 libuuid1 mount util-linux zlib1g \
  && rm -rf /var/lib/apt/lists/*
 
 # Remove pip from the runtime image. The venv is self-contained and installed non-editable, so
