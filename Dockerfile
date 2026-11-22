@@ -74,7 +74,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # so waiting for a new digest was not an option.
 RUN apt-get update \
  && apt-get install --only-upgrade --no-install-recommends -y \
-      bsdutils libblkid1 libmount1 libsmartcols1 libuuid1 mount util-linux zlib1g \
+      bsdutils libblkid1 libc-bin libc6 libmount1 libsmartcols1 libuuid1 mount util-linux zlib1g \
  && rm -rf /var/lib/apt/lists/*
 
 # Remove pip from the runtime image. The venv is self-contained and installed non-editable, so
