@@ -14,6 +14,11 @@
 # `minio/minio:latest` in particular was previously unpinned, which meant two developers could
 # be running different builds while both believing they ran the same one. The tag before the
 # digest is decorative: Docker resolves the digest. Dependabot raises PRs for new digests.
+#
+# MinIO: upstream removed `minio/minio` and `minio/mc` from Docker Hub and stopped publishing
+# community images (github.com/minio/minio README: no longer maintained, source-only). The server
+# and client now come from pgsty/silo, the maintained fork of the same code; it bundles the client
+# as `mcli`, so one image serves both the `minio` and `minio_init` services.
 
 name: aedifex
 
@@ -38,7 +43,7 @@ services:
       start_period: 10s
 
   minio:
-    image: minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    image: pgsty/silo:RELEASE.2026-11-12T00-00-00Z@sha256:c20d112390b9a9ce8c11b8af95ad35bcaa62f4759663c09c936cd8d2b511f329
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -49,7 +54,7 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "mcli", "ready", "local"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -58,15 +63,15 @@ services:
   # Creates the development bucket, then exits. `docker compose up` will show this container
   # as completed, which is expected.
   minio_init:
-    image: minio/mc:latest@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    image: pgsty/silo:RELEASE.2026-11-12T00-00-00Z@sha256:c20d112390b9a9ce8c11b8af95ad35bcaa62f4759663c09c936cd8d2b511f329
     depends_on:
       minio:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin &&
-      mc mb --ignore-existing local/aedifex-dev &&
-      mc version enable local/aedifex-dev &&
+      mcli alias set local http://minio:9000 minioadmin minioadmin &&
+      mcli mb --ignore-existing local/aedifex-dev &&
+      mcli version enable local/aedifex-dev &&
       echo 'bucket ready'
       "
 

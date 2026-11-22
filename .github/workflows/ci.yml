@@ -131,13 +131,14 @@ jobs:
       # MinIO is started as a step rather than as a service container, and not by preference:
       # service containers cannot override an image's command, and this image needs `server /data`.
       # The alternative was a different vendor's image that starts a server by default, which would
-      # mean two MinIO images in the project for no gain. Same pinned digest as docker-compose.yml,
-      # so CI and a developer's machine run the same build.
+      # mean two S3 images in the project for no gain. Same pinned digest as docker-compose.yml,
+      # so CI and a developer's machine run the same build. pgsty/silo is the maintained fork of MinIO:
+      # upstream removed minio/minio from Docker Hub (see docker-compose.yml).
       - name: Start MinIO
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            pgsty/silo:RELEASE.2026-11-12T00-00-00Z@sha256:c20d112390b9a9ce8c11b8af95ad35bcaa62f4759663c09c936cd8d2b511f329 \
             server /data
 
       - name: Wait for MinIO
